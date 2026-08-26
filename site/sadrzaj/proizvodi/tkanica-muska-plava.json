@@ -1,0 +1,36 @@
+{
+  "slug": "tkanica-muska-plava",
+  "naziv": "Tkanica muška — plava",
+  "sifra": "TKA-001",
+  "kategorija": "tkanice",
+  "cena": 4490,
+  "staraCena": null,
+  "stanje": "na-stanju",
+  "istaknut": true,
+  "materijal": [
+    "ovčija vuna"
+  ],
+  "dimenzije": "190 × 12,5 cm (bez resa), 205 cm sa resama",
+  "opis": "Muški tkani pojas u tamnomodroj osnovi sa crvenim i belim geometrijskim poljima. Deo je kompletne muške narodne nošnje, ali se nosi i samostalno.\n\nObavija se nekoliko puta oko struka, preko košulje i jeleka.",
+  "detalji": [
+    [
+      "Tehnika",
+      "Tkanje na razboju"
+    ],
+    [
+      "Namena",
+      "Muška narodna nošnja"
+    ],
+    [
+      "Rese",
+      "Sa obe strane"
+    ],
+    [
+      "Održavanje",
+      "Ručno pranje ili hemijsko čišćenje"
+    ]
+  ],
+  "valuta": "RSD",
+  "redosled": 5,
+  "slike": []
+}

@@ -1,0 +1,36 @@
+{
+  "slug": "cilim-zidni-rozeta",
+  "naziv": "Zidni ćilim Rozeta",
+  "sifra": "CIL-002",
+  "kategorija": "cilimi",
+  "cena": 16500,
+  "staraCena": null,
+  "stanje": "po-porudzbini",
+  "istaknut": false,
+  "materijal": [
+    "ovčija vuna"
+  ],
+  "dimenzije": "150 × 100 cm",
+  "opis": "Veći zidni ćilim sa centralnom rozetom i bordurom od kuka. Tka se oko šest nedelja.\n\nDolazi sa drvenom letvicom za kačenje.",
+  "detalji": [
+    [
+      "Tehnika",
+      "Klečanje"
+    ],
+    [
+      "Rok izrade",
+      "Oko 6 nedelja"
+    ],
+    [
+      "Kačenje",
+      "Drvena letvica uključena"
+    ],
+    [
+      "Napomena",
+      "Radi se po porudžbini"
+    ]
+  ],
+  "valuta": "RSD",
+  "redosled": 13,
+  "slike": []
+}

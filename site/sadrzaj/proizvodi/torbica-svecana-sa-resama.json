@@ -1,0 +1,33 @@
+{
+  "slug": "torbica-svecana-sa-resama",
+  "naziv": "Svečana torbica sa resama",
+  "sifra": "TOR-003",
+  "kategorija": "torbe",
+  "cena": 3800,
+  "staraCena": 4200,
+  "stanje": "na-stanju",
+  "istaknut": false,
+  "materijal": [
+    "vuna",
+    "svila"
+  ],
+  "dimenzije": "20 × 15 cm, kaiš 110 cm",
+  "opis": "Manja svečana torbica sa svilenim resama, u tamnijoj paleti sa zlatnim nitima.\n\nZamišljena je uz nošnju i svečanu odeću, ali stoji i uz jednostavnu haljinu.",
+  "detalji": [
+    [
+      "Tehnika",
+      "Tkanje sa svilenim nitima"
+    ],
+    [
+      "Rese",
+      "Svilene"
+    ],
+    [
+      "Zatvaranje",
+      "Rajsferšlus"
+    ]
+  ],
+  "valuta": "RSD",
+  "redosled": 11,
+  "slike": []
+}

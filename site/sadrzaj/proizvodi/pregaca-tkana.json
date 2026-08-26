@@ -1,0 +1,32 @@
+{
+  "slug": "pregaca-tkana",
+  "naziv": "Tkana pregača",
+  "sifra": "NOS-002",
+  "kategorija": "nosnja",
+  "cena": 6900,
+  "staraCena": null,
+  "stanje": "na-stanju",
+  "istaknut": false,
+  "materijal": [
+    "ovčija vuna"
+  ],
+  "dimenzije": "75 × 55 cm",
+  "opis": "Tkana vunena pregača sa geometrijskim poljima u crvenoj, zelenoj i crnoj. Vezuje se tkanim gajtanom.\n\nDeo ženske nošnje, ali se koristi i kao zidna dekoracija.",
+  "detalji": [
+    [
+      "Tehnika",
+      "Tkanje na razboju"
+    ],
+    [
+      "Vezivanje",
+      "Tkani gajtan"
+    ],
+    [
+      "Šara",
+      "Geometrijska polja"
+    ]
+  ],
+  "valuta": "RSD",
+  "redosled": 15,
+  "slike": []
+}

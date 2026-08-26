@@ -1,0 +1,32 @@
+{
+  "slug": "tkanica-muska-crvena",
+  "naziv": "Tkanica muška — crvena",
+  "sifra": "TKA-002",
+  "kategorija": "tkanice",
+  "cena": 4490,
+  "staraCena": null,
+  "stanje": "na-stanju",
+  "istaknut": false,
+  "materijal": [
+    "ovčija vuna"
+  ],
+  "dimenzije": "190 × 12,5 cm (bez resa), 205 cm sa resama",
+  "opis": "Ista tehnika i dimenzije kao plava tkanica, ali u crvenoj osnovi sa crnim i zlatnim poljima — varijanta bliža šumadijskom tipu nošnje.",
+  "detalji": [
+    [
+      "Tehnika",
+      "Tkanje na razboju"
+    ],
+    [
+      "Namena",
+      "Muška narodna nošnja"
+    ],
+    [
+      "Rese",
+      "Sa obe strane"
+    ]
+  ],
+  "valuta": "RSD",
+  "redosled": 6,
+  "slike": []
+}

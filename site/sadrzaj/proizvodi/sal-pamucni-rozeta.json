@@ -1,0 +1,32 @@
+{
+  "slug": "sal-pamucni-rozeta",
+  "naziv": "Pamučni šal Rozeta",
+  "sifra": "SAL-003",
+  "kategorija": "salovi",
+  "cena": 3900,
+  "staraCena": null,
+  "stanje": "na-stanju",
+  "istaknut": false,
+  "materijal": [
+    "pamuk"
+  ],
+  "dimenzije": "165 × 42 cm",
+  "opis": "Pamučni šal sa motivom osmokrake rozete, istim onim koji se sreće na zubunima i pregačama.\n\nMekan i lak za održavanje, pogodan za svakodnevno nošenje.",
+  "detalji": [
+    [
+      "Tehnika",
+      "Tkanje na razboju"
+    ],
+    [
+      "Šara",
+      "Osmokraka rozeta"
+    ],
+    [
+      "Održavanje",
+      "Mašinsko pranje na 30°C"
+    ]
+  ],
+  "valuta": "RSD",
+  "redosled": 3,
+  "slike": []
+}

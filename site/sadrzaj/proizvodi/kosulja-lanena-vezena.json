@@ -1,0 +1,36 @@
+{
+  "slug": "kosulja-lanena-vezena",
+  "naziv": "Lanena košulja sa vezom",
+  "sifra": "NOS-001",
+  "kategorija": "nosnja",
+  "cena": 12900,
+  "staraCena": null,
+  "stanje": "po-porudzbini",
+  "istaknut": true,
+  "materijal": [
+    "lan"
+  ],
+  "dimenzije": "Po meri — navesti veličinu u napomeni",
+  "opis": "Duga lanena košulja sa vezom oko vrata, na rukavima i po skutovima, rađena po uzoru na muzejske primerke iz centralne Srbije.\n\nŠije se po meri. Rok izrade je oko četiri nedelje.",
+  "detalji": [
+    [
+      "Materijal",
+      "Domaći lan"
+    ],
+    [
+      "Vez",
+      "Ručni, krstićima"
+    ],
+    [
+      "Rok izrade",
+      "Oko 4 nedelje"
+    ],
+    [
+      "Veličine",
+      "Po meri"
+    ]
+  ],
+  "valuta": "RSD",
+  "redosled": 14,
+  "slike": []
+}

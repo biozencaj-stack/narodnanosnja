@@ -1,0 +1,33 @@
+{
+  "slug": "torbica-tkana-mala",
+  "naziv": "Tkana torbica mala",
+  "sifra": "TOR-001",
+  "kategorija": "torbe",
+  "cena": 2900,
+  "staraCena": null,
+  "stanje": "na-stanju",
+  "istaknut": false,
+  "materijal": [
+    "vuna",
+    "pamučna postava"
+  ],
+  "dimenzije": "22 × 18 cm, kaiš 120 cm",
+  "opis": "Mala tkana torbica sa dugim kaišem, za preko ramena. Šara je preuzeta sa starih pregača istočne Srbije.\n\nPostava i unutrašnji džep šiveni su ručno.",
+  "detalji": [
+    [
+      "Tehnika",
+      "Tkanje i ručno šivenje"
+    ],
+    [
+      "Postava",
+      "Pamuk"
+    ],
+    [
+      "Zatvaranje",
+      "Preklop sa dugmetom"
+    ]
+  ],
+  "valuta": "RSD",
+  "redosled": 9,
+  "slike": []
+}

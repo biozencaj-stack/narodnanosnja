@@ -1,0 +1,33 @@
+{
+  "slug": "torba-tkana-velika",
+  "naziv": "Tkana torba velika",
+  "sifra": "TOR-002",
+  "kategorija": "torbe",
+  "cena": 4500,
+  "staraCena": null,
+  "stanje": "na-stanju",
+  "istaknut": true,
+  "materijal": [
+    "vuna",
+    "pamučna postava"
+  ],
+  "dimenzije": "38 × 32 cm, ručke 55 cm",
+  "opis": "Prostrana tkana torba za svaki dan, dovoljno čvrsta da nosi i knjige i pijacu.\n\nTkana je gušće od torbica, pa drži oblik i bez ojačanja.",
+  "detalji": [
+    [
+      "Tehnika",
+      "Tkanje i ručno šivenje"
+    ],
+    [
+      "Postava",
+      "Pamuk"
+    ],
+    [
+      "Unutrašnji džep",
+      "Da"
+    ]
+  ],
+  "valuta": "RSD",
+  "redosled": 10,
+  "slike": []
+}
