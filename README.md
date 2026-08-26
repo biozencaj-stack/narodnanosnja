@@ -23,6 +23,7 @@
 node scripts/build.mjs                          # изгради сајт у dist/
 node scripts/proveri-veze.mjs                   # провери све интерне везе
 python3 -m http.server 8000 --directory dist    # локални преглед
+node scripts/proveri-uzivo.mjs                  # провери објављени сајт
 ```
 
 Отвори http://localhost:8000
@@ -36,6 +37,7 @@ python3 -m http.server 8000 --directory dist    # локални преглед
 | `site/assets/`        | `site.css` и `site.js`                              |
 | `scripts/build.mjs`   | генератор статичког сајта                           |
 | `scripts/proveri-veze.mjs` | провера интерних веза                          |
+| `scripts/proveri-uzivo.mjs` | провера објављеног сајта преко мреже          |
 | `.github/workflows/`  | аутоматска изградња и објављивање                   |
 
 ## Објављивање
