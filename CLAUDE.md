@@ -53,6 +53,7 @@ site/
 scripts/
   build.mjs      generator: čita data + pages, piše dist/
   proveri-veze.mjs  provera da nijedna interna veza nije polomljena
+  proveri-uzivo.mjs provera objavljenog sajta preko mreže (ne koristi se u CI-ju)
 .github/workflows/
   objavi.yml     push na main -> izgradnja -> GitHub Pages
   provera.yml    push na ostale grane i PR -> samo izgradnja i provera
@@ -65,6 +66,8 @@ dist/            rezultat izgradnje; nije u git-u, pravi ga CI
 node scripts/build.mjs        # izgradi sajt u dist/
 node scripts/proveri-veze.mjs # proveri sve interne veze (mora proći)
 python3 -m http.server 8000 --directory dist   # lokalni pregled
+
+node scripts/proveri-uzivo.mjs   # proveri objavljeni sajt posle deploy-a
 ```
 
 Pre svakog commit-a pokreni **obe** prve dve naredbe. Provera veza mora proći
@@ -111,5 +114,19 @@ bez ijedne greške — CI je ionako obara ako ne prođe.
 Push na `main` pokreće `objavi.yml`, koji gradi sajt i objavljuje ga na
 GitHub Pages. Nema drugog načina objavljivanja i `dist/` se nikada ne commit-uje.
 
-Da bi Pages radio, repozitorijum mora biti **javan** (ili nalog na plaćenom
-planu). U podešavanjima repozitorijuma: Settings → Pages → Source: **GitHub Actions**.
+Posle objavljivanja proveri rezultat preko mreže:
+
+```bash
+node scripts/proveri-uzivo.mjs
+```
+
+Skripta obilazi sve stranice sa `sitemap.xml`, proverava statuse, naslove, sve
+resurse i da 404 stranica zaista vraća 404.
+
+### Preduslovi koji su već ispunjeni
+
+Repozitorijum je javan i Pages je uključen sa izvorom **GitHub Actions**
+(Settings → Pages). Ovo je jednokratno podešavanje koje je moralo ručno da se
+uradi — token iz workflow-a ne može da uključi Pages prvi put, pa je korak
+„Podesi Pages“ padao sve dok to nije podešeno. Ako se Pages ikad isključi,
+greška će se vratiti na istom koraku.
