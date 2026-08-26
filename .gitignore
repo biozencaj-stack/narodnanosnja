@@ -1,0 +1,15 @@
+# Rezultat izgradnje — pravi ga CI, ne commit-uje se.
+dist/
+
+# Sistemski otpad
+.DS_Store
+Thumbs.db
+
+# Uređivači
+.vscode/
+.idea/
+*.swp
+
+# Node (projekat nema zavisnosti, ali za svaki slučaj)
+node_modules/
+npm-debug.log*
