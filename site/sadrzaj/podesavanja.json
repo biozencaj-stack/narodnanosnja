@@ -1,0 +1,24 @@
+{
+  "naziv": "Народна ношња",
+  "email": "porudzbine@primer.rs",
+  "telefon": "+381 60 000 0000",
+  "adresa": "Adresa radionice, Beograd",
+  "pib": "",
+  "maticniBroj": "",
+  "isporuka": {
+    "cena": 400,
+    "besplatnoPreko": 6000,
+    "rok": "2–4 radna dana",
+    "kurir": "Kurirska služba",
+    "napomena": "Isporuka je moguća samo na teritoriji Srbije."
+  },
+  "placanje": {
+    "nacini": ["pouzecem"],
+    "opis": "Plaćanje se vrši kuriru prilikom preuzimanja pošiljke, gotovinom ili karticom ako kurirska služba to omogućava."
+  },
+  "porudzbina": {
+    "krajnjaTacka": "/api/porudzbina",
+    "porukaUspeh": "Porudžbina je primljena. Javićemo vam se radi potvrde u najkraćem roku.",
+    "porukaGreska": "Slanje nije uspelo. Pozovite nas ili pišite na mejl i porudžbina će biti primljena ručno."
+  }
+}

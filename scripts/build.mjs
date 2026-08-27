@@ -8,7 +8,7 @@
  * i na korenu domena i u pod-fascikli (GitHub Pages projekat).
  */
 
-import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, rm, readdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -39,6 +39,46 @@ const prefiks = (dubina) => (dubina === 0 ? './' : '../'.repeat(dubina));
 // pa bi dvostruki navodnik prekinuo atribut i šara se ne bi videla.
 const dataUri = (svg) =>
   `url('data:image/svg+xml,${encodeURIComponent(svg.replace(/\s+/g, ' ').trim())}')`;
+
+/* ---------------------------------------------------------------- *
+ * Prodavnica — podaci koje uređuje CMS
+ * ---------------------------------------------------------------- */
+
+/** Učitava kategorije i sve proizvode iz site/sadrzaj/. */
+async function ucitajProdavnicu() {
+  const kat = JSON.parse(await readFile(join(KOREN, 'site/sadrzaj/kategorije.json'), 'utf8'));
+  const fajlovi = (await readdir(join(KOREN, 'site/sadrzaj/proizvodi')))
+    .filter((f) => f.endsWith('.json'));
+
+  const proizvodi = [];
+  for (const f of fajlovi.sort()) {
+    const pr = JSON.parse(await readFile(join(KOREN, 'site/sadrzaj/proizvodi', f), 'utf8'));
+    if (pr.objavljen === false) continue; // CMS može da sakrije proizvod
+    proizvodi.push(pr);
+  }
+  proizvodi.sort((a, b) => (a.redosled ?? 999) - (b.redosled ?? 999));
+
+  // Provera da svaki proizvod pripada postojećoj kategoriji — tiha greška
+  // ovde znači proizvod koji se nigde ne pojavljuje.
+  const poznate = new Set(kat.kategorije.map((k) => k.slug));
+  for (const pr of proizvodi) {
+    if (!poznate.has(pr.kategorija)) {
+      throw new Error(`Proizvod „${pr.slug}“ ima nepoznatu kategoriju „${pr.kategorija}“.`);
+    }
+  }
+  return { kategorije: kat.kategorije, proizvodi };
+}
+
+/** 5400 -> „5.400 RSD“ */
+export const cena = (iznos) =>
+  new Intl.NumberFormat('sr-RS', { maximumFractionDigits: 0 }).format(iznos) + ' RSD';
+
+const STANJA = {
+  'na-stanju': { tekst: 'Na stanju', klasa: 'ima' },
+  'rasprodato': { tekst: 'Rasprodato', klasa: 'nema' },
+  'po-porudzbini': { tekst: 'Po porudžbini', klasa: 'ceka' },
+};
+export const stanje = (k) => STANJA[k] || STANJA['na-stanju'];
 
 /* ---------------------------------------------------------------- *
  * Ornamenti — tkane šare, generisane kao SVG pločice koje se ponavljaju
@@ -95,6 +135,28 @@ const VRSTE = Object.keys(SARE);
 /** Šara za dati region — deterministički izbor po rednom broju. */
 export const saraZa = (i, boje) => SARE[VRSTE[i % VRSTE.length]](boje[0], boje[1]);
 
+/**
+ * Slika proizvoda. Dok CMS ne postavi pravu fotografiju, vraća se
+ * generisana šara u bojama kategorije — tako mreža nikad nije prazna.
+ * @returns {{src:string, opis:string, mestodrzac:boolean}}
+ */
+export function slikaProizvoda(pr, kat, p, redni = 0) {
+  const slike = Array.isArray(pr.slike) ? pr.slike.filter((x) => x && x.datoteka) : [];
+  if (slike[redni]) {
+    return {
+      src: `${p}slike/${slike[redni].datoteka}`,
+      opis: slike[redni].opis || pr.naziv,
+      mestodrzac: false,
+    };
+  }
+  const boje = (kat && kat.boje) || ['#8c1c13', '#c9a227', '#f3ead8'];
+  return {
+    src: dataUri(saraZa((pr.redosled ?? 0) + redni, boje)),
+    opis: `${pr.naziv} — fotografija još nije postavljena`,
+    mestodrzac: true,
+  };
+}
+
 /** Vodoravna ornamentna traka koja razdvaja sekcije. */
 const trakaSvg = (a, b) => `
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 26" width="60" height="26">
@@ -119,7 +181,7 @@ const znakSvg = (boja = '#8c1c13', srce = '#b98f21') => `
  * ---------------------------------------------------------------- */
 
 const MENI = [
-  { put: '', naziv: 'Početna', kljuc: 'pocetna' },
+  { put: 'prodavnica/', naziv: 'Prodavnica', kljuc: 'prodavnica' },
   { put: 'nosnje/', naziv: 'Nošnje', kljuc: 'nosnje' },
   { put: 'pojmovnik/', naziv: 'Pojmovnik', kljuc: 'pojmovnik' },
   { put: 'tehnike/', naziv: 'Tehnike', kljuc: 'tehnike' },
@@ -147,6 +209,16 @@ function zaglavlje(p, aktivno) {
       <nav class="navigacija" id="glavni-meni" aria-label="Glavna navigacija">
         ${veze}
         <button class="pismo-dugme" type="button" data-pismo-skip>Ћирилица</button>
+        <a class="korpa-dugme" href="${p}korpa/" aria-label="Korpa">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M3 4h2.2l2.3 11.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.5L21 8H6.4"
+                  fill="none" stroke="currentColor" stroke-width="1.8"
+                  stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="10" cy="20" r="1.4" fill="currentColor"/>
+            <circle cx="17" cy="20" r="1.4" fill="currentColor"/>
+          </svg>
+          <span class="korpa-broj" data-korpa-broj hidden data-pismo-skip>0</span>
+        </a>
       </nav>
     </div>
   </header>`;
@@ -224,6 +296,7 @@ export function stranica(o) {
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap">
 <link rel="stylesheet" href="${p}assets/site.css">
 <script defer src="${p}assets/site.js"></script>
+<script defer src="${p}assets/korpa.js"></script>
 </head>
 <body${saraStil}>
 <a class="preskoci" href="#sadrzaj">Preskoči na sadržaj</a>
@@ -256,12 +329,21 @@ async function gradi() {
   await rm(IZLAZ, { recursive: true, force: true });
   await mkdir(IZLAZ, { recursive: true });
 
-  const ctx = { esc, traka, saraZa, nosnje, pojmovnik, znakSvg, dataUri };
+  const { kategorije, proizvodi } = await ucitajProdavnicu();
+
+  const ctx = {
+    esc, traka, saraZa, nosnje, pojmovnik, znakSvg, dataUri,
+    kategorije, proizvodi, cena, stanje, slikaProizvoda,
+  };
   const napravljene = [];
 
   // Stranice se učitavaju dinamički da bi svaka ostala u svom modulu.
   const moduli = [
     ['pocetna', ''],
+    ['prodavnica', 'prodavnica/'],
+    ['korpa', 'korpa/'],
+    ['isporuka-i-placanje', 'isporuka-i-placanje/'],
+    ['uslovi', 'uslovi/'],
     ['nosnje-lista', 'nosnje/'],
     ['pojmovnik', 'pojmovnik/'],
     ['tehnike', 'tehnike/'],
@@ -302,8 +384,41 @@ async function gradi() {
     })));
   }
 
+  // Po jedna stranica za svaku kategoriju proizvoda.
+  const katDetalj = await import('../site/pages/kategorija-detalj.js');
+  for (const k of kategorije) {
+    const putanja = `prodavnica/${k.slug}/index.html`;
+    const uKategoriji = proizvodi.filter((x) => x.kategorija === k.slug);
+    napravljene.push(await upisi(putanja, stranica({
+      naslov: k.naziv,
+      opis: k.kratko,
+      dubina: 2,
+      aktivno: 'prodavnica',
+      putanja,
+      sara: saraZa(kategorije.indexOf(k), k.boje),
+      telo: katDetalj.telo({ ...ctx, p: prefiks(2), k, uKategoriji }),
+    })));
+  }
+
+  // Po jedna stranica za svaki proizvod.
+  const prDetalj = await import('../site/pages/proizvod-detalj.js');
+  for (const pr of proizvodi) {
+    const k = kategorije.find((x) => x.slug === pr.kategorija);
+    const putanja = `proizvod/${pr.slug}/index.html`;
+    const slicni = proizvodi.filter((x) => x.kategorija === pr.kategorija && x.slug !== pr.slug).slice(0, 3);
+    napravljene.push(await upisi(putanja, stranica({
+      naslov: pr.naziv,
+      opis: `${pr.naziv} — ${cena(pr.cena)}. ${String(pr.opis || '').split('\n')[0].slice(0, 110)}`,
+      dubina: 2,
+      aktivno: 'prodavnica',
+      putanja,
+      sara: saraZa(pr.redosled ?? 0, k.boje),
+      telo: prDetalj.telo({ ...ctx, p: prefiks(2), pr, k, slicni }),
+    })));
+  }
+
   // Statički fajlovi.
-  for (const f of ['site.css', 'site.js']) {
+  for (const f of ['site.css', 'site.js', 'korpa.js']) {
     await upisi(`assets/${f}`, await readFile(join(KOREN, 'site/assets', f), 'utf8'));
   }
   await upisi('favicon.svg',
@@ -311,6 +426,25 @@ async function gradi() {
   <rect width="40" height="40" rx="8" fill="#f7f2e7"/>
   ${znakSvg().replace(/<svg[^>]*>|<\/svg>/g, '')}
 </svg>`);
+
+  // Fotografije proizvoda koje je postavio CMS.
+  try {
+    const slike = await readdir(join(KOREN, 'site/sadrzaj/slike'));
+    for (const f of slike) {
+      if (f.startsWith('.')) continue;
+      const cilj = join(IZLAZ, 'slike', f);
+      await mkdir(dirname(cilj), { recursive: true });
+      await writeFile(cilj, await readFile(join(KOREN, 'site/sadrzaj/slike', f)));
+    }
+    if (slike.length) console.log(`Prekopirano ${slike.length} fotografija.`);
+  } catch {
+    // Fascikla još ne postoji — sajt radi sa generisanim šarama.
+  }
+
+  // Admin panel za unos proizvoda (CMS).
+  for (const f of ['index.html', 'config.yml']) {
+    await upisi(`admin/${f}`, await readFile(join(KOREN, 'site/admin', f), 'utf8'));
+  }
 
   // 404 — servira se sa proizvoljne dubine, pa koristi apsolutne putanje.
   await upisi('404.html', `<!doctype html>
