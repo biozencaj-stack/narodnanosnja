@@ -100,6 +100,7 @@ app/            Next.js App Router
   api/            REST rute
 components/     React komponente
 lib/            poslovna logika
+  email/smtp.ts   jedina SMTP transport/TLS konfiguracija
 prisma/         schema.prisma i migracije
 podaci/         izvorni podaci o nošnji — kategorije i proizvodi (JSON)
 scripts/        uvoz-nosnja.ts, create-admin.ts, backup.sh, restore.sh
@@ -184,6 +185,17 @@ ne menja stanje: vodi na `noindex`/`no-referrer` stranicu za potvrdu, a tek
 potpisani POST nakon izričitog klika atomarno deaktivira korisničku i gostujuću
 pretplatu. Uspešan odgovor je idempotentan i ne otkriva da li email postoji u
 bazi.
+
+## SMTP i slanje emaila (v2)
+
+Svaki email tok mora praviti transport isključivo kroz
+`lib/email/smtp.ts`; ne dodavati zaseban `nodemailer.createTransport` u ruti ili
+template modulu. Port 465 koristi implicitni TLS, a svaki drugi port zahteva
+uspešan STARTTLS. Validacija sertifikata je podrazumevana i obavezna van
+`development`/`test` okruženja. Lokalni self-signed izuzetak dodatno prihvata
+samo loopback SMTP host. Host, korisničko ime, lozinka, boolean TLS zastavica i
+port proveravaju se pre pravljenja transporta; produkcija ne sme tiho pasti na
+localhost, plaintext ili no-auth slanje.
 
 ## Admin uloge (v2)
 

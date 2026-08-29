@@ -1,6 +1,6 @@
 'use server';
 
-import nodemailer from 'nodemailer';
+import type { SendMailOptions } from 'nodemailer';
 import type { Order, TransactionDetails } from '@/types/order';
 import type { CartItem } from '@/types/cart';
 import { formatPriceWithCurrency, clearProductSufix } from '@/lib/utils/format';
@@ -8,6 +8,7 @@ import { headers } from 'next/headers';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { verifyRecaptchaToken } from '@/lib/security/recaptcha';
 import { escapeHtmlText, sanitizeRichHtml } from '@/lib/security/html';
+import { createSmtpTransport } from '@/lib/email/smtp';
 import { getStorefrontUrl } from '@/lib/config/storefront-url';
 import { createNewsletterUnsubscribeUrl } from '@/lib/newsletter/unsubscribe';
 
@@ -46,27 +47,6 @@ async function verifyPublicFormProof(
 }
 
 /**
- * Create email transporter
- */
-function createTransporter() {
-  return nodemailer.createTransport({
-    host: process.env.SMTP_SERVER_HOST || process.env.SMTP_SERVER,
-    port: Number(process.env.SMTP_SERVER_PORT || process.env.SMTP_PORT) || 587,
-    secure: false,
-    auth: {
-      user: process.env.SMTP_SERVER_USERNAME,
-      pass: process.env.SMTP_SERVER_PASSWORD,
-    },
-    tls: {
-      rejectUnauthorized: process.env.SMTP_TLS_REJECT_UNAUTHORIZED !== 'false',
-      minVersion: 'TLSv1.2',
-      maxVersion: 'TLSv1.3',
-      ciphers: 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384',
-    },
-  });
-}
-
-/**
  * Send a generic email
  */
 export async function sendEmail(
@@ -75,7 +55,7 @@ export async function sendEmail(
   html: string
 ): Promise<boolean> {
   try {
-    const transporter = createTransporter();
+    const transporter = createSmtpTransport();
 
     await transporter.sendMail({
       from: process.env.EMAIL_FROM || `"${STORE_NAME}" <${STORE_EMAIL}>`,
@@ -401,9 +381,9 @@ export async function sendReclamationEmail(
       return false;
     }
 
-    const transporter = createTransporter();
+    const transporter = createSmtpTransport();
 
-    const mailOptions: nodemailer.SendMailOptions = {
+    const mailOptions: SendMailOptions = {
       from: process.env.EMAIL_FROM || `"${STORE_NAME}" <${STORE_EMAIL}>`,
       to: STORE_EMAIL,
       subject: `${STORE_NAME}: Reklamacija`,
@@ -441,7 +421,7 @@ export async function sendContactEmail(
       return false;
     }
 
-    const transporter = createTransporter();
+    const transporter = createSmtpTransport();
 
     await transporter.sendMail({
       from: process.env.EMAIL_FROM || `"${STORE_NAME}" <${STORE_EMAIL}>`,

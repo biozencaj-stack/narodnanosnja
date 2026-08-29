@@ -3,7 +3,7 @@
 Zapis svega što je urađeno na projektu narodne nošnje, sa razlozima i zamkama
 na koje se naišlo. Namenjeno je i tebi i svakom ko posle preuzme rad.
 
-Poslednja dopuna: 29. avgust 2026.
+Poslednja dopuna: 30. avgust 2026.
 
 ## Gde je koji dokument
 
@@ -11,8 +11,8 @@ Zapisa ima više i lako je otvoriti pogrešan. Poređano po dubini:
 
 | Dokument | Obim | Šta pokriva |
 | --- | --- | --- |
-| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 2252 linije, 34 odeljka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
-| Ovaj fajl (`IZMENE.md`) | ~500 linija | Hronologija i odluke — zašto je nešto urađeno tako |
+| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 2291 linija, 35 odeljaka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
+| Ovaj fajl (`IZMENE.md`) | ~580 linija | Hronologija i odluke — zašto je nešto urađeno tako |
 | `docs/ARCHITECTURE-V2.md` | 4 KB | Arhitektonske granice platforme |
 | `docs/CATALOG-MIGRATION-PLAN.md` | 10 KB | Redosled prelaska na generički katalog |
 | `docs/V2-ROLL-OUT.md` | 6 KB | Postupak puštanja V2 u produkciju |
@@ -558,3 +558,27 @@ Lokalno je potvrđeno: 43/43 unit testa, TypeScript, lint bez grešaka i
 produkcijski build sa bezbednim test HTTPS URL-om. Lokalni PostgreSQL nije
 pokrenut; build je zato koristio postojeće safe-default grane za DB sadržaj.
 Nisu menjani Prisma šema, podaci, server, tajne, payment tok ni deployment.
+
+---
+
+## XIII. Centralni SMTP TLS sloj — 30. avgust 2026.
+
+Bezbednosni pregled je pokazao da su reset lozinke, verifikacija naloga,
+porudžbine i wishlist poruke imali sopstvene transportere koji su prihvatali
+nevažeće TLS sertifikate. Preostala dva transportera jesu proveravala
+sertifikat, ali nisu zahtevala STARTTLS i nisu pravilno podržavala implicitni
+TLS na portu 465.
+
+Sada svih pet email tokova koristi `lib/email/smtp.ts` kao jedini izvor SMTP
+politike. Port 465 uključuje implicitni TLS; 587, 2525 i drugi portovi zahtevaju
+uspešan STARTTLS pre autentifikacije ili slanja sadržaja. Node-ova održavana
+cipher lista zamenjuje ručno ograničenje koje je praktično isključivalo TLS
+1.2 iako je bio deklarisan kao podržan minimum.
+
+Konfiguracija radi fail-closed: port mora biti ceo broj 1–65535, host i oba
+credential-a su obavezni, a nepoznata TLS boolean vrednost se odbija.
+`SMTP_TLS_REJECT_UNAUTHORIZED=false` prihvata se samo u `development`/`test`
+okruženju i samo za loopback SMTP, pa produkcija ne može slučajno da pošalje
+reset token, podatke porudžbine ili prijavu za posao preko neproverenog ili
+plaintext kanala. Novi testovi proveravaju obe TLS varijante, neispravnu
+konfiguraciju, legacy alias-e i lokalni self-signed izuzetak bez mrežnog slanja.

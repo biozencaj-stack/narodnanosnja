@@ -1,27 +1,6 @@
-import nodemailer from "nodemailer";
 import { prisma } from "@/lib/db";
+import { createSmtpTransport } from "@/lib/email/smtp";
 import { formatPriceWithCurrency, clearProductSufix } from "@/lib/utils/format";
-
-/**
- * Create email transporter - consistent with mailer.ts
- */
-function createTransporter() {
-  return nodemailer.createTransport({
-    host: process.env.SMTP_SERVER_HOST || process.env.SMTP_SERVER,
-    port: Number(process.env.SMTP_SERVER_PORT || process.env.SMTP_PORT) || 587,
-    secure: false,
-    auth: {
-      user: process.env.SMTP_SERVER_USERNAME,
-      pass: process.env.SMTP_SERVER_PASSWORD,
-    },
-    tls: {
-      rejectUnauthorized: false,
-      minVersion: "TLSv1.2",
-      maxVersion: "TLSv1.3",
-      ciphers: "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384",
-    },
-  });
-}
 
 const STORE_NAME = process.env.NEXT_PUBLIC_STORE_NAME || 'My Store';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
@@ -235,7 +214,7 @@ export async function sendOrderConfirmationEmail(
     </div>
   `;
 
-  const transporter = createTransporter();
+  const transporter = createSmtpTransport();
   const emailHtml = emailWrapper("Potvrda porudžbine", content);
   const emailSubject = `Potvrda porudžbine #${order.orderNumber} - ${STORE_NAME}`;
 
@@ -390,7 +369,7 @@ export async function sendOrderStatusEmail(
     </div>
   `;
 
-  const transporter = createTransporter();
+  const transporter = createSmtpTransport();
   await transporter.sendMail({
     from: FROM_EMAIL,
     to: customerEmail,
