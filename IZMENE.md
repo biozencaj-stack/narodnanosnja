@@ -3,10 +3,24 @@
 Zapis rada na prezentacionom sajtu o srpskoj narodnoj nošnji, sa razlozima i
 zamkama na koje se naišlo.
 
-Poslednja dopuna: 27. avgust 2026.
+Poslednja dopuna: 29. avgust 2026.
 
 > Prodavnica je zaseban projekat u `~/Desktop/narodnanosnja-prodavnica`, sa
 > sopstvenim `IZMENE.md`. Ovaj fajl pokriva samo prezentacioni sajt.
+
+## Gde je koji dokument
+
+Projekat ima više zapisa i lako je otvoriti pogrešan. Redosled po dubini:
+
+| Dokument | Gde | Šta pokriva |
+| --- | --- | --- |
+| Ovaj fajl | `IZMENE.md` | Prezentacioni sajt — istorija i zamke |
+| `PREGLED_PROJEKTA_2026-08-29.md` | ovde, koren | Potpun read-only pregled celog repozitorijuma na dan 29. 8. — 770 linija, obe grane, bezbednosni i pravni blokatori |
+| `IZMENE.md` prodavnice | `narodnanosnja-prodavnica/` | Prodavnica — hronologija i odluke |
+| `docs/DETALJAN-DNEVNIK-IZMENA.md` | `narodnanosnja-prodavnica/docs/` | **Najdetaljniji zapis**, 2209 linija u 33 odeljka — svaka V2 izmena, fajl po fajl |
+
+Ako tražiš „šta je tačno urađeno u kodu prodavnice“ — idi na
+`docs/DETALJAN-DNEVNIK-IZMENA.md`. Ostalo su pregledi i ulazne tačke.
 
 ---
 
@@ -84,6 +98,29 @@ scripts/
 - Repozitorijum je **javan**. Na besplatnom planu GitHub Pages ne radi za
   privatne repoe.
 - Pages je uključen sa izvorom **GitHub Actions** (Settings → Pages).
+
+### ⚠️ Oba projekta dele jedan repozitorijum
+
+Prodavnica je na kraju objavljena u **isti** repo `biozencaj-stack/narodnanosnja`,
+kao zasebna grana, a ne u sopstveni repo. Na remote-u sada žive dve istorije:
+
+| Grana | Šta je | Ko je objavljuje |
+| --- | --- | --- |
+| `main` | prezentacioni sajt | `objavi.yml` → GitHub Pages |
+| `verzija/v2.0-univerzalna-platforma` | prodavnica (Next.js) | sopstveni `objavi.yml` u toj grani |
+| `verzija/v2.0-prodavnica` | napuštena statička prodavnica | ništa |
+| `arhiva/v2-pre-github-…` | arhiva stanja pre objave | ništa |
+
+**Granu prodavnice nikada ne spajati u `main`.** Push na `main` pokreće
+objavljivanje prezentacionog sajta na Pages; spajanje bi u najboljem slučaju
+oborilo build, u gorem objavilo pogrešan sadržaj na javnu adresu.
+
+Dve istorije su nastale odvojeno (prodavnica je počela kao zaseban `git init`),
+pa git ionako odbija spajanje bez `--allow-unrelated-histories`. To je slučajna
+zaštita, ne namerna — ne oslanjati se na nju.
+
+Trajno rešenje je razdvajanje u dva repozitorijuma. Do tada ovo pravilo stoji
+i u `CLAUDE.md` oba projekta.
 
 ---
 
