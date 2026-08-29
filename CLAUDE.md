@@ -172,6 +172,19 @@ prvo pokretanje; tajne baze, emaila i plaćanja nikada ne idu u `Setting`.
 vidljivi. Ne prikazuj kartice, lokacije, dokumente, jezike ili chat ako njihov
 capability nije uključen i stvarna usluga nije spremna.
 
+## Newsletter odjava (v2)
+
+Tokeni i URL za odjavu nastaju isključivo kroz
+`lib/newsletter/unsubscribe.ts`. U produkciji podesi jak, zaseban
+`NEWSLETTER_UNSUBSCRIBE_SECRET`; jaki `NEXTAUTH_SECRET` se prihvata samo kao
+prelazna kompatibilnost za ranije poslate linkove kada je
+`NEWSLETTER_UNSUBSCRIBE_ACCEPT_NEXTAUTH_LEGACY=true`; po završetku migracionog
+perioda vrati flag na `false`. Ne uvodi javni fallback ključ. GET link nikada
+ne menja stanje: vodi na `noindex`/`no-referrer` stranicu za potvrdu, a tek
+potpisani POST nakon izričitog klika atomarno deaktivira korisničku i gostujuću
+pretplatu. Uspešan odgovor je idempotentan i ne otkriva da li email postoji u
+bazi.
+
 ## Admin uloge (v2)
 
 Politika je deny-by-default u `lib/auth/admin-policy.ts` i sprovodi se u
