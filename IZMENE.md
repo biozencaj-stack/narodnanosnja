@@ -3,21 +3,59 @@
 Zapis svega što je urađeno na projektu narodne nošnje, sa razlozima i zamkama
 na koje se naišlo. Namenjeno je i tebi i svakom ko posle preuzme rad.
 
-Poslednja dopuna: 28. avgust 2026.
+Poslednja dopuna: 29. avgust 2026.
+
+## Gde je koji dokument
+
+Zapisa ima više i lako je otvoriti pogrešan. Poređano po dubini:
+
+| Dokument | Obim | Šta pokriva |
+| --- | --- | --- |
+| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 2209 linija, 33 odeljka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
+| Ovaj fajl (`IZMENE.md`) | ~500 linija | Hronologija i odluke — zašto je nešto urađeno tako |
+| `docs/ARCHITECTURE-V2.md` | 4 KB | Arhitektonske granice platforme |
+| `docs/CATALOG-MIGRATION-PLAN.md` | 10 KB | Redosled prelaska na generički katalog |
+| `docs/V2-ROLL-OUT.md` | 6 KB | Postupak puštanja V2 u produkciju |
+| `docs/GITHUB-DEPLOY.md` | 5 KB | Podešavanje objavljivanja |
+| `docs/PRISMA-BASELINE.md` | 3 KB | Baseline migracija |
+| `PREGLED_PROJEKTA_2026-08-29.md` | 770 linija | U repou prezentacionog sajta — read-only pregled **oba** dela projekta |
+
+Ako tražiš „šta je tačno promenjeno u kodu“ — `docs/DETALJAN-DNEVNIK-IZMENA.md`.
+Ovaj fajl je ulazna tačka i objašnjava razloge, ne pojedinačne izmene.
 
 ---
 
 ## Šta je projekat
 
-Projekat ima **dva odvojena dela**, u dva repozitorijuma:
+Projekat ima **dva odvojena dela**, u dva radna direktorijuma ali — od 29.
+avgusta — u **jednom zajedničkom GitHub repozitorijumu**:
 
-| Deo | Gde je | Šta je | Stanje |
+| Deo | Radni direktorijum | Grana na GitHubu | Stanje |
 | --- | --- | --- | --- |
-| **Prezentacioni sajt** | `~/Desktop/narodnja nosnja`, repo `biozencaj-stack/narodnanosnja` | Statički sajt o srpskoj narodnoj nošnji — krajevi, pojmovnik, tehnike | Uživo na GitHub Pages |
-| **Prodavnica** | `~/Desktop/narodnanosnja-prodavnica` | Next.js webshop sa CMS-om | Radi na serveru, repo na GitHubu **još ne postoji** |
+| **Prezentacioni sajt** | `~/Desktop/narodnja nosnja` | `main` | Uživo na GitHub Pages |
+| **Prodavnica** | `~/Desktop/narodnanosnja-prodavnica` | `verzija/v2.0-univerzalna-platforma` | Radi na serveru, nije puštena u produkciju |
 
-Zamišljeno je da se vremenom spoje — građa o nošnjama da pređe u Articles
-prodavnice, pa da postoji jedan sajt umesto dva.
+Oba guraju u `biozencaj-stack/narodnanosnja`.
+
+Zamišljeno je da se vremenom spoje kao sajt — građa o nošnjama da pređe u
+Articles prodavnice, pa da postoji jedan sajt umesto dva. To je sadržajno
+spajanje i **nema veze sa git spajanjem grana**, koje je zabranjeno (vidi
+sledeći odeljak).
+
+### ⚠️ Granu prodavnice nikada ne spajati u `main`
+
+Dve istorije su nastale odvojeno — prodavnica je počela kao zaseban `git init` —
+pa u repou postoje **dva nepovezana korena**. Push na `main` pokreće
+objavljivanje prezentacionog sajta na GitHub Pages; spajanje grane prodavnice
+tamo bi oborilo build ili objavilo pogrešan sadržaj na javnu adresu.
+
+Git ionako odbija takvo spajanje bez `--allow-unrelated-histories`, ali to je
+**slučajna zaštita, ne namerna** — ne oslanjati se na nju.
+
+Ostale grane na remote-u: `verzija/v2.0-prodavnica` (napuštena statička
+prodavnica) i `arhiva/v2-pre-github-2026-08-29` (arhiva stanja pre objave).
+
+Trajno rešenje je razdvajanje u dva repozitorijuma.
 
 ---
 

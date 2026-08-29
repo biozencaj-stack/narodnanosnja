@@ -8,8 +8,28 @@ Prodavnica ručno tkanih proizvoda narodne nošnje. Next.js 16 + Prisma +
 PostgreSQL, sa ugrađenim CMS-om. Nastalo iz `ecommerce-cms-template`.
 
 Prezentacioni deo (priča o nošnjama, pojmovnik, tehnike) za sada živi kao
-zaseban statički sajt u repozitorijumu `narodnanosnja` i objavljuje se na
-GitHub Pages. Plan je da se ta građa preseli ovde, u Articles.
+zaseban statički sajt i objavljuje se na GitHub Pages. Plan je da se ta građa
+preseli ovde, u Articles.
+
+## ⚠️ Ovaj projekat deli repozitorijum sa prezentacionim sajtom
+
+Oba dela guraju u `biozencaj-stack/narodnanosnja`, ali su im istorije
+**nepovezane** — prodavnica je počela kao zaseban `git init`, pa repo ima dva
+korena.
+
+| Grana | Šta je | Objavljivanje |
+| --- | --- | --- |
+| `main` | prezentacioni statički sajt | GitHub Pages |
+| `verzija/v2.0-univerzalna-platforma` | **ova prodavnica** | `objavi.yml` iz ove grane |
+
+**Nikada ne spajaj ovu granu u `main`.** Push na `main` objavljuje
+prezentacioni sajt; spajanje bi oborilo njegov build ili objavilo pogrešan
+sadržaj na javnu adresu. Git odbija spajanje bez
+`--allow-unrelated-histories`, ali to je slučajna zaštita — ne oslanjati se
+na nju.
+
+Kad se u dokumentaciji pominje „spajanje prezentacionog dela u prodavnicu“,
+misli se na **prenos sadržaja** u Articles, ne na git merge.
 
 ---
 
