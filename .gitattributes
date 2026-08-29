@@ -1,0 +1,17 @@
+# Ujednačeni tekstualni fajlovi na svim razvojnim i CI sistemima.
+* text=auto eol=lf
+
+# Windows komandne skripte zadržavaju svoj očekivani format.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Eksplicitno binarni formati.
+*.gif binary
+*.ico binary
+*.jpeg binary
+*.jpg binary
+*.pdf binary
+*.png binary
+*.webp binary
+*.woff binary
+*.woff2 binary

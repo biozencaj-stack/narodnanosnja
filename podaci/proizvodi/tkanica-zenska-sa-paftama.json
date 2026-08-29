@@ -1,0 +1,37 @@
+{
+  "slug": "tkanica-zenska-sa-paftama",
+  "naziv": "Tkanica ženska sa paftama",
+  "sifra": "TKA-004",
+  "kategorija": "tkanice",
+  "cena": 7900,
+  "staraCena": null,
+  "stanje": "po-porudzbini",
+  "istaknut": true,
+  "materijal": [
+    "ovčija vuna",
+    "metal"
+  ],
+  "dimenzije": "165 × 9 cm, pafte 11 × 8 cm",
+  "opis": "Tkani ženski pojas sa metalnim paftama — krupnim kopčama koje se nose napred, preko struka.\n\nPafte se izrađuju posebno, pa se ovaj komad radi po porudžbini. Rok izrade je oko tri nedelje.",
+  "detalji": [
+    [
+      "Tehnika",
+      "Tkanje i metaloplastika"
+    ],
+    [
+      "Pafte",
+      "Posrebren metal"
+    ],
+    [
+      "Rok izrade",
+      "Oko 3 nedelje"
+    ],
+    [
+      "Napomena",
+      "Radi se po porudžbini"
+    ]
+  ],
+  "valuta": "RSD",
+  "redosled": 8,
+  "slike": []
+}

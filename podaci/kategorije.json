@@ -1,0 +1,46 @@
+{
+  "kategorije": [
+    {
+      "slug": "salovi",
+      "naziv": "Šalovi i ešarpe",
+      "kratko": "Ručno tkani šalovi od vune, lana i pamuka",
+      "opis": "Tkani na razboju, u tehnikama koje se u ovim krajevima ne menjaju vekovima. Svaki komad je jedinstven — šara se pamti napamet, a ne prepisuje.",
+      "boje": ["#8c1c13", "#c9a227", "#f3ead8"]
+    },
+    {
+      "slug": "tkanice",
+      "naziv": "Tkanice i pojasevi",
+      "kratko": "Muški i ženski tkani pojasevi sa resama",
+      "opis": "Tkanica je široki tkani pojas koji drži nošnju na okupu. Tka se od vune, u dužinama od dva metra i više, sa geometrijskim šarama koje se razlikuju od kraja do kraja.",
+      "boje": ["#1d3f6e", "#c9a227", "#f5f0e6"]
+    },
+    {
+      "slug": "torbe",
+      "naziv": "Torbe i torbice",
+      "kratko": "Tkane torbe sa narodnim motivima",
+      "opis": "Od malih torbica za svečane prilike do tkanih torbi za svaki dan. Postava je šivena ručno, a šara preuzeta sa starih pregača i ćilima.",
+      "boje": ["#4a5d3a", "#8c1c13", "#efe6d4"]
+    },
+    {
+      "slug": "cilimi",
+      "naziv": "Ćilimi i prostirke",
+      "kratko": "Tkane prostirke i zidni ćilimi",
+      "opis": "Tkani na vertikalnom razboju, u tehnici klečanja. Šare su iste one koje se sreću i na delovima nošnje — rombovi, kuke, rozete.",
+      "boje": ["#5c2a3d", "#c9a227", "#efe3d2"]
+    },
+    {
+      "slug": "nosnja",
+      "naziv": "Nošnja i delovi",
+      "kratko": "Košulje, jeleci, pregače i oglavlja",
+      "opis": "Kompletne nošnje i pojedinačni delovi, rađeni po uzoru na muzejske primerke. Za folklorne ansamble, svečane prilike i kolekcionare.",
+      "boje": ["#7a1f3d", "#c9a227", "#f2e8d5"]
+    },
+    {
+      "slug": "suveniri",
+      "naziv": "Suveniri i sitnice",
+      "kratko": "Mali ručno rađeni pokloni",
+      "opis": "Podmetači, privesci, ukrasi i sitni tkani predmeti — nešto što se lako nosi i lako poklanja.",
+      "boje": ["#2f5d50", "#c9a227", "#f3ebda"]
+    }
+  ]
+}

@@ -1,66 +1,197 @@
-# Svaki push na main gradi sajt i objavljuje novu verziju na GitHub Pages.
-name: Objavi sajt
+name: Objavi prodavnicu
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch: # omogućava ručno pokretanje iz Actions kartice
+    branches:
+      - main
+  workflow_dispatch:
 
-# Dozvole potrebne za objavljivanje na Pages.
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-# Ako stignu dva push-a jedan za drugim, pusti da se prvi objavi do kraja.
+# Deployi se izvršavaju redom. Aktivni deploy se ne prekida na pola kada stigne
+# sledeći push.
 concurrency:
-  group: pages
+  group: production-${{ github.repository }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "22"
+
 jobs:
-  gradi:
-    name: Izgradnja
+  provera:
+    name: Provera verzije
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CI: "true"
+      DATABASE_URL: postgresql://provera:provera@127.0.0.1:5432/provera
+      NEXTAUTH_SECRET: ci-nextauth-secret-nije-za-produkciju
+      ORDER_ACCESS_SECRET: ci-order-secret-nije-za-produkciju
+      NEXTAUTH_URL: https://ci.example.invalid
+      NEXT_PUBLIC_SITE_URL: https://ci.example.invalid
+      NEXT_PUBLIC_CARD_PAYMENTS_ENABLED: "false"
+
     steps:
       - name: Preuzmi kod
         uses: actions/checkout@v4
 
-      - name: Postavi Node
+      - name: Postavi Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
 
-      - name: Podesi Pages
-        id: pages
-        uses: actions/configure-pages@v5
-        with:
-          # Uključuje GitHub Pages na repozitorijumu ako već nije uključen.
-          enablement: true
+      - name: Instaliraj zavisnosti
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
 
-      - name: Izgradi sajt
-        run: node scripts/build.mjs
-        env:
-          SITE_URL: ${{ steps.pages.outputs.base_url }}
-          BASE_PATH: ${{ steps.pages.outputs.base_path }}
+      - name: Proveri Prisma šemu
+        run: npx prisma validate
 
-      - name: Proveri interne veze
-        run: node scripts/proveri-veze.mjs
-        env:
-          BASE_PATH: ${{ steps.pages.outputs.base_path }}
+      - name: Proveri TypeScript
+        run: npx tsc --noEmit --incremental false
 
-      - name: Spakuj rezultat
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
+      - name: Pokreni sigurnosne testove
+        run: >-
+          node --import tsx --test
+          lib/auth/admin-policy.test.ts
+          lib/nestpay/index.test.ts
+          lib/orders/payment-policy.test.ts
+          lib/orders/access.test.ts
+
+      - name: Probna produkcijska izgradnja
+        run: npm run build
 
   objavi:
-    name: Objavljivanje
-    needs: gradi
+    name: Objavi na produkciju
+    needs: provera
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     environment:
-      name: github-pages
-      url: ${{ steps.objava.outputs.page_url }}
+      name: production
+      url: ${{ vars.PRODUCTION_URL }}
+    env:
+      SERVER_PORT: ${{ vars.SERVER_PORT || '22' }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/var/www/narodnanosnja' }}
+      PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+      RELEASE_ID: ${{ github.sha }}-${{ github.run_attempt }}
+
     steps:
-      - name: Objavi na GitHub Pages
-        id: objava
-        uses: actions/deploy-pages@v4
+      - name: Preuzmi provereni kod
+        uses: actions/checkout@v4
+
+      - name: Proveri deploy podešavanja
+        shell: bash
+        run: |
+          : "${PRODUCTION_URL:?Nedostaje variable PRODUCTION_URL}"
+
+          [[ "$SERVER_PORT" =~ ^[1-9][0-9]{0,4}$ ]] &&
+            (( SERVER_PORT <= 65535 )) || {
+            echo "SERVER_PORT nije validan" >&2
+            exit 1
+          }
+          [[ "$DEPLOY_PATH" =~ ^/(var/www|srv)/[A-Za-z0-9._/-]+$ ]] &&
+            [[ "$DEPLOY_PATH" != *'/../'* ]] &&
+            [[ "$DEPLOY_PATH" != *'/./'* ]] &&
+            [[ "$DEPLOY_PATH" != *'//'* ]] &&
+            [[ "$DEPLOY_PATH" != */ ]] || {
+            echo "DEPLOY_PATH mora biti bezbedna aplikaciona putanja pod /var/www ili /srv" >&2
+            exit 1
+          }
+          [[ "$PRODUCTION_URL" =~ ^https?://[^[:space:]]+$ ]] || {
+            echo "PRODUCTION_URL mora biti puna HTTP(S) adresa" >&2
+            exit 1
+          }
+          [[ "$RELEASE_ID" =~ ^[0-9a-f]{40}-[0-9]+$ ]] || {
+            echo "RELEASE_ID nije validan" >&2
+            exit 1
+          }
+
+      - name: Pripremi verifikovan SSH pristup
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          : "${SSH_PRIVATE_KEY:?Nedostaje secret SSH_PRIVATE_KEY}"
+          : "${SSH_KNOWN_HOSTS:?Nedostaje secret SSH_KNOWN_HOSTS}"
+          : "${SERVER_HOST:?Nedostaje secret SERVER_HOST}"
+          : "${SERVER_USER:?Nedostaje secret SERVER_USER}"
+          [[ "$SERVER_HOST" =~ ^[A-Za-z0-9._:-]+$ ]] || {
+            echo "SERVER_HOST nije validan" >&2
+            exit 1
+          }
+          [[ "$SERVER_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || {
+            echo "SERVER_USER nije validan" >&2
+            exit 1
+          }
+
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/deploy_key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/deploy_key" "$HOME/.ssh/known_hosts"
+          {
+            printf 'Host production\n'
+            printf '  HostName %s\n' "$SERVER_HOST"
+            printf '  User %s\n' "$SERVER_USER"
+            printf '  Port %s\n' "$SERVER_PORT"
+            printf '  IdentityFile %s/.ssh/deploy_key\n' "$HOME"
+            printf '  IdentitiesOnly yes\n'
+            printf '  BatchMode yes\n'
+            printf '  StrictHostKeyChecking yes\n'
+            printf '  UserKnownHostsFile %s/.ssh/known_hosts\n' "$HOME"
+          } > "$HOME/.ssh/config"
+          chmod 600 "$HOME/.ssh/config"
+          ssh production true
+
+      - name: Otvori novu release fasciklu
+        shell: bash
+        run: |
+          RELEASE_DIR="${DEPLOY_PATH%/}/releases/${RELEASE_ID}"
+          ssh production \
+            "set -eu; test -f '${DEPLOY_PATH%/}/.env'; mkdir -p '${DEPLOY_PATH%/}/releases'; test ! -e '$RELEASE_DIR'; mkdir '$RELEASE_DIR'"
+
+      - name: Pošalji kod u izolovani release
+        shell: bash
+        run: |
+          RELEASE_DIR="${DEPLOY_PATH%/}/releases/${RELEASE_ID}"
+          rsync -az --delete-delay \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            --exclude '.env' \
+            --exclude '.next/' \
+            --exclude 'node_modules/' \
+            --exclude 'public/uploads/' \
+            ./ "production:${RELEASE_DIR}/"
+
+      - name: Izgradi, proveri i atomski aktiviraj release
+        shell: bash
+        run: |
+          RELEASE_DIR="${DEPLOY_PATH%/}/releases/${RELEASE_ID}"
+          printf -v REMOTE_COMMAND \
+            'PRODUCTION_URL=%q APPLY_DATABASE_MIGRATIONS=false bash %q' \
+            "$PRODUCTION_URL" "$RELEASE_DIR/scripts/deploy.sh"
+          ssh production "$REMOTE_COMMAND"
+
+      - name: Ukloni neuspešan release
+        if: failure()
+        shell: bash
+        run: |
+          if [[ -f "$HOME/.ssh/config" ]]; then
+            RELEASE_DIR="${DEPLOY_PATH%/}/releases/${RELEASE_ID}"
+            CURRENT_LINK="${DEPLOY_PATH%/}/current"
+            DEPLOY_LOCK="${DEPLOY_PATH%/}/.deploy.lock"
+            printf -v CLEANUP_BODY \
+              'ACTIVE=$(readlink -f %q 2>/dev/null || true); if [[ -d %q && "$ACTIVE" != %q ]]; then rm -rf -- %q; fi' \
+              "$CURRENT_LINK" "$RELEASE_DIR" "$RELEASE_DIR" "$RELEASE_DIR"
+            printf -v CLEANUP_COMMAND \
+              'flock -w 180 %q bash -c %q' \
+              "$DEPLOY_LOCK" "$CLEANUP_BODY"
+            ssh production "$CLEANUP_COMMAND" || true
+          fi
+
+      - name: Ukloni privatni ključ sa runner-a
+        if: always()
+        run: rm -f "$HOME/.ssh/deploy_key"

@@ -1,0 +1,33 @@
+{
+  "slug": "podmetaci-tkani-set",
+  "naziv": "Tkani podmetači — set od 4",
+  "sifra": "SUV-001",
+  "kategorija": "suveniri",
+  "cena": 1600,
+  "staraCena": null,
+  "stanje": "na-stanju",
+  "istaknut": false,
+  "materijal": [
+    "pamuk",
+    "vuna"
+  ],
+  "dimenzije": "12 × 12 cm, po komadu",
+  "opis": "Set od četiri tkana podmetača sa različitim narodnim šarama — romb, rozeta, kuka i cik-cak.\n\nMali poklon koji lako putuje.",
+  "detalji": [
+    [
+      "Sadržaj",
+      "4 komada"
+    ],
+    [
+      "Šare",
+      "Četiri različite"
+    ],
+    [
+      "Održavanje",
+      "Ručno pranje"
+    ]
+  ],
+  "valuta": "RSD",
+  "redosled": 17,
+  "slike": []
+}

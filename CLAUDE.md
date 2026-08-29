@@ -4,8 +4,12 @@ Uputstvo za Claude Code na ovom projektu. Pročitaj ga pre bilo kakve izmene.
 
 ## Šta je ovo
 
-Statički sajt o srpskoj narodnoj nošnji. Generiše se sopstvenim skriptom u
-čistom Node.js-u, **bez ijedne npm zavisnosti**. Objavljuje se na GitHub Pages.
+Prodavnica ručno tkanih proizvoda narodne nošnje. Next.js 16 + Prisma +
+PostgreSQL, sa ugrađenim CMS-om. Nastalo iz `ecommerce-cms-template`.
+
+Prezentacioni deo (priča o nošnjama, pojmovnik, tehnike) za sada živi kao
+zaseban statički sajt u repozitorijumu `narodnanosnja` i objavljuje se na
+GitHub Pages. Plan je da se ta građa preseli ovde, u Articles.
 
 ---
 
@@ -15,118 +19,174 @@ Statički sajt o srpskoj narodnoj nošnji. Generiše se sopstvenim skriptom u
 novu funkcionalnost ili veću izmenu, prvo napravi granu:
 
 ```bash
-git checkout main
-git pull
-git checkout -b verzija/v1.2-galerija
+git checkout main && git pull
+git checkout -b verzija/v1.1-galerija-proizvoda
 ```
 
-Imenovanje grana:
+| Vrsta posla        | Oblik imena                | Primer                        |
+| ------------------ | -------------------------- | ----------------------------- |
+| Nova verzija       | `verzija/vX.Y-kratak-opis` | `verzija/v1.1-fotografije`    |
+| Nova funkcionalnost| `dodatak/kratak-opis`      | `dodatak/nestpay-kartice`     |
+| Ispravka greške    | `ispravka/kratak-opis`     | `ispravka/zbir-u-korpi`       |
+| Samo sadržaj       | `sadrzaj/kratak-opis`      | `sadrzaj/opisi-proizvoda`     |
 
-| Vrsta posla                 | Oblik imena                    | Primer                        |
-| --------------------------- | ------------------------------ | ----------------------------- |
-| Nova verzija sajta          | `verzija/vX.Y-kratak-opis`     | `verzija/v1.2-galerija`       |
-| Nova funkcionalnost         | `dodatak/kratak-opis`          | `dodatak/pretraga-nosnji`     |
-| Ispravka greške             | `ispravka/kratak-opis`         | `ispravka/veze-u-podnozju`    |
-| Samo sadržaj (tekst/podaci) | `sadrzaj/kratak-opis`          | `sadrzaj/nosnja-pirota`       |
-
-Kad je posao gotov: push grane, otvori pull request ka `main`, i tek posle
-spajanja se objavljuje nova verzija sajta. **Push na `main` = objavljivanje.**
+Push na `main` znači objavljivanje, pa `main` mora u svakom trenutku biti ispravan.
 
 ## ⚠️ Pravilo broj dva: održavaj ovaj fajl
 
-Kad dodaš novu stranicu, novi izvor podataka, novi skript ili promeniš način
-rada — **dopuni CLAUDE.md u istom commit-u**. Ovaj fajl je jedini opis kako
-projekat radi; ako zastari, sledeći rad kreće od pogrešnih pretpostavki.
+Kad dodaš stranicu, model u bazi, skript ili promeniš način rada —
+**dopuni CLAUDE.md u istom commit-u**.
 
 ---
-
-## Struktura
-
-```
-site/
-  data/          izvor sadržaja — ovde se dodaje nova građa
-    nosnje.js      regionalni tipovi nošnje (jedan unos = jedna stranica)
-    pojmovnik.js   pojmovi i objašnjenja
-  pages/         po jedan modul za svaku stranicu; izvoze naslov, opis,
-                 aktivno, opciono sara(), i telo(ctx) -> HTML string
-  assets/        site.css i site.js, kopiraju se u dist/ neizmenjeni
-scripts/
-  build.mjs      generator: čita data + pages, piše dist/
-  proveri-veze.mjs  provera da nijedna interna veza nije polomljena
-  proveri-uzivo.mjs provera objavljenog sajta preko mreže (ne koristi se u CI-ju)
-.github/workflows/
-  objavi.yml     push na main -> izgradnja -> GitHub Pages
-  provera.yml    push na ostale grane i PR -> samo izgradnja i provera
-dist/            rezultat izgradnje; nije u git-u, pravi ga CI
-```
 
 ## Naredbe
 
 ```bash
-node scripts/build.mjs        # izgradi sajt u dist/
-node scripts/proveri-veze.mjs # proveri sve interne veze (mora proći)
-python3 -m http.server 8000 --directory dist   # lokalni pregled
-
-node scripts/proveri-uzivo.mjs   # proveri objavljeni sajt posle deploy-a
+npm install --legacy-peer-deps   # OBAVEZNO --legacy-peer-deps, vidi zamke
+npx prisma generate
+npm run dev                      # razvojni server
+npm run build                    # produkcijski build
+npx tsx scripts/uvoz-nosnja.ts   # uvoz kategorija i proizvoda iz podaci/
+npx tsx scripts/create-admin.ts --email … --password … --role ADMIN
 ```
 
-Pre svakog commit-a pokreni **obe** prve dve naredbe. Provera veza mora proći
-bez ijedne greške — CI je ionako obara ako ne prođe.
+## Zamke koje su već jednom pojele vreme
 
----
+- **`npm install` bez `--legacy-peer-deps` puca.** `next-auth@4` još ne
+  prihvata React 19 kao peer zavisnost. Nije pokvareno — samo mora zastavica.
+- **npm 11 blokira install skripte paketa.** Posle instalacije ručno pokreni
+  `npx prisma generate`, inače Prisma klijent ne postoji.
+- **Fontovima treba `latin-ext`.** Bez tog podskupa srpske dijakritike
+  (č, ć, š, ž, đ) tiho padnu na rezervni font. Ako dodaješ ćirilicu, treba i
+  `cyrillic`. Zatečeni `Libre_Baskerville` je imao samo `latin`.
+- **Podrazumevana paleta stoji u CSS-u, runtime paleta u Settings.** Admin
+  vrednosti se postavljaju kao CSS promenljive iz `app/layout.tsx`; pri
+  dodavanju novog semantičkog tokena dopuni i registry i `storeThemeStyle`.
+- **Portovi na serveru su zauzeti.** 3000 (shopdemo), 3001 (kore), 3002, 8000,
+  8080. Ova prodavnica radi na **3007**, nginx je izlaže na **8090**.
 
-## Pravila za kod
+## Struktura
 
-- **Bez npm zavisnosti.** Nema `package.json`, nema `node_modules`. Sve što
-  treba piše se ručno. To je namerno: CI nema šta da instalira i ništa ne može
-  da se pokvari samo od sebe.
-- **Sve veze između stranica su relativne.** Svaka `telo(ctx)` funkcija dobija
-  `ctx.p` — prefiks do korena sajta (`./`, `../`, `../../`). Uvek gradi veze kao
-  `${p}nosnje/sumadija/`, nikad apsolutno sa `/`. Zahvaljujući tome sajt radi i
-  na korenu domena i u pod-fascikli.
-  - Jedini izuzetak je `404.html`, koja se servira sa proizvoljne dubine pa
-    koristi apsolutne putanje kroz `BASE_PATH`.
-- **Ekraniraj svaki tekst iz podataka** kroz `esc()` pre ubacivanja u HTML.
-- **Vrednosti sa `dataUri()` idu u jednostrukim navodnicima.** Te vrednosti
-  završavaju i u HTML `style` atributu, pa bi dvostruki navodnik prekinuo
-  atribut i šara se ne bi videla. (Ovo je već jednom bilo pokvareno.)
-- **Imena u kodu su na srpskom**, latinicom, bez dijakritika u imenima fajlova
-  i promenljivih (`nosnje`, `saraZa`, `proveri-veze.mjs`).
-
-## Pravila za sadržaj
-
-- Tekst se piše **srpskom latinicom**; posetilac ga jednim klikom prebacuje u
-  ćirilicu (`site/assets/site.js`). Ne piši sadržaj ćirilicom — transliteracija
-  ide samo u jednom smeru.
-- Ako dodaješ reč u kojoj `nj`, `lj` ili `dž` nisu jedan glas (npr. „injekcija“),
-  dopuni mapu `IZUZECI` u `site/assets/site.js`.
-- Nova nošnja se dodaje **isključivo** kao novi unos u `site/data/nosnje.js`.
-  Stranica, kartica na početnoj, veza u podnožju i sitemap nastaju sami.
-  Obavezna polja: `slug`, `naziv`, `tip`, `podrucje`, `boje` (tri hex boje),
-  `uvod`, `opis` (niz pasusa), `zenska`, `muska` (nizovi parova `[ime, opis]`),
-  `materijali`, `tehnike`, `zanimljivost`.
-- Etnografija je puna lokalnih razlika i spornih podela. Piši uopšteno i tačno;
-  ne izmišljaj datume, adrese, brojeve telefona ni imena ljudi. Ako nešto nije
-  pouzdano poznato, izostavi ga.
-
-## Objavljivanje
-
-Push na `main` pokreće `objavi.yml`, koji gradi sajt i objavljuje ga na
-GitHub Pages. Nema drugog načina objavljivanja i `dist/` se nikada ne commit-uje.
-
-Posle objavljivanja proveri rezultat preko mreže:
-
-```bash
-node scripts/proveri-uzivo.mjs
+```
+app/            Next.js App Router
+  (shop)/         prodavnica: katalog, proizvod, korpa, checkout
+  (user)/         nalog kupca: porudžbine, adrese, favoriti
+  (legal)/        pravne stranice propisane za webshop u Srbiji
+  admin/          CMS — proizvodi, porudžbine, kategorije, članci, statistika
+  api/            REST rute
+components/     React komponente
+lib/            poslovna logika
+prisma/         schema.prisma i migracije
+podaci/         izvorni podaci o nošnji — kategorije i proizvodi (JSON)
+scripts/        uvoz-nosnja.ts, create-admin.ts, backup.sh, restore.sh
+messages/       prevodi (sr, en)
 ```
 
-Skripta obilazi sve stranice sa `sitemap.xml`, proverava statuse, naslove, sve
-resurse i da 404 stranica zaista vraća 404.
+## Podaci o proizvodima
 
-### Preduslovi koji su već ispunjeni
+Izvor istine za početno punjenje je `podaci/` — isti JSON koji koristi i
+statički sajt. `scripts/uvoz-nosnja.ts` ih upisuje preko `slug`-a, pa se može
+pokretati više puta bez dupliranja i **ništa ne briše**.
 
-Repozitorijum je javan i Pages je uključen sa izvorom **GitHub Actions**
-(Settings → Pages). Ovo je jednokratno podešavanje koje je moralo ručno da se
-uradi — token iz workflow-a ne može da uključi Pages prvi put, pa je korak
-„Podesi Pages“ padao sve dok to nije podešeno. Ako se Pages ikad isključi,
-greška će se vratiti na istom koraku.
+Posle prvog uvoza proizvode uređuj kroz admin panel, ne kroz JSON — inače
+ponovni uvoz pregazi izmene urađene u panelu.
+
+Mapiranje koje nije očigledno:
+- sniženje: puna cena ide u `price`, snižena u `salePrice`, `onSale = true`
+- `stanje: rasprodato` → veličina „Univerzalna“ sa zalihom 0
+- `stanje: po-porudzbini` → zaliha 99 (može se naručiti, samo se duže čeka)
+- engleski prevodi **ne postoje** — u `{ sr, en }` poljima svuda stoji srpski
+
+## Generički katalog (v2, expand-only)
+
+Arhitektonske granice platforme i redosled narednih faza su u
+`docs/ARCHITECTURE-V2.md`.
+
+`prisma/schema.prisma` sadrži novu, opcionu osnovu za više branši:
+
+- `ProductType` i tipizovane definicije/vrednosti atributa određuju dinamička
+  polja proizvoda;
+- `ProductOption` / `ProductOptionValue` predstavljaju prodajne ose kao što su
+  veličina, boja, pakovanje i ukus;
+- `ProductVariantOptionValue` povezuje te vrednosti sa postojećim
+  `ProductVariant` modelom.
+
+Legacy `ProductSize` i specifična polja proizvoda se i dalje koriste. Ne
+uklanjaj ih i ne prebacuj storefront na novi model bez planiranog backfilla i
+dual-read provere. Potpun redosled je u
+`docs/CATALOG-MIGRATION-PLAN.md`. Admin API za tipove i atribute postoji, ali
+se ne poziva pre eksplicitne expand migracije baze.
+
+## Checkout i porudžbine (v2)
+
+- Browser šalje samo identitet artikla/opcije i količinu. `buildCheckoutQuote`
+  iz baze računa cenu, popuste, dostavu i total.
+- `createSecureOrder` u Serializable transakciji ponovo proverava cenu,
+  atomarno skida zalihu i upisuje snapshot porudžbine.
+- Svaki browser checkout pokušaj šalje stabilan `Idempotency-Key`, a
+  `Order.checkoutIdempotencyKey` je unique. Ne uklanjaj ga: izgubljen odgovor
+  inače pravi duple porudžbine i rezervacije.
+- Otkazivanje/decline vraća zalihu i rezervisani kupon najviše jednom.
+- Gost pristupa detaljima porudžbine kratkotrajnim HMAC tokenom u zasebnom
+  HttpOnly/SameSite cookie-ju po porudžbini; CUID nije autentifikacija.
+  Recovery idempotency ključ je ograničen na minimalni CARD PENDING/PROCESSING
+  snapshot i dva sata. Podesi zaseban `ORDER_ACCESS_SECRET`.
+- reCAPTCHA token se proverava u samom order handleru neposredno pre quote-a i
+  rezervacije zalihe; zasebna klijentska verifikacija nije autorizacija.
+- Kartice su capability flagom isključene dok banka i NestPay tok nisu
+  sertifikovani. Iznos payment zahteva uvek se čita iz porudžbine u bazi;
+  preflight izdaje kratkotrajan handoff za pravi top-level POST banci.
+
+## Centralna podešavanja (v2)
+
+`Setting` tabela je dozvoljeni, tipizovani runtime registry. Admin stranica
+`/admin/settings` uređuje identitet, kontakt, SEO, semantičku paletu, radno
+vreme, dostavu i minimalnu porudžbinu. `.env` vrednosti su samo fallback za
+prvo pokretanje; tajne baze, emaila i plaćanja nikada ne idu u `Setting`.
+
+`lib/config/capabilities.ts` kontroliše module koji smeju da budu javno
+vidljivi. Ne prikazuj kartice, lokacije, dokumente, jezike ili chat ako njihov
+capability nije uključen i stvarna usluga nije spremna.
+
+## Admin uloge (v2)
+
+Politika je deny-by-default u `lib/auth/admin-policy.ts` i sprovodi se u
+`proxy.ts`. `ADMIN` ima pun pristup. `OPERATOR` ima samo porudžbine/status i
+poruke kupaca. Svaka nova admin ruta mora dobiti eksplicitnu odluku u politici
+i sopstvenu serversku proveru; skrivanje linka nije autorizacija.
+
+## Server
+
+Hetzner VPS `SERVER_HOST`, pristup preko `SSH_KEY_PATH` kao `SERVER_USER`.
+
+```
+/var/www/narodnanosnja     kod
+PM2 proces: narodnanosnja  port 3007
+nginx: /etc/nginx/sites-available/narodnanosnja  port 8090
+baza: narodnanosnja_db, korisnik nosnja
+```
+
+Na istom serveru rade i `shopdemo`, `kore` i `kockica` — **ne diraj ih.**
+
+`.env` postoji samo na serveru i nije u gitu. Šablon je `.env.example`.
+
+## Šta još nije urađeno
+
+- [ ] Fotografije proizvoda — sve su prazne, stoje sivi mestodržači
+- [ ] Pravi domen i HTTPS (sada samo IP i port 8090)
+- [ ] Prenos građe o nošnjama iz statičkog sajta u Articles
+- [ ] Baseline + expand migracija generičkog kataloga na klonu produkcione baze
+- [ ] Backfill i dual-read generičkih atributa/opcija u ProductForm/storefrontu
+- [ ] Dinamički filteri izvedeni iz `AttributeDefinition` umesto legacy polja
+- [ ] Page builder za početnu, zajednička medijateka i redirect/404 SEO centar
+- [ ] Zone/težinska pravila i integracija kurirske službe
+- [ ] NestPay kartice — tek kad postoji ugovor sa bankom; do tada radi pouzeće
+- [ ] Cleanup napuštenih payment rezervacija, REVIEW reconciliation i email outbox
+
+## Bezbedno objavljivanje šeme
+
+`scripts/deploy.sh` više nikada ne pada nazad na `prisma db push`. Automatske
+migracije su podrazumevano isključene i zahtevaju
+`APPLY_DATABASE_MIGRATIONS=true`. Za v2 prvo pratiti
+`docs/V2-ROLL-OUT.md`; ne spajati/deployovati ovu granu na postojeću bazu pre
+baseline probe i eksplicitne expand migracije.

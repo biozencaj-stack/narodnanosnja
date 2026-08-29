@@ -1,0 +1,32 @@
+{
+  "slug": "tkanica-zenska-uska",
+  "naziv": "Tkanica ženska — uska",
+  "sifra": "TKA-003",
+  "kategorija": "tkanice",
+  "cena": 3500,
+  "staraCena": null,
+  "stanje": "na-stanju",
+  "istaknut": false,
+  "materijal": [
+    "ovčija vuna"
+  ],
+  "dimenzije": "160 × 8 cm (bez resa)",
+  "opis": "Uži ženski pojas, tka se u istoj tehnici ali finije. Nosi se preko pregače ili zubuna.\n\nŠara je sitnija nego na muškim tkanicama, sa nizovima kuka i rombova.",
+  "detalji": [
+    [
+      "Tehnika",
+      "Tkanje na razboju"
+    ],
+    [
+      "Namena",
+      "Ženska narodna nošnja"
+    ],
+    [
+      "Šara",
+      "Kuke i rombovi"
+    ]
+  ],
+  "valuta": "RSD",
+  "redosled": 7,
+  "slike": []
+}

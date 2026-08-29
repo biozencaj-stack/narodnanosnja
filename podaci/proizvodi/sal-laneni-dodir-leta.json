@@ -1,0 +1,36 @@
+{
+  "slug": "sal-laneni-dodir-leta",
+  "naziv": "Laneni šal Dodir leta",
+  "sifra": "SAL-002",
+  "kategorija": "salovi",
+  "cena": 4600,
+  "staraCena": 5200,
+  "stanje": "na-stanju",
+  "istaknut": true,
+  "materijal": [
+    "lan"
+  ],
+  "dimenzije": "170 × 40 cm",
+  "opis": "Lagani laneni šal za toplije dane. Lan diše, ne greje previše, a s vremenom postaje sve mekši.\n\nTkan u jednostavnoj šari sa uskim prugama, tako da pristaje i uz nošnju i uz svakodnevnu odeću.",
+  "detalji": [
+    [
+      "Tehnika",
+      "Tkanje na razboju"
+    ],
+    [
+      "Šara",
+      "Uske pruge"
+    ],
+    [
+      "Težina",
+      "Laka, letnja"
+    ],
+    [
+      "Održavanje",
+      "Mašinsko pranje na 30°C"
+    ]
+  ],
+  "valuta": "RSD",
+  "redosled": 2,
+  "slike": []
+}

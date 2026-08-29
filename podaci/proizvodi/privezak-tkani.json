@@ -1,0 +1,29 @@
+{
+  "slug": "privezak-tkani",
+  "naziv": "Tkani privezak za ključeve",
+  "sifra": "SUV-002",
+  "kategorija": "suveniri",
+  "cena": 650,
+  "staraCena": null,
+  "stanje": "na-stanju",
+  "istaknut": false,
+  "materijal": [
+    "vuna",
+    "metal"
+  ],
+  "dimenzije": "9 × 3 cm",
+  "opis": "Sitan tkani privezak sa narodnom šarom i metalnim alkom.\n\nNajjeftiniji način da se ponese komad ručnog rada.",
+  "detalji": [
+    [
+      "Alka",
+      "Metalna"
+    ],
+    [
+      "Šara",
+      "Nasumično iz serije"
+    ]
+  ],
+  "valuta": "RSD",
+  "redosled": 18,
+  "slike": []
+}

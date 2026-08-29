@@ -1,0 +1,36 @@
+{
+  "slug": "vunene-carape-sarene",
+  "naziv": "Vunene čarape šarene",
+  "sifra": "NOS-003",
+  "kategorija": "nosnja",
+  "cena": 2400,
+  "staraCena": null,
+  "stanje": "na-stanju",
+  "istaknut": false,
+  "materijal": [
+    "ovčija vuna"
+  ],
+  "dimenzije": "Veličine 36–46",
+  "opis": "Pletene vunene čarape do kolena, sa geometrijskim šarama u crvenoj, crnoj i beloj.\n\nPletu se na pet igala, ukrug, bez šava. Veličinu navedite u napomeni uz porudžbinu.",
+  "detalji": [
+    [
+      "Tehnika",
+      "Pletenje na pet igala"
+    ],
+    [
+      "Šav",
+      "Bez šava"
+    ],
+    [
+      "Veličine",
+      "36–46"
+    ],
+    [
+      "Održavanje",
+      "Ručno pranje"
+    ]
+  ],
+  "valuta": "RSD",
+  "redosled": 16,
+  "slike": []
+}

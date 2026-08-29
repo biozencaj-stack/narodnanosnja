@@ -1,61 +1,175 @@
-# Српска народна ношња
+# E-commerce CMS Template
 
-Статички сајт о српској народној ношњи — по крајевима, по деловима одеће и по
-техникама израде.
+A full-featured e-commerce template with a built-in CMS, built with Next.js 16, TypeScript, Prisma, and Tailwind CSS.
 
-**Уживо:** https://biozencaj-stack.github.io/narodnanosnja/
+**No WordPress needed** - manage products, categories, brands, articles, banners, and more directly through the admin panel.
 
-## Шта садржи
+## Features
 
-- **8 регионалних типова** ношње, свака са својом страницом
-- **Појмовник** са 26 појмова, претрагом и филтрирањем по групама
-- **Технике израде** — од лана и конопље до златовеза и шлингераја
-- **Где видети** — музеји, етно-паркови и манифестације
-- Пребацивање **латиница ↔ ћирилица** једним кликом
-- Тамна тема, потпуно прилагођен мобилним уређајима, без праћења и колачића
+### CMS / Admin Panel
 
-## Како ради
+- **Products** - Full CRUD with 3 images, sizes/stock, SEO fields
+- **Categories** - Hierarchical categories with images
+- **Brands** - Brand management with logos
+- **Blog/Articles** - Blog system with 3 images, rich content, publish/draft
+- **Banners** - Hero carousel and promotional banners
+- **Ticker** - Scrolling announcement messages
+- **Newsletter** - Rich text editor, subscriber management, campaign history
+- **Orders** - Order management with status tracking and export
+- **Users** - User management with roles (Admin, Operator, Customer)
+- **Statistics** - Revenue, orders, top products dashboard
+### E-commerce
 
-Сајт се генерише сопственим скриптом у чистом Node.js-у — **без иједне npm
-зависности**. Нема `package.json`, нема `node_modules`, нема шта да се поквари.
+- Product catalog with filtering (category, brand, size, price, gender)
+- Search functionality
+- Shopping cart (Zustand + sessionStorage)
+- Checkout with guest support
+- Payment integration (NestPay/card + cash on delivery)
+- Order tracking and history
+- User accounts with saved addresses
+- Wishlist with sale alerts
+- Product reviews and ratings
+- Recently viewed products
+
+### Technical
+
+- **Next.js 16** with App Router and Turbopack
+- **TypeScript** for type safety
+- **Prisma** ORM with PostgreSQL
+- **Tailwind CSS 4** for styling
+- **NextAuth.js** for authentication
+- **Sharp** for image processing
+- **Zustand** for state management
+- **i18n** support (Serbian + English, extensible)
+- SEO optimized (JSON-LD, Open Graph, sitemap, robots.txt)
+- Email notifications (order confirmations, password reset, etc.)
+- reCAPTCHA v3 bot protection
+- Google Analytics support
+
+## Quick Start
+
+### Prerequisites
+
+- Node.js 18+
+- PostgreSQL database
+- npm or yarn
+
+### Installation
 
 ```bash
-node scripts/build.mjs                          # изгради сајт у dist/
-node scripts/proveri-veze.mjs                   # провери све интерне везе
-python3 -m http.server 8000 --directory dist    # локални преглед
-node scripts/proveri-uzivo.mjs                  # провери објављени сајт
+# Clone/copy the template
+cd EcommerceTemplate
+
+# Install dependencies
+npm install
+
+# Copy environment file
+cp .env.example .env.local
+
+# Edit .env.local with your database URL and other settings
+# (see .env.example for all available options)
+
+# Run database migration
+npx prisma migrate dev --name init
+
+# Seed the database with sample data
+npx prisma db seed
+
+# Create admin user
+npx tsx scripts/create-admin.ts --email admin@example.com --password YourPassword123! --role ADMIN
+
+# Start development server
+npm run dev
 ```
 
-Отвори http://localhost:8000
+Visit `http://localhost:3000` for the storefront and `http://localhost:3000/admin` for the admin panel.
 
-## Структура
+### Image Upload
 
-| Путања                | Шта је                                              |
-| --------------------- | --------------------------------------------------- |
-| `site/data/`          | сав садржај — ношње и појмовник                     |
-| `site/pages/`         | по један модул за сваку страницу                    |
-| `site/assets/`        | `site.css` и `site.js`                              |
-| `scripts/build.mjs`   | генератор статичког сајта                           |
-| `scripts/proveri-veze.mjs` | провера интерних веза                          |
-| `scripts/proveri-uzivo.mjs` | провера објављеног сајта преко мреже          |
-| `.github/workflows/`  | аутоматска изградња и објављивање                   |
+Product and article images are stored in `public/uploads/`. The upload API automatically:
 
-## Објављивање
+- Resizes images to max 1200x1200px
+- Converts to WebP format for optimal file size
+- Saves to the appropriate subfolder (products, articles, categories, brands)
 
-Сваки push на грану `main` аутоматски гради сајт и објављује нову верзију на
-GitHub Pages. Гране и pull request-и се само граде и проверавају, без објављивања.
+### i18n (Internationalization)
 
-Подешавање које мора бити укључено: **Settings → Pages → Source: GitHub Actions**.
+The template includes a simple i18n system:
 
-## Допринос
+- Translation files: `messages/sr.json`, `messages/en.json`
+- Set `NEXT_PUBLIC_LOCALE=sr` or `NEXT_PUBLIC_LOCALE=en` in `.env.local`
+- Add more languages by creating `messages/{locale}.json`
+- Use `t("key")` from `@/i18n` for translations
 
-Исправке и допуне су добродошле. Нови крај се додаје као нови унос у
-`site/data/nosnje.js` — страница, картица на почетној и sitemap настају сами.
+### Payment Integration
 
-Рад увек иде на засебној грани, никада директно на `main`. Детаљна правила су у
-[CLAUDE.md](CLAUDE.md).
+**NestPay (Banca Intesa)** is configured out of the box. To enable:
 
-## Лиценца
+1. Set NestPay credentials in `.env.local`
+2. Configure callback URLs
 
-Садржај: [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/deed.sr)
-Код: MIT
+To add a different payment provider, see `lib/nestpay/` for the existing implementation pattern.
+
+## Project Structure
+
+```
+app/
+  (auth)/          - Authentication pages (login, register, reset password)
+  (legal)/         - Legal pages (terms, privacy, returns)
+  (shop)/          - Storefront pages (catalog, product, cart, checkout, blog)
+  (user)/          - User dashboard (orders, addresses, settings)
+  admin/           - Admin panel pages
+  api/             - API routes
+    admin/         - Admin API (products, categories, brands, articles, upload, etc.)
+    payments/      - Payment callbacks
+    products/      - Public product API
+
+components/
+  admin/           - Admin-specific components (ImageUpload)
+  checkout/        - Checkout components
+  filter/          - Product filter components
+  home/            - Homepage sections
+  layout/          - Header, footer, navigation
+  product/         - Product display components
+  ui/              - Reusable UI primitives
+
+lib/
+  auth/            - NextAuth configuration
+  db/              - Prisma client
+  email/           - Email templates and sending
+  nestpay/         - NestPay payment integration
+  orders/          - Order processing logic
+  products.ts      - Local product data layer
+  utils/           - Utility functions
+
+messages/          - i18n translation files
+prisma/            - Database schema and migrations
+public/uploads/    - User-uploaded images
+store/             - Zustand state stores (cart, wishlist, UI)
+types/             - TypeScript type definitions
+```
+
+## Deployment
+
+### Docker
+
+```bash
+docker build -t ecommerce-template .
+docker run -p 3000:3000 --env-file .env.local ecommerce-template
+```
+
+### PM2
+
+```bash
+npm run build
+pm2 start ecosystem.config.js
+```
+
+### Hetzner / VPS
+
+See `docs/HETZNER-DEPLOY-GUIDE.md` for a complete deployment guide.
+For automatic main-branch releases, see `docs/GITHUB-DEPLOY.md`.
+
+## License
+
+This template is provided as-is for commercial and personal use.

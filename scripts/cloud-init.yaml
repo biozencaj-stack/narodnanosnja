@@ -1,0 +1,69 @@
+#cloud-config
+
+# Neutral infrastructure bootstrap template for a single webshop server.
+#
+# Security boundary:
+# - this file intentionally creates no database role or password;
+# - it contains no SSH public key, token or application secret;
+# - provision Node.js 22, PM2, TLS and monitoring through an approved,
+#   version-pinned production procedure before running the deploy workflow;
+# - create database credentials separately with scripts/db-setup.sql and a
+#   protected secret source.
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - nginx
+  - postgresql
+  - postgresql-contrib
+  - unzip
+
+users:
+  - default
+  - name: webshop
+    groups:
+      - sudo
+      - www-data
+    shell: /bin/bash
+    lock_passwd: true
+    sudo:
+      - ALL=(ALL) NOPASSWD:/bin/systemctl status webshop
+
+write_files:
+  - path: /etc/nginx/sites-available/webshop
+    owner: root:root
+    permissions: '0644'
+    content: |
+      server {
+          listen 80 default_server;
+          listen [::]:80 default_server;
+          server_name _;
+
+          client_max_body_size 15M;
+
+          location / {
+              proxy_pass http://127.0.0.1:3007;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+          }
+      }
+
+runcmd:
+  - install -d -o webshop -g www-data -m 0750 /var/www/webshop
+  - install -d -o webshop -g www-data -m 0750 /var/log/webshop
+  - ln -sfn /etc/nginx/sites-available/webshop /etc/nginx/sites-enabled/webshop
+  - rm -f /etc/nginx/sites-enabled/default
+  - nginx -t
+  - systemctl reload nginx
+
+final_message: >-
+  Base webshop host packages and reverse proxy are ready after $UPTIME seconds.
+  Application runtime, TLS, credentials and monitoring still require the
+  reviewed production provisioning procedure.

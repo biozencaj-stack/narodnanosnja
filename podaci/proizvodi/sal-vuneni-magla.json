@@ -1,0 +1,33 @@
+{
+  "slug": "sal-vuneni-magla",
+  "naziv": "Vuneni šal Magla",
+  "sifra": "SAL-004",
+  "kategorija": "salovi",
+  "cena": 6200,
+  "staraCena": null,
+  "stanje": "rasprodato",
+  "istaknut": false,
+  "materijal": [
+    "ovčija vuna",
+    "viskoza"
+  ],
+  "dimenzije": "190 × 50 cm",
+  "opis": "Širi zimski šal u prigušenim sivim i modrim tonovima, sa jedva primetnom cik-cak šarom.\n\nMešavina vune i viskoze daje mu težinu vune i pad koji vuna sama nema.",
+  "detalji": [
+    [
+      "Tehnika",
+      "Tkanje na razboju"
+    ],
+    [
+      "Šara",
+      "Cik-cak"
+    ],
+    [
+      "Održavanje",
+      "Hemijsko čišćenje"
+    ]
+  ],
+  "valuta": "RSD",
+  "redosled": 4,
+  "slike": []
+}

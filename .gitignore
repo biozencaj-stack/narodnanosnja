@@ -1,15 +1,56 @@
-# Rezultat izgradnje — pravi ga CI, ne commit-uje se.
-dist/
+# Zavisnosti
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js
+/.next/
+/out/
+next-env.d.ts
+tsconfig.tsbuildinfo
+
+# Produkcija
+/build
+
+# Tajne — NIKAD u git
+.env*
+!.env.example
+*.key
+*.p12
+*.pfx
+credentials.json
+service-account*.json
+
+# Otpremljene slike i fotografije proizvoda (žive na serveru)
+/public/uploads/
+
+# Logovi
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Test i build izveštaji
+/coverage/
+/playwright-report/
+/test-results/
+/.turbo/
+/.vercel/
 
 # Sistemski otpad
 .DS_Store
+*.pem
 Thumbs.db
 
 # Uređivači
 .vscode/
 .idea/
-*.swp
 
-# Node (projekat nema zavisnosti, ali za svaki slučaj)
-node_modules/
-npm-debug.log*
+# Prisma
+prisma/*.db
+prisma/*.db-journal
+
+# Rezervne kopije baze
+*.sql.gz
+database.dump
+/backups/

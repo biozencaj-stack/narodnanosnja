@@ -1,0 +1,895 @@
+// prisma/schema.prisma
+// E-commerce CMS Template Database Schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// KORISNICI I AUTENTIFIKACIJA
+// ============================================
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  passwordHash    String
+  firstName       String
+  lastName        String
+  phone           String?
+  role            Role      @default(CUSTOMER)
+  emailVerified   DateTime?
+  newsletterOptIn Boolean   @default(false)
+  preferredLocale String    @default("sr") // sr | en for emails
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relacije
+  addresses          Address[]
+  orders             Order[]
+  sessions           Session[]
+  resetTokens        PasswordReset[]
+  wishlist           Wishlist[]
+  emailVerifications EmailVerification[]
+  reviews            ProductReview[]
+
+  @@index([email])
+}
+
+enum Role {
+  CUSTOMER
+  OPERATOR // Može samo da menja statuse porudžbina
+  ADMIN
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PasswordReset {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expires   DateTime
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([userId])
+}
+
+model EmailVerification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expires   DateTime
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([userId])
+}
+
+// ============================================
+// LISTA ŽELJA (WISHLIST)
+// ============================================
+
+model Wishlist {
+  id                String   @id @default(cuid())
+  userId            String
+  productId         String? // Local product ID
+  externalProductId String?
+  createdAt         DateTime @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+  @@index([userId])
+}
+
+// ============================================
+// ADRESE
+// ============================================
+
+model Address {
+  id         String  @id @default(cuid())
+  userId     String
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  street     String
+  apartment  String?
+  city       String
+  postalCode String
+  country    String  @default("Srbija")
+  isDefault  Boolean @default(false)
+
+  @@index([userId])
+}
+
+// ============================================
+// PORUDŽBINE
+// ============================================
+
+model Order {
+  id                     String  @id @default(cuid())
+  orderNumber            String  @unique
+  checkoutIdempotencyKey String? @unique
+
+  // Veza sa korisnikom (opciono - može biti guest)
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  // Podaci za goste
+  guestEmail     String?
+  guestFirstName String?
+  guestLastName  String?
+  guestPhone     String?
+
+  // Adresa za dostavu
+  shippingStreet  String
+  shippingCity    String
+  shippingPostal  String
+  shippingCountry String @default("Srbija")
+
+  // Plaćanje
+  paymentMethod PaymentMethod
+  paymentStatus PaymentStatus @default(PENDING)
+
+  // Status porudžbine
+  status OrderStatus @default(PENDING)
+
+  // Iznosi
+  subtotal     Decimal  @db.Decimal(10, 2)
+  shipping     Decimal  @db.Decimal(10, 2)
+  discount     Decimal  @default(0) @db.Decimal(10, 2)
+  total        Decimal  @db.Decimal(10, 2)
+  currency     String   @default("RSD")
+  couponCode   String?
+  promotionIds String[]
+
+  // Da li je zaliha za ovu porudžbinu već skinuta. Polje čini rezervaciju
+  // idempotentnom i omogućava bezbedno vraćanje zalihe pri otkazivanju.
+  inventoryAllocated Boolean @default(false)
+
+  // Dodatno
+  note           String?
+  trackingNumber String? // Broj paketa za pracenje posiljke
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relacije
+  items         OrderItem[]
+  transaction   Transaction?
+  paymentEvents PaymentEvent[]
+
+  // Indeksi za brže pretrage
+  @@index([userId])
+  @@index([orderNumber])
+  @@index([status])
+  @@index([createdAt])
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+  REVIEW
+  REFUNDED
+}
+
+enum OrderStatus {
+  PENDING // Čeka obradu
+  CONFIRMED // Potvrđena
+  SHIPPED // Poslata
+  CANCELLED // Otkazana
+}
+
+model OrderItem {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  productId        String?
+  product          Product? @relation(fields: [productId], references: [id])
+  // Tačan zapis zalihe rezervisan pri checkout-u. Ne koristimo relaciju jer
+  // snapshot porudžbine mora ostati čitljiv i ako se zapis zalihe kasnije obriše.
+  inventoryStockId String?
+  productCode      String
+  productName      String
+  size             String
+  quantity         Int
+  price            Decimal  @db.Decimal(10, 2)
+  picture          String?
+
+  @@index([orderId])
+  @@index([productCode])
+  @@index([inventoryStockId])
+}
+
+// ============================================
+// TRANSAKCIJE (NestPay)
+// ============================================
+
+model Transaction {
+  id      String @id @default(cuid())
+  orderId String @unique
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  transId     String? // NestPay transaction ID
+  authCode    String? // Authorization code
+  amount      Decimal @db.Decimal(10, 2)
+  currency    String  @default("RSD")
+  status      String // INITIATED, APPROVED, DECLINED, REVIEW, ERROR
+  rawResponse Json? // Bezbedan allow-list audit payload ili start forma
+
+  createdAt DateTime @default(now())
+
+  @@index([transId])
+}
+
+// Neizmenjivi dnevnik validno potpisanih callback događaja. Transaction je
+// trenutni sažetak pokušaja, dok ovaj model čuva replay/conflict trag i daje
+// stabilan idempotency ključ za paralelne callback zahteve.
+model PaymentEvent {
+  id       String @id @default(cuid())
+  orderId  String
+  order    Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  provider String @default("NESTPAY")
+  eventKey String @unique
+
+  callbackKind PaymentCallbackKind
+  result       PaymentEventResult
+  reason       String?
+  transId      String?
+  amount       Decimal?            @db.Decimal(10, 2)
+  currency     String?
+  rawResponse  Json
+  createdAt    DateTime            @default(now())
+
+  @@index([orderId, createdAt])
+  @@index([transId])
+  @@index([result])
+}
+
+enum PaymentCallbackKind {
+  APPROVED
+  DECLINED
+  REVIEW
+}
+
+enum PaymentEventResult {
+  APPLIED
+  REPLAYED
+  REVIEW
+}
+
+// ============================================
+// CMS
+// ============================================
+
+model Banner {
+  id          String   @id @default(cuid())
+  title       Json // { sr: "...", en: "..." }
+  subtitle    Json? // { sr: "...", en: "..." }
+  description Json? // { sr: "...", en: "..." }
+  imageData   String   @db.Text // Base64 encoded slika
+  contentType String // "image/jpeg" | "image/png" | "image/webp"
+  linkUrl     String?
+  buttonText  Json? // { sr: "...", en: "..." }
+  position    String   @default("home_hero") // home_hero, home_secondary, etc.
+  isActive    Boolean  @default(true)
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([position, isActive])
+  @@index([order])
+}
+
+model Setting {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+
+  @@index([key])
+}
+
+model SizeTable {
+  id        String   @id @default(cuid())
+  brandName String   @unique
+  sizes     Json // Array of { size: number, length: string }
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([brandName])
+}
+
+// ============================================
+// TICKER (Trakica sa porukama)
+// ============================================
+
+model TickerMessage {
+  id        String   @id @default(cuid())
+  text      Json // { sr: "...", en: "..." }
+  order     Int      @default(0) // Redosled prikaza
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([order])
+  @@index([isActive])
+}
+
+// ============================================
+// NEWSLETTER
+// ============================================
+
+// Pretplatnici koji nisu registrovani (gosti)
+model NewsletterSubscriber {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@index([active])
+}
+
+// Istorija poslatih newsletter kampanja
+model Newsletter {
+  id             String   @id @default(cuid())
+  subject        String
+  content        String   @db.Text
+  sentAt         DateTime @default(now())
+  sentBy         String // admin userId
+  recipientCount Int
+
+  @@index([sentAt])
+}
+
+// Galerija slika za newsletter
+model NewsletterImage {
+  id          String   @id @default(cuid())
+  name        String
+  imageData   String   @db.Text // Base64 encoded slika
+  contentType String // "image/jpeg" | "image/png" | "image/webp"
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// ============================================
+// RECENZIJE PROIZVODA
+// ============================================
+
+model ProductReview {
+  id          String   @id @default(cuid())
+  productId   String? // Local product ID
+  productCode String // Product code (local or ERP)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product     Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  rating  Int // 1-5 zvezdica
+  title   String? // Opcioni naslov
+  comment String? // Opcioni komentar
+
+  verified  Boolean  @default(true) // Verifikovana kupovina
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([productCode, userId]) // Jedan korisnik = jedna recenzija po proizvodu
+  @@index([productCode])
+  @@index([userId])
+}
+
+// ============================================
+// PROIZVODI (LOCAL CMS)
+// ============================================
+
+model Product {
+  id              String       @id @default(cuid())
+  name            Json // { sr: "...", en: "..." }
+  slug            String       @unique
+  description     Json? // { sr: "...", en: "..." }
+  sku             String?      @unique
+  price           Decimal      @db.Decimal(10, 2)
+  salePrice       Decimal?     @db.Decimal(10, 2)
+  image1          String? // Path to file in /uploads/products/
+  image2          String?
+  image3          String?
+  categoryId      String?
+  category        Category?    @relation(fields: [categoryId], references: [id])
+  brandId         String?
+  brand           Brand?       @relation(fields: [brandId], references: [id])
+  gender          String? // "muski", "zenski", "unisex"
+  active          Boolean      @default(true)
+  featured        Boolean      @default(false)
+  onSale          Boolean      @default(false)
+  novo            Boolean      @default(false) // Nova kolekcija - marked as new by admin
+  metaTitle       Json? // { sr: "...", en: "..." }
+  metaDescription Json? // { sr: "...", en: "..." }
+  erpId           String?
+  productTypeId   String?
+  productType     ProductType? @relation(fields: [productTypeId], references: [id], onDelete: SetNull)
+
+  // Univerzalni atributi
+  color            String? // Glavna boja
+  colorHex         String? // HEX kod boje (#FF0000)
+  material         String? // Materijal/sastav (npr. "100% pamuk")
+  weight           Decimal? @db.Decimal(8, 2) // Tezina u gramima
+  length           Decimal? @db.Decimal(8, 2) // Dimenzije u cm
+  width            Decimal? @db.Decimal(8, 2)
+  height           Decimal? @db.Decimal(8, 2)
+  countryOfOrigin  String? // Zemlja porekla
+  careInstructions Json? // { sr: "...", en: "..." }
+  barcode          String? // EAN/barcode
+  tags             String[] // Tagovi za pretragu
+
+  sizes           ProductSize[]
+  variants        ProductVariant[]
+  options         ProductOption[]
+  attributeValues ProductAttributeValue[]
+  categories      ProductCategory[]
+  orderItems      OrderItem[]
+  reviews         ProductReview[]
+  wishlistItems   Wishlist[]
+  promotionItems  PromotionProduct[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([slug])
+  @@index([categoryId])
+  @@index([brandId])
+  @@index([productTypeId])
+  @@index([active])
+  @@index([featured])
+  @@index([onSale])
+  @@index([novo])
+  @@index([color])
+}
+
+model ProductVariant {
+  id           String                      @id @default(cuid())
+  productId    String
+  product      Product                     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  color        String?
+  colorHex     String?
+  size         String?
+  sku          String?
+  stock        Int                         @default(0)
+  price        Decimal?                    @db.Decimal(10, 2) // Override price for variant
+  image        String? // Variant-specific image
+  optionValues ProductVariantOptionValue[]
+
+  @@unique([id, productId])
+  @@index([productId])
+}
+
+// ============================================
+// GENERICKI KATALOG (EXPAND-ONLY OSNOVA)
+// ============================================
+
+// Tip proizvoda odredjuje koja svojstva admin prikazuje i validira.
+// Primeri: odeca, obuca, hrana, dekoracija. Veza na Product je opciona dok
+// traje backfill postojecih proizvoda.
+model ProductType {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        Json // { sr: "...", en: "..." }
+  description Json?
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  products   Product[]
+  attributes ProductTypeAttribute[]
+
+  @@index([active, sortOrder])
+}
+
+// Definicija je zajednicka za vise tipova proizvoda. Vrednost se cuva u
+// odgovarajucoj tipizovanoj koloni modela ProductAttributeValue.
+model AttributeDefinition {
+  id                  String                   @id @default(cuid())
+  code                String                   @unique
+  name                Json
+  description         Json?
+  dataType            ProductAttributeDataType
+  unit                String?
+  isFilterable        Boolean                  @default(false)
+  isSearchable        Boolean                  @default(false)
+  isRequiredByDefault Boolean                  @default(false)
+  active              Boolean                  @default(true)
+  sortOrder           Int                      @default(0)
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+
+  productTypes ProductTypeAttribute[]
+  values       ProductAttributeValue[]
+  choices      AttributeChoice[]
+
+  @@unique([id, dataType])
+  @@index([active, sortOrder])
+  @@index([dataType])
+}
+
+enum ProductAttributeDataType {
+  TEXT
+  RICH_TEXT
+  INTEGER
+  DECIMAL
+  BOOLEAN
+  DATE
+  DATETIME
+  SELECT
+  MULTI_SELECT
+  JSON
+}
+
+model ProductTypeAttribute {
+  productTypeId         String
+  attributeDefinitionId String
+  isRequired            Boolean @default(false)
+  sortOrder             Int     @default(0)
+
+  productType         ProductType         @relation(fields: [productTypeId], references: [id], onDelete: Cascade)
+  attributeDefinition AttributeDefinition @relation(fields: [attributeDefinitionId], references: [id], onDelete: Cascade)
+
+  @@id([productTypeId, attributeDefinitionId])
+  @@index([attributeDefinitionId])
+  @@index([productTypeId, sortOrder])
+}
+
+// Dozvoljena vrednost za SELECT/MULTI_SELECT atribut. Stabilni code se koristi
+// za filtriranje, a label ostaje lokalizovan.
+model AttributeChoice {
+  id                    String                   @id @default(cuid())
+  attributeDefinitionId String
+  dataType              ProductAttributeDataType
+  code                  String
+  label                 Json
+  metadata              Json?
+  active                Boolean                  @default(true)
+  sortOrder             Int                      @default(0)
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+
+  attributeDefinition AttributeDefinition              @relation(fields: [attributeDefinitionId, dataType], references: [id, dataType], onDelete: Cascade)
+  selectedValues      ProductAttributeSelectedChoice[]
+
+  @@unique([attributeDefinitionId, code])
+  @@unique([id, attributeDefinitionId])
+  @@index([attributeDefinitionId, active, sortOrder])
+}
+
+// Tacno jedna od value* kolona treba da bude popunjena, u skladu sa dataType
+// definicije. Kompozitni FK vezuje dataType za definiciju, a SQL CHECK za
+// value* kolone dodaje se rucno u expand migraciji.
+model ProductAttributeValue {
+  id                    String                   @id @default(cuid())
+  productId             String
+  attributeDefinitionId String
+  dataType              ProductAttributeDataType
+  valueText             Json?
+  valueInteger          Int?
+  valueDecimal          Decimal?                 @db.Decimal(18, 6)
+  valueBoolean          Boolean?
+  valueDate             DateTime?
+  valueJson             Json?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+
+  product             Product                          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  attributeDefinition AttributeDefinition              @relation(fields: [attributeDefinitionId, dataType], references: [id, dataType], onDelete: Restrict)
+  selectedChoices     ProductAttributeSelectedChoice[]
+
+  @@unique([productId, attributeDefinitionId])
+  @@unique([id, attributeDefinitionId])
+  @@index([attributeDefinitionId])
+}
+
+model ProductAttributeSelectedChoice {
+  productAttributeValueId String
+  attributeDefinitionId   String
+  attributeChoiceId       String
+  sortOrder               Int    @default(0)
+
+  productAttributeValue ProductAttributeValue @relation(fields: [productAttributeValueId, attributeDefinitionId], references: [id, attributeDefinitionId], onDelete: Cascade)
+  attributeChoice       AttributeChoice       @relation(fields: [attributeChoiceId, attributeDefinitionId], references: [id, attributeDefinitionId], onDelete: Restrict)
+
+  @@id([productAttributeValueId, attributeChoiceId])
+  @@index([attributeChoiceId])
+  @@index([productAttributeValueId, sortOrder])
+}
+
+// Opcije opisuju prodajne ose koje stvaraju varijante: velicina, boja,
+// pakovanje, ukus... Nisu isto sto i informativni atributi iznad.
+model ProductOption {
+  id        String   @id @default(cuid())
+  productId String
+  code      String
+  name      Json
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product           Product                     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  values            ProductOptionValue[]
+  variantSelections ProductVariantOptionValue[]
+
+  @@unique([productId, code])
+  @@unique([id, productId])
+  @@index([productId, sortOrder])
+}
+
+model ProductOptionValue {
+  id        String   @id @default(cuid())
+  optionId  String
+  code      String
+  name      Json
+  metadata  Json?
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  option            ProductOption               @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  variantSelections ProductVariantOptionValue[]
+
+  @@unique([optionId, code])
+  @@unique([id, optionId])
+  @@index([optionId, active, sortOrder])
+}
+
+// optionId je deo primarnog kljuca da jedna varijanta ne moze izabrati dve
+// vrednosti iste opcije. Kompozitne relacije garantuju da optionValue pripada
+// navedenoj opciji i da opcija i varijanta pripadaju istom proizvodu.
+model ProductVariantOptionValue {
+  variantId     String
+  productId     String
+  optionId      String
+  optionValueId String
+
+  variant     ProductVariant     @relation(fields: [variantId, productId], references: [id, productId], onDelete: Cascade)
+  option      ProductOption      @relation(fields: [optionId, productId], references: [id, productId], onDelete: Cascade)
+  optionValue ProductOptionValue @relation(fields: [optionValueId, optionId], references: [id, optionId], onDelete: Cascade)
+
+  @@id([variantId, optionId])
+  @@unique([variantId, optionValueId])
+  @@index([productId])
+  @@index([optionValueId, optionId])
+}
+
+model Color {
+  id     String  @id @default(cuid())
+  name   String  @unique
+  hex    String // #FF0000
+  active Boolean @default(true)
+
+  @@index([active])
+}
+
+model Category {
+  id                String            @id @default(cuid())
+  name              Json // { sr: "...", en: "..." }
+  slug              String            @unique
+  description       Json? // { sr: "...", en: "..." }
+  image             String? // Path to file in /uploads/categories/
+  parentId          String?
+  parent            Category?         @relation("SubCategories", fields: [parentId], references: [id])
+  children          Category[]        @relation("SubCategories")
+  products          Product[]
+  productCategories ProductCategory[]
+  showInNav         Boolean           @default(false)
+  navOrder          Int               @default(0)
+  active            Boolean           @default(true)
+  sortOrder         Int               @default(0)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([slug])
+  @@index([parentId])
+  @@index([active])
+  @@index([showInNav])
+}
+
+model ProductCategory {
+  id         String   @id @default(cuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, categoryId])
+  @@index([productId])
+  @@index([categoryId])
+}
+
+model Brand {
+  id          String    @id @default(cuid())
+  name        Json // { sr: "...", en: "..." }
+  slug        String    @unique
+  logo        String? // Path to file in /uploads/brands/
+  description Json? // { sr: "...", en: "..." }
+  products    Product[]
+  active      Boolean   @default(true)
+  sortOrder   Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([slug])
+  @@index([active])
+}
+
+model ProductSize {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  size      String
+  stock     Int     @default(0)
+
+  @@index([productId])
+}
+
+// ============================================
+// BLOG / CLANCI
+// ============================================
+
+model Article {
+  id              String    @id @default(cuid())
+  title           String
+  slug            String    @unique
+  content         String    @db.Text
+  excerpt         String?   @db.Text
+  image1          String? // Path to file in /uploads/articles/
+  image2          String?
+  image3          String?
+  author          String?
+  published       Boolean   @default(false)
+  publishedAt     DateTime?
+  metaTitle       String?
+  metaDescription String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([slug])
+  @@index([published])
+  @@index([publishedAt])
+}
+
+// ============================================
+// PROMOCIJE I POPUSTI
+// ============================================
+
+model Promotion {
+  id            String        @id @default(cuid())
+  name          String
+  description   String?
+  type          PromotionType
+  value         Decimal       @db.Decimal(10, 2) // Procenat ili fiksni iznos
+  minQuantity   Int? // Za bundle (npr. kupi 2)
+  minCartValue  Decimal?      @db.Decimal(10, 2) // Min vrednost korpe
+  maxUses       Int? // Max broj koriscenja (null = neograniceno)
+  usedCount     Int           @default(0)
+  startDate     DateTime
+  endDate       DateTime
+  isActive      Boolean       @default(true)
+  code          String?       @unique // Kupon kod (opciono)
+  stackable     Boolean       @default(false)
+  quantityTiers Json? // Stepenasti pragovi: [{qty: 2, discount: 5}, {qty: 3, discount: 10}] // Moze li se kombinovati
+
+  products PromotionProduct[]
+  usages   CouponUsage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([startDate, endDate])
+  @@index([code])
+}
+
+enum PromotionType {
+  PERCENT_OFF // X% popusta na proizvod/korpu
+  FIXED_AMOUNT_OFF // Fiksni iznos popusta
+  BUY_X_GET_Y_FREE // Kupi X, Y-ti gratis
+  BUY_X_GET_PERCENT // Kupi X, sledeci sa Y% popusta
+  FREE_SHIPPING // Besplatna dostava
+  QUANTITY_DISCOUNT // Stepenasti popust po kolicini (2=5%, 3=10%, 5=15%)
+}
+
+model PromotionProduct {
+  id          String    @id @default(cuid())
+  promotionId String
+  promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([promotionId, productId])
+  @@index([promotionId])
+  @@index([productId])
+}
+
+model CouponUsage {
+  id          String    @id @default(cuid())
+  promotionId String
+  promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  userId      String?
+  orderId     String?
+  usedAt      DateTime  @default(now())
+
+  @@index([promotionId])
+  @@index([userId])
+}
+
+// ============================================
+// CHAT / FAQ
+// ============================================
+
+model ChatFAQ {
+  id        String   @id @default(cuid())
+  question  String
+  answer    String   @db.Text
+  category  String?
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active, sortOrder])
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  message   String   @db.Text
+  isRead    Boolean  @default(false)
+  adminNote String?  @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+// ============================================
+// PRODAJNA MESTA
+// ============================================
+
+model StoreLocation {
+  id        String   @id @default(cuid())
+  name      String
+  address   String
+  city      String
+  phone     String?
+  email     String?
+  hours     String
+  mapUrl    String?  @db.Text
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+}

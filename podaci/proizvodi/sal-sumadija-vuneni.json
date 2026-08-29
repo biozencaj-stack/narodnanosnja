@@ -1,0 +1,36 @@
+{
+  "slug": "sal-sumadija-vuneni",
+  "naziv": "Vuneni šal Šumadija",
+  "sifra": "SAL-001",
+  "kategorija": "salovi",
+  "cena": 5400,
+  "staraCena": null,
+  "stanje": "na-stanju",
+  "istaknut": true,
+  "materijal": [
+    "ovčija vuna"
+  ],
+  "dimenzije": "180 × 45 cm (bez resa), 200 × 45 cm sa resama",
+  "opis": "Tkan na horizontalnom razboju od domaće ovčije vune. Šara je preuzeta sa šumadijskih tkanica — nizovi rombova sa krstom u sredini, u crvenoj i zlatnoj na prirodnoj vuni.\n\nVuna je prana i predena ručno, bez hemijske obrade, pa šal zadržava prirodnu mekoću i miris. Rese su ručno uvrnute.",
+  "detalji": [
+    [
+      "Tehnika",
+      "Tkanje na razboju"
+    ],
+    [
+      "Šara",
+      "Romb sa krstom"
+    ],
+    [
+      "Rese",
+      "Ručno uvrnute"
+    ],
+    [
+      "Održavanje",
+      "Ručno pranje u hladnoj vodi"
+    ]
+  ],
+  "valuta": "RSD",
+  "redosled": 1,
+  "slike": []
+}

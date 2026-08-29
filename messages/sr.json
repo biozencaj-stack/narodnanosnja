@@ -1,0 +1,23 @@
+{
+  "common": {
+    "home": "Početna",
+    "cart": "Korpa",
+    "search": "Pretraga",
+    "catalog": "Katalog",
+    "contact": "Kontakt",
+    "close": "Zatvori",
+    "open": "Otvori"
+  },
+  "header": {
+    "closeMenu": "Zatvori meni",
+    "openMenu": "Otvori meni",
+    "search": "Pretraga",
+    "userMenu": "Korisnički meni",
+    "myAccount": "Moj nalog",
+    "adminPanel": "Admin panel",
+    "orders": "Porudžbine",
+    "logout": "Odjava",
+    "login": "Prijava",
+    "register": "Registracija"
+  }
+}

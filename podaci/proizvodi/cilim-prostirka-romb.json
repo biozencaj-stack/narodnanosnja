@@ -1,0 +1,36 @@
+{
+  "slug": "cilim-prostirka-romb",
+  "naziv": "Prostirka Romb",
+  "sifra": "CIL-001",
+  "kategorija": "cilimi",
+  "cena": 8900,
+  "staraCena": null,
+  "stanje": "na-stanju",
+  "istaknut": true,
+  "materijal": [
+    "ovčija vuna"
+  ],
+  "dimenzije": "120 × 70 cm",
+  "opis": "Tkana vunena prostirka u tehnici klečanja, sa krupnim romboidnim poljima u crvenoj, crnoj i prirodnoj vuni.\n\nDvostrana je — obe strane su jednako lepe i mogu se naizmenično koristiti.",
+  "detalji": [
+    [
+      "Tehnika",
+      "Klečanje"
+    ],
+    [
+      "Dvostrana",
+      "Da"
+    ],
+    [
+      "Šara",
+      "Krupni rombovi"
+    ],
+    [
+      "Održavanje",
+      "Istresanje, hemijsko čišćenje"
+    ]
+  ],
+  "valuta": "RSD",
+  "redosled": 12,
+  "slike": []
+}

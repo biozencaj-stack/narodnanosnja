@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 248 44" width="248" height="44" role="img" aria-label="Народна ношња">
+  <title>Народна ношња</title>
+  <!-- Znak: osmokraka rozeta, isti motiv koji stoji i u zaglavlju prodavnice.
+       Tekst koristi sistemski serif jer SVG učitan kao <img> ne može da
+       povuče PT Serif; u samoj prodavnici logo je React komponenta pa tamo
+       stoji pravi font. -->
+  <g transform="translate(2 3)">
+    <path d="M20 1 24 15 38 11 27 20 38 29 24 25 20 39 16 25 2 29 13 20 2 11 16 15Z" fill="#a4161a"/>
+    <circle cx="20" cy="20" r="4" fill="#b98f21"/>
+  </g>
+  <text x="50" y="25"
+        font-family="Georgia, 'Times New Roman', serif"
+        font-size="19" font-weight="700" fill="#2c231b">Народна ношња</text>
+  <text x="51" y="37"
+        font-family="'Helvetica Neue', Arial, sans-serif"
+        font-size="7.5" letter-spacing="2.6" fill="#6d5c4a">РУЧНО ТКАНО</text>
+</svg>
