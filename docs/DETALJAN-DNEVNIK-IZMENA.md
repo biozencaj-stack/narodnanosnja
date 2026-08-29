@@ -4,7 +4,8 @@
 > Projekat: `narodnanosnja-prodavnica`<br>
 > Grana: `verzija/v2.0-univerzalna-platforma`<br>
 > Lokalna polazna revizija: `f6e3dac`<br>
-> Status dokumenta: opis trenutnog lokalnog radnog stabla; izmene još nisu objedinjene u commit niti objavljene na produkciji.
+> GitHub snapshot commit: `3dc757ac6280b77c7951a888ec2d3ad609ddae1d`<br>
+> Status dokumenta: V2 feature grana je commitovana i objavljena na GitHub-u; `main` i produkcija nisu promenjeni.
 
 ## 1. Svrha dokumenta
 
@@ -997,7 +998,7 @@ Stvarne vrednosti tajni nisu upisane u repozitorijum niti ovaj dokument.
 
 ### 20.4. Trenutno operativno stanje workflow-a
 
-Workflow postoji samo u lokalnom radnom stablu. Pošto nije commitovan i pushovan na remote `main`, GitHub ga još ne izvršava. Njegovo prisustvo u fajlu nije isto što i aktivan CI/CD.
+Workflow je commitovan i nalazi se na remote grani `verzija/v2.0-univerzalna-platforma`. Pošto reaguje samo na `main` i ručno pokretanje, samo objavljivanje feature grane nije pokrenulo produkcijski deploy. Automatski CI/CD za svaki `main` push postaće aktivan tek kada se V2 PR bezbedno spoji u `main` i kada se podese production environment, vars i secrets.
 
 ## 21. Release deployment skripta
 
@@ -1054,23 +1055,28 @@ To omogućava da workflow razlikuje aplikaciju koja samo sluša port od tačno o
 
 ## 22. Git remote i istorija
 
-Lokalni projekat je povezan sa postojećim remote repozitorijumom:
+Lokalni projekat je povezan sa postojećim javno čitljivim remote repozitorijumom. Fetch URL ostaje SSH, dok je push URL podešen na HTTPS kako bi koristio postojeću macOS Keychain GitHub autorizaciju:
 
 ```text
-git@github.com:biozencaj-stack/narodnanosnja.git
+fetch: git@github.com:biozencaj-stack/narodnanosnja.git
+push:  https://github.com/biozencaj-stack/narodnanosnja.git
 ```
 
 Presek u vreme pisanja:
 
-- lokalna radna grana: `verzija/v2.0-univerzalna-platforma`;
+- lokalna i remote radna grana: `verzija/v2.0-univerzalna-platforma`;
+- V2 snapshot commit: `3dc757ac6280b77c7951a888ec2d3ad609ddae1d`;
 - lokalni `main`: `f6e3dac`;
-- remote `main`: `31ebf14...`;
+- remote `main`: `31ebf14fe531c971d944fe4e8822830f644f66af` — nije promenjen;
 - remote grana `verzija/v2.0-prodavnica`: `117d58a...`;
-- nova V2 univerzalna grana još nije objavljena.
+- V2 grana prati odgovarajuću `origin/verzija/v2.0-univerzalna-platforma` granu;
+- stara lokalna tačka sačuvana je samo lokalno kao `arhiva/v2-pre-github-2026-08-29`.
 
-Lokalna webshop istorija i trenutni remote `main` nemaju isti istorijski koren. Zbog toga sledeći Git korak mora biti bezbedna integracija istorija, bez force push-a i bez prepisivanja postojećeg `main` sadržaja.
+Originalna lokalna webshop istorija i remote `main` nisu imali zajedničkog pretka, a stari lokalni commitovi sadržali su hardkodovanu demo DB vrednost. Zato ta istorija nije pushovana i nije korišćena kao merge roditelj.
 
-Do sada nije urađen commit, push, merge niti deploy ovih V2 promena.
+Umesto toga napravljen je sanitizovan snapshot commit čiji je jedini roditelj postojeći remote `main`. Provere potvrđuju da je `origin/main` direktan roditelj, da je broj novih commitova tačno jedan i da stara lokalna istorija nije predak snapshot-a. Time je feature grana kompatibilna sa normalnim GitHub PR-om bez force push-a.
+
+Commit i push feature grane su završeni. Nije urađen merge u `main` niti produkcijski deploy.
 
 ## 23. Lokalno pokrenute provere
 
@@ -1297,17 +1303,18 @@ Pošto je repozitorijum javno čitljiv, pre pripreme snapshot-a urađeno je:
 - zamena konkretne javne server adrese u `IZMENE.md` neutralnim `SERVER_HOST` placeholderom;
 - potvrda da Git-visible stablo nema privatne ključeve, poznate high-confidence tokene, build direktorijume, uploadove ni prevelike binarne fajlove.
 
-Stara lokalna Git istorija i dalje sadrži raniju demo vrednost. Zbog toga se ona ne sme pushovati niti koristiti kao roditelj merge commit-a. GitHub grana mora biti napravljena kao sanitizovan snapshot sa postojećim remote `main` commitom kao jedinim roditeljem.
+Stara lokalna Git istorija i dalje sadrži raniju demo vrednost. Zbog toga nije pushovana niti korišćena kao roditelj merge commit-a. GitHub grana je napravljena kao sanitizovan snapshot sa postojećim remote `main` commitom kao jedinim roditeljem. Udaljeni SHA je naknadno provereno jednak lokalnom snapshot SHA-u.
 
 ## 28. Predloženi redosled nastavka rada
 
 ### Faza 0 — očuvanje rada i Git integracija
 
-1. Pregledati ovaj dnevnik i postojeće V2 dokumente.
-2. Podeliti veliki working tree u logične, pregledive commit-e.
-3. Objaviti V2 granu na remote bez izmene `main`.
-4. Napraviti PR ili drugi kontrolisani tok za integraciju nepovezanih istorija.
-5. Ne koristiti force push nad postojećim `main`.
+1. Završeno: pregledan je dnevnik, Git inventar i V2 dokumentacija.
+2. Završeno: napravljen je jedan sanitizovan snapshot umesto prenosa nepovezane i kompromitovane lokalne istorije.
+3. Završeno: V2 grana je objavljena bez izmene `main` i bez deploy-a.
+4. Sledeće: otvoriti Draft PR i pregledati zamenu stare prezentacije novom aplikacijom.
+5. Pre merge-a: podesiti production environment, vars/secrets i potvrditi DB/deployment spremnost.
+6. Ne koristiti force push nad postojećim `main` niti `git push --all` iz lokalne arhive.
 
 ### Faza 1 — baza i kritične invarijante
 
@@ -1663,6 +1670,6 @@ Najveći preostali posao nije još jedno površinsko UI proširenje, već završ
 - operativni admin moduli;
 - payment reconciliation/refund/cleanup;
 - integracioni, E2E i accessibility testovi;
-- bezbedna Git integracija i tek potom aktivacija deployment workflow-a.
+- pregled i merge GitHub PR-a, pa tek potom aktivacija deployment workflow-a.
 
-Drugim rečima: platforma sada ima mnogo kvalitetniju arhitektonsku i bezbednosnu osnovu, ali zbog namerno neprimenjene migracije, isključenih kartica i neobjavljene grane još nije spremna da se tretira kao završena produkciona V2 verzija.
+Drugim rečima: platforma sada ima mnogo kvalitetniju arhitektonsku i bezbednosnu osnovu i bezbedno objavljenu V2 feature granu, ali zbog namerno neprimenjene migracije, isključenih kartica i nespojenog `main` PR-a još nije spremna da se tretira kao završena produkciona V2 verzija.
