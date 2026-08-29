@@ -114,6 +114,17 @@ bez ijedne greške — CI je ionako obara ako ne prođe.
 Push na `main` pokreće `objavi.yml`, koji gradi sajt i objavljuje ga na
 GitHub Pages. Nema drugog načina objavljivanja i `dist/` se nikada ne commit-uje.
 
+### ⚠️ U ovom repozitorijumu žive DVA projekta
+
+Prodavnica (Next.js) je objavljena u isti repo, na grani
+`verzija/v2.0-univerzalna-platforma`. Njena istorija je **nepovezana** sa
+istorijom ovog sajta — nastala je kao zaseban `git init`.
+
+**Nikada ne spajaj granu prodavnice u `main`.** `main` je prezentacioni sajt i
+push na njega objavljuje na Pages; spajanje bi oborilo build ili objavilo
+pogrešan sadržaj na javnu adresu. Ako radiš na prodavnici, radi u
+`~/Desktop/narodnanosnja-prodavnica` i na njenim granama.
+
 Posle objavljivanja proveri rezultat preko mreže:
 
 ```bash
