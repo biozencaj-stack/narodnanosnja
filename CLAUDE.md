@@ -205,6 +205,13 @@ tek kada javni domen i svi poddomeni zaista rade isključivo preko HTTPS-a.
 Unsafe API write zahtevi moraju proći same-origin proveru u `proxy.ts`; javni
 payment-provider callback ostaje eksplicitno izuzet pre te provere.
 
+Login `callbackUrl` je nepoverljiv browser input. Pre prosleđivanja u
+`router.push` uvek mora proći kroz `safeLoginCallbackPath` iz
+`lib/security/navigation.ts`. Dozvoljene su samo kanonske root-relative
+putanje; URL šeme, protocol-relative URL-ovi, backslash, kodirani separatori i
+nekanonski segmenti padaju na fiksni `/` fallback. Svaka promena ovog pravila
+mora dobiti pozitivne i negativne testove u `navigation.test.ts`.
+
 ## Browser E2E (v2)
 
 `e2e/purchase-flow.spec.ts` proverava mobilni tok katalog → proizvod → korpa →
