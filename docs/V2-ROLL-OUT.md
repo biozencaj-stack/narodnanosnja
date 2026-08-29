@@ -51,8 +51,10 @@ se generičke varijante ne popune i ne provere.
 - za NestPay podesiti oba HPP URL-a i tačne `NESTPAY_OK_URL` /
   `NESTPAY_FAIL_URL` HTTPS callback putanje na istom origin-u kao
   `NEXT_PUBLIC_SITE_URL`; ovaj tok prihvata isključivo RSD (`941`) i `Auth`;
-- proveriti javni site URL, email, dostavu i capability flagove iz
-  `.env.example`;
+- proveriti javni site URL, dostavu i capability flagove iz `.env.example`;
+- za SMTP potvrditi host, credential-e, sender i port kontrolisanim testom:
+  465 koristi implicitni TLS, ostali portovi zahtevaju STARTTLS, a
+  `SMTP_TLS_REJECT_UNAUTHORIZED` mora ostati `true` u produkciji;
 - `APPLY_DATABASE_MIGRATIONS=true` koristiti samo u kontrolisanom izdanju sa
   kompletnim migration chain-om. U redovnom deployu ostaje isključeno.
 

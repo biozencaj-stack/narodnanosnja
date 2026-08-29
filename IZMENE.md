@@ -3,7 +3,7 @@
 Zapis svega što je urađeno na projektu narodne nošnje, sa razlozima i zamkama
 na koje se naišlo. Namenjeno je i tebi i svakom ko posle preuzme rad.
 
-Poslednja dopuna: 29. avgust 2026.
+Poslednja dopuna: 30. avgust 2026.
 
 ## Gde je koji dokument
 
@@ -11,7 +11,7 @@ Zapisa ima više i lako je otvoriti pogrešan. Poređano po dubini:
 
 | Dokument | Obim | Šta pokriva |
 | --- | --- | --- |
-| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 34 odeljka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
+| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 36 odeljaka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
 | Ovaj fajl (`IZMENE.md`) | sažeti dnevnik | Hronologija i odluke — zašto je nešto urađeno tako |
 | `docs/ARCHITECTURE-V2.md` | 4 KB | Arhitektonske granice platforme |
 | `docs/CATALOG-MIGRATION-PLAN.md` | 10 KB | Redosled prelaska na generički katalog |
@@ -421,14 +421,15 @@ Sve što je jednom pojelo vreme, na jednom mestu:
 - Redizajn u duhu radionice, PT tipografija, tkani ornamenti — **spojeno u
   `main`**
 - Korpa, checkout, nalozi kupaca, kuponi i pouzeće; kartični i reservation
-  cleanup kod postoje na radnoj grani, ali je card capability i dalje
-  isključen
+  cleanup kod postoje u V2, ali je card capability i dalje isključen
 - 13 pravnih stranica propisanih za prodaju na daljinu
 - Zaseban ključ za objavljivanje, napravljen i proveren na serveru
 - Prezentacioni sajt na GitHub Pages, sa objavljivanjem na push
 
 **Ne radi / nedostaje:**
 
+- Draft PR #1 ka `main` i produkcijsko objavljivanje nisu odobreni; V2 se
+  razvija i proverava odvojeno
 - Fotografije proizvoda — sve prazne, stoje tkane šare
 - Pravi domen i HTTPS (sada samo adresa servera i port)
 - Filteri su nasleđeni iz prodavnice obuće („Vrsta obuće“, „Pol“, brendovi)
@@ -437,14 +438,13 @@ Sve što je jednom pojelo vreme, na jednom mestu:
 - Početna strana se ne slaže iz panela
 - SEO: kategorije nemaju meta polja, preusmerenja ne postoje
 - Engleski prevodi
-- Reservation cleanup je na zasebnoj ispravka grani i nije deployovan; VPS
-  timer, prvi dry-run/apply smoke i operativni monitoring nisu instalirani
+- Reservation cleanup je uklopljen u V2, ali nije deployovan; VPS timer, prvi
+  dry-run/apply smoke i operativni monitoring nisu instalirani
 - REVIEW inbox, reconciliation, refund i bankarski staging tok još nisu gotovi
 
-**Sledeći P1 korak:** obavezni PostgreSQL race/prefilter test u CI-ju i pregled
-ispravka grane pre uklapanja u V2. Produkcijski dry-run, kontrolisani apply i
-VPS timer ostaju zasebno odobren serverski postupak. Kartice do tada ostaju
-isključene.
+**Sledeći P1 korak:** zatvoriti preostale auth/session, newsletter subscribe,
+email/dependency i COD abuse blokatore. Produkcijski cleanup dry-run/apply i
+VPS timer ostaju zasebno odobren serverski postupak; kartice ostaju isključene.
 
 ---
 
@@ -551,12 +551,60 @@ probe na klonu baze.
 
 ---
 
-## XII. Istek napuštenih kartičnih rezervacija — 29. avgust 2026.
+## XII. P1 ispravka login povratne navigacije — 29. avgust 2026.
 
-Na grani `ispravka/v2-istek-rezervacija` dodat je bezbedan cleanup napuštenih
-kartičnih rezervacija bez nove Prisma migracije. Cilj je da netaknut payment
-pokušaj ne drži zalihu i kupon zauvek, ali da sistem nikada automatski ne
-oslobodi robu posle moguće komunikacije sa bankom.
+Bezbednosni pregled je našao da napadački kontrolisan `callbackUrl` sa login
+stranice ide direktno u `router.push`. Next.js klijentska navigacija ne sme
+dobiti neproveren URL jer URL šema poput `javascript:` može postati XSS sink.
+
+Na zasebnoj grani `ispravka/v2-bezbedan-callback-url` dodat je centralni
+`safeLoginCallbackPath` u `lib/security/navigation.ts`. Helper dozvoljava samo
+root-relative, same-origin putanje. URL šeme, protocol-relative forme,
+backslash, kontrolni bajtovi, kodirani separatori, dupli separatori i dot
+segmenti padaju na fiksni `/` fallback. Query i fragment ostaju dozvoljeni jer
+ne mogu promeniti origin; Unicode se kanonizuje kroz standardni `URL` parser.
+
+Login sada validira vrednost pre jedinog `router.push` sinka. Regresioni testovi
+pokrivaju legitimne interne putanje i napadačke `javascript:`, spoljne, `//`,
+backslash, encoded-separator, control-byte i dot-segment varijante.
+
+Lokalno je potvrđeno: 43/43 unit testa, TypeScript, lint bez grešaka i
+produkcijski build sa bezbednim test HTTPS URL-om. Lokalni PostgreSQL nije
+pokrenut; build je zato koristio postojeće safe-default grane za DB sadržaj.
+Nisu menjani Prisma šema, podaci, server, tajne, payment tok ni deployment.
+
+---
+
+## XIII. Centralni SMTP TLS sloj — 30. avgust 2026.
+
+Bezbednosni pregled je pokazao da su reset lozinke, verifikacija naloga,
+porudžbine i wishlist poruke imali sopstvene transportere koji su prihvatali
+nevažeće TLS sertifikate. Preostala dva transportera jesu proveravala
+sertifikat, ali nisu zahtevala STARTTLS i nisu pravilno podržavala implicitni
+TLS na portu 465.
+
+Sada svih pet email tokova koristi `lib/email/smtp.ts` kao jedini izvor SMTP
+politike. Port 465 uključuje implicitni TLS; 587, 2525 i drugi portovi zahtevaju
+uspešan STARTTLS pre autentifikacije ili slanja sadržaja. Node-ova održavana
+cipher lista zamenjuje ručno ograničenje koje je praktično isključivalo TLS
+1.2 iako je bio deklarisan kao podržan minimum.
+
+Konfiguracija radi fail-closed: port mora biti ceo broj 1–65535, host i oba
+credential-a su obavezni, a nepoznata TLS boolean vrednost se odbija.
+`SMTP_TLS_REJECT_UNAUTHORIZED=false` prihvata se samo u `development`/`test`
+okruženju i samo za loopback SMTP, pa produkcija ne može slučajno da pošalje
+reset token, podatke porudžbine ili prijavu za posao preko neproverenog ili
+plaintext kanala. Novi testovi proveravaju obe TLS varijante, neispravnu
+konfiguraciju, legacy alias-e i lokalni self-signed izuzetak bez mrežnog slanja.
+
+---
+
+## XIV. Istek napuštenih kartičnih rezervacija — 30. avgust 2026.
+
+U V2 je preko grane `ispravka/v2-istek-rezervacija` dodat bezbedan cleanup
+napuštenih kartičnih rezervacija bez nove Prisma migracije. Cilj je da netaknut
+payment pokušaj ne drži zalihu i kupon zauvek, ali da sistem nikada automatski
+ne oslobodi robu posle moguće komunikacije sa bankom.
 
 ### Politika isteka i REVIEW granica
 
@@ -609,19 +657,21 @@ prelazi u `REVIEW` umesto da dobije nov ili replayovan bankarski payload.
 
 ### Provere i operativno stanje
 
-Završna lokalna provera 30. avgusta nalazi 82 testa: 81 prolazi, a jedini
-PostgreSQL integration test je očekivano preskočen bez bezbedne test baze.
-`lint --quiet` završava sa 0 grešaka, TypeScript, produkcijski build sa lažnim
-test podešavanjima i `git diff --check` prolaze. Opt-in PostgreSQL test sa
-`RUN_RESERVATION_CLEANUP_DB_TESTS=true` pokreće dva cleanup radnika nad istim
-orderom i mora dokazati jedan `EXPIRED`, jedan `SKIPPED` i tačno jedan povrat
-zalihe/kupona, uz realnu pozitivnu i negativnu proveru kandidatskog prefiltera.
-CI ga obavezno uključuje nad izolovanim PostgreSQL servisom.
+Završna lokalna provera 30. avgusta na samostalnoj cleanup grani našla je 82
+testa: 81 je prošao, a jedini PostgreSQL integration test bio je očekivano
+preskočen bez bezbedne test baze. `lint --quiet`, TypeScript, produkcijski build
+sa lažnim test podešavanjima i `git diff --check` takođe su prošli. Opt-in
+PostgreSQL test sa `RUN_RESERVATION_CLEANUP_DB_TESTS=true` pokreće dva cleanup
+radnika nad istim orderom i mora dokazati jedan `EXPIRED`, jedan `SKIPPED` i
+tačno jedan povrat zalihe/kupona, uz realnu pozitivnu i negativnu proveru
+kandidatskog prefiltera. CI ga obavezno uključuje nad izolovanim PostgreSQL
+servisom.
 
-Kôd nije deployovan. Produkcioni `.env` nije dobio cleanup secret, VPS nije
-menjan i timer nije instaliran. Prvi secret-safe dry-run,
-kontrolisani apply, praćenje agregata i systemd oneshot/timer ostaju zasebno
-odobrena operativna radnja. Kartice ostaju isključene dok timer i smoke nisu
-dokazani i dok REVIEW inbox, reconciliation, refund i bankarski staging nisu
-završeni. Postojeći DB race test pokriva dva cleanup radnika; posebna real-DB
-trka cleanup-a sa payment start/callback putem ostaje dodatni uslov pre kartica.
+Kôd je uklopljen u V2, ali nije deployovan. Produkcioni `.env` nije dobio
+cleanup secret, VPS nije menjan i timer nije instaliran. Prvi secret-safe
+dry-run, kontrolisani apply, praćenje agregata i systemd oneshot/timer ostaju
+zasebno odobrena operativna radnja. Kartice ostaju isključene dok timer i smoke
+nisu dokazani i dok REVIEW inbox, reconciliation, refund i bankarski staging
+nisu završeni. Postojeći DB race test pokriva dva cleanup radnika; posebna
+real-DB trka cleanup-a sa payment start/callback putem ostaje dodatni uslov pre
+kartica.

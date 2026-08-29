@@ -909,7 +909,10 @@ Reklamacija ograničava prilog i priprema ga za bezbednije slanje kao attachment
 
 ### 18.3. SMTP
 
-Mailer sada podrazumevano proverava TLS sertifikat i ograničava TLS na moderne verzije. Isključivanje validacije mora biti eksplicitno i namenjeno je samo kontrolisanom lokalnom self-signed okruženju.
+Prvobitna zaštita je uključila proveru TLS sertifikata u opštem maileru i
+prijavi za posao, ali su auth, order i wishlist moduli zadržali zasebne
+fail-open transportere. Naknadni P1 pregled i potpuna centralizacija opisani su
+u odeljku 34.
 
 ## 19. Prisma schema promene
 
@@ -1177,9 +1180,9 @@ Pre aktivacije su obavezni:
 - admin `REVIEW` inbox;
 - reconciliation tok;
 - refund tok;
-- reservation-cleanup kod je implementiran na zasebnoj ispravka grani, ali
-  mora proći opt-in PostgreSQL race test u CI-ju, biti pregledan i uklopljen, pa
-  dobiti zasebno odobren produkcioni secret, dry-run/apply smoke i VPS timer;
+- reservation-cleanup kod je u V2; svaka njegova izmena mora proći opt-in
+  PostgreSQL race/prefilter test u CI-ju, a produkcija zatim zahteva zasebno
+  odobren secret, dry-run/apply smoke i VPS timer;
 - multi-tab, refresh, 429/5xx i network-loss testovi;
 - trajan idempotentni email outbox.
 
@@ -1700,8 +1703,8 @@ Najveći preostali posao nije još jedno površinsko UI proširenje, već završ
 
 Drugim rečima: produkciona baza je sada bezbedno proširena i spremna za V2 kod,
 ali javna aplikacija još nije V2. Kartice su isključene, GitHub/server tajne i
-HTTPS nisu završeni, a `main` nije spojen niti deployovan. Reservation-cleanup
-kod postoji na zasebnoj ispravka grani i nije deployovan; VPS timer i prvi
+HTTPS nisu završeni, a Draft PR #1 ka `main` nije spojen niti deployovan.
+Reservation-cleanup kod je u V2, ali nije deployovan; VPS timer i prvi
 dry-run/apply smoke nisu izvršeni.
 
 ## 32. Production-readiness rad — 29. avgust 2026.
@@ -1993,8 +1996,8 @@ DB šema je spremna, ali aplikacioni deploy ostaje blokiran sledećim stavkama:
    radi fail-closed bez ove konfiguracije.
 8. **SMTP** — host, port, nalog, credential, sender identitet i TLS validacija
    moraju biti potvrđeni stvarnim kontrolisanim testom.
-9. **Reservation cleanup operativa** — lokalni kod još mora biti pushovan i
-   potvrđen opt-in PostgreSQL race testom u CI-ju. Produkcijski server zatim
+9. **Reservation cleanup operativa** — svaka promena cleanup koda mora proći
+   opt-in PostgreSQL race/prefilter test u CI-ju. Produkcijski server zatim
    zahteva zaseban `ORDER_RESERVATION_CLEANUP_SECRET`, prvi eksplicitan dry-run,
    kontrolisani apply smoke, nadgledani systemd timer i proveru agregatnih
    rezultata. Nijedna od tih server radnji nije izvršena ovom izmenom.
@@ -2224,14 +2227,93 @@ Ovaj sprint ne rešava dinamičke `ProductType`/attribute filtere, jedinstven
 inventory ledger, kompletan order timeline, RMA/refund tok, media biblioteku,
 page builder, produkcione secrets niti domen/HTTPS. To ostaju sledeći epici.
 
-## 34. Cleanup napuštenih kartičnih rezervacija
+## 34. P1 hotfix: validacija login callback putanje
 
-Na grani `ispravka/v2-istek-rezervacija` implementiran je P1 cleanup
-za rezervacije koje nastanu pre odlaska kupca na kartično plaćanje. Promena je
-aplikaciona i ne uvodi novu Prisma migraciju. Nije spojen niti deployovan;
-produkcijski server i podaci nisu menjani.
+Read-only pregled V2 commita `438dc55` označio je direktno prosleđivanje
+`callbackUrl` vrednosti iz query stringa u `router.push` kao HIGH XSS/open
+navigation nalaz. Naknadni remote commitovi do `5312ab2` menjali su samo
+dokumentaciju, pa je nalaz ostao primenljiv na isti kod.
 
-### 34.1. Bezbednosna granica politike
+### 34.1. Granica poverenja
+
+Dodat je browser-safe helper `safeLoginCallbackPath` u
+`lib/security/navigation.ts`. Ulaz je nepoverljiv i helper fail-closed vraća
+fiksni `/` kada vrednost nije prihvatljiva. Dozvoljena destinacija mora:
+
+- početi tačno jednim `/` i ostati na sintetičkom internom originu posle
+  standardnog `URL` parsiranja;
+- imati putanju bez backslash-a, kontrolnih bajtova, kodiranih slash/backslash
+  separatora, duplih separatora i `.`/`..` segmenata;
+- moći da zadrži bezbedan query i fragment, uključujući Unicode i spoljašnji
+  URL kada je on samo kodirana vrednost parametra pretrage.
+
+Apsolutni URL, URL šema, protocol-relative forma ili parserom promenjen origin
+nikada se ne prosleđuju routeru. Nema caller-controlled fallback-a.
+
+### 34.2. Integracija i regresiona zaštita
+
+`app/(auth)/login/page.tsx` sada poziva helper odmah pri čitanju
+`searchParams`, pre uspešne prijave i `router.push`. Novi
+`lib/security/navigation.test.ts` pokriva legitimne nalog/admin/pretraga
+putanje i negativne scheme, absolute, protocol-relative, backslash, encoded
+separator, control-byte i dot-segment ulaze.
+
+Provere na grani `ispravka/v2-bezbedan-callback-url`:
+
+- `npm test`: 43/43 prolazi;
+- `npm run typecheck`: prolazi;
+- `npm run lint`: 0 grešaka, 72 ranije postojeća upozorenja;
+- `npm run build` sa test HTTPS site/auth URL-om: prolazi; lokalna baza nije
+  pokrenuta, pa očekivani Prisma logovi koriste postojeće safe-default grane;
+- `git diff --check`: prolazi.
+
+Ova promena ne uvodi migraciju, ne pristupa produkcionoj bazi i nije
+deployovana. Server, tajne, auth sesije i ostali P1 blokatori nisu menjani.
+
+## 35. Centralizacija SMTP TLS politike
+
+Naknadni bezbednosni pregled pronašao je pet nezavisnih Nodemailer
+konfiguracija. Auth, order i wishlist transporteri su bezuslovno postavljali
+`rejectUnauthorized: false`, pa su reset/verifikacioni tokeni, podaci
+porudžbine i wishlist poruke ignorisali dokumentovanu produkcionu TLS
+zastavicu. Sva petorka je imala `secure: false` bez `requireTLS`, što je port
+587 ostavljalo na oportunističkom STARTTLS-u, a port 465 bez implicitnog TLS-a.
+
+Dodat je jedini transport adapter `lib/email/smtp.ts`, koji koriste:
+
+- auth poruke za reset, dobrodošlicu i verifikaciju;
+- potvrde porudžbine i promene statusa;
+- wishlist obaveštenja;
+- kontakt, reklamacije i generički mailer;
+- API za prijavu za posao.
+
+Adapter sprovodi sledeće invarijante pre pravljenja transporta:
+
+- port mora biti strogo parsiran ceo broj od 1 do 65535;
+- 465 koristi implicitni TLS, a svi drugi portovi zahtevaju uspešan STARTTLS;
+- TLS minimum je 1.2, bez ručno pinovane nepotpune cipher liste;
+- sertifikat se podrazumevano proverava;
+- isključivanje provere sertifikata dozvoljeno je samo u `development` ili
+  `test` režimu i samo za loopback host;
+- host, korisničko ime i lozinka su obavezni, bez tihog localhost/no-auth
+  fallback-a;
+- canonical `SMTP_SERVER_*` vrednosti i zatečeni legacy alias-i prolaze kroz
+  istu politiku.
+
+Wishlist transport se više ne pravi pri importu modula, već tek pri pokušaju
+slanja. `lib/email/smtp.test.ts` proverava STARTTLS/implicitni TLS, validaciju
+sertifikata, lokalni self-signed izuzetak, portove, obaveznu konfiguraciju,
+legacy alias-e i eksplicitni SMTP nalog bez otvaranja mrežne veze.
+Promena nema Prisma migraciju, ne menja podatke i ne aktivira deploy.
+
+## 36. Cleanup napuštenih kartičnih rezervacija
+
+Na grani `ispravka/v2-istek-rezervacija` implementiran je P1 cleanup za
+rezervacije koje nastanu pre odlaska kupca na kartično plaćanje. Uklapanje u V2
+ne predstavlja produkcijski deploy. Promena je aplikaciona i ne uvodi novu
+Prisma migraciju; produkcijski server i podaci nisu menjani.
+
+### 36.1. Bezbednosna granica politike
 
 Centralna čista politika u `lib/orders/reservation-policy.ts` razlikuje
 `EXPIRE`, `REVIEW` i `SKIP`. Automatski `EXPIRE` je dozvoljen samo kada su
@@ -2256,7 +2338,7 @@ Transaction već terminalan. Najnoviji timestamp između ordera, transaction-a
 i payment događaja produžava REVIEW sat, pa star order ne proglašava noviji
 provider pokušaj zastarelim.
 
-### 34.2. Centralni rokovi i payment-start zaštita
+### 36.2. Centralni rokovi i payment-start zaštita
 
 `lib/config/order-reservations.ts` zamenjuje ranije odvojene dvočasovne rokove
 jednim izvorom istine. Fiksni `ORDER_PENDING_RECOVERY_WINDOW_MS` od dva sata
@@ -2285,7 +2367,7 @@ Postojeća callback politika ostaje poslednja sigurnosna mreža: naknadni
 approval ne oživljava otkazan order i ne re-alocira već oslobođenu zalihu, već
 nejasan konflikt ostavlja za `REVIEW`.
 
-### 34.3. Serializable per-order obrada i poison fallback
+### 36.3. Serializable per-order obrada i poison fallback
 
 `lib/orders/reservation-cleanup.ts` koristi ograničen i deterministički DB
 prefilter samo da pronađe kandidatske ID-eve. Podrazumevani batch je 50, a
@@ -2320,7 +2402,7 @@ bez ID-eva porudžbina, PII-ja ili provider payload-a. Ako makar jedan kandidat
 ostane `failed`, HTTP odgovor je 500 sa `success:false` i istim agregatima, pa
 scheduler ne može da tretira parcijalni kvar kao uspešan prolaz.
 
-### 34.4. POST/Bearer/Origin maintenance endpoint
+### 36.4. POST/Bearer/Origin maintenance endpoint
 
 Nova ruta `POST /api/cron/order-reservations` je Node-only, dinamička i
 `no-store`. Nema `GET` handler i nema admin-session/cookie fallback.
@@ -2341,7 +2423,7 @@ oblici su `{"apply":false}` i `{"apply":true}`; dodatna polja, pogrešan tip,
 nevalidan JSON ili telo preko 256 bajtova se odbijaju. Promena stanja zato
 zahteva i validan Bearer i eksplicitni `apply: true`.
 
-### 34.5. Automatske i PostgreSQL concurrency provere
+### 36.5. Automatske i PostgreSQL concurrency provere
 
 Dodati focused testovi pokrivaju:
 
@@ -2370,16 +2452,16 @@ bezbedne PostgreSQL test baze; bez eksplicitnog
 klijent. GitHub verify job ga obavezno uključuje nad svojim izolovanim
 PostgreSQL 16 servisom pre browser smoke-a i builda.
 
-Završna lokalna provera 30. avgusta nalazi 82 testa: 81 prolazi, a jedini
-PostgreSQL test je očekivano preskočen bez bezbedne test baze. `lint --quiet`
-završava sa 0 grešaka, TypeScript, produkcijski build sa lažnim test
-podešavanjima i `git diff --check` prolaze. GitHub verify job uključuje DB test
-nad izolovanim PostgreSQL 16 servisom; istorijske brojke iz prethodnih odeljaka
-nisu prepisivane.
+Završna lokalna provera kombinovanog stabla 30. avgusta nalazi 103 testa: 102
+prolaze, a jedini PostgreSQL test je očekivano preskočen bez bezbedne test baze.
+`lint --quiet` završava sa 0 grešaka, TypeScript, produkcijski build sa lažnim
+test podešavanjima i `git diff --check` prolaze. GitHub verify job uključuje DB
+test nad izolovanim PostgreSQL 16 servisom; istorijske brojke iz prethodnih
+odeljaka nisu prepisivane.
 
-### 34.6. Operativno stanje i preostale granice
+### 36.6. Operativno stanje i preostale granice
 
-Implementacija i dokumentacija ostaju na zasebnoj ispravka grani i nisu
+Implementacija i dokumentacija su uklopljene u V2 istoriju, ali nisu
 deployovane. Produkcijski `.env` nije dobio
 `ORDER_RESERVATION_CLEANUP_SECRET`, VPS nije menjan, a systemd oneshot/timer
 nije instaliran. GitHub workflow takođe namerno ne upravlja server timerom.
