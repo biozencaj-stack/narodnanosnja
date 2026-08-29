@@ -1,7 +1,6 @@
 'use server';
 
 import nodemailer from 'nodemailer';
-import { createHmac } from 'node:crypto';
 import type { Order, TransactionDetails } from '@/types/order';
 import type { CartItem } from '@/types/cart';
 import { formatPriceWithCurrency, clearProductSufix } from '@/lib/utils/format';
@@ -9,6 +8,8 @@ import { headers } from 'next/headers';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { verifyRecaptchaToken } from '@/lib/security/recaptcha';
 import { escapeHtmlText, sanitizeRichHtml } from '@/lib/security/html';
+import { getStorefrontUrl } from '@/lib/config/storefront-url';
+import { createNewsletterUnsubscribeUrl } from '@/lib/newsletter/unsubscribe';
 
 // Configurable store constants (read from environment)
 const STORE_NAME = process.env.NEXT_PUBLIC_STORE_NAME || 'My Store';
@@ -304,14 +305,6 @@ export async function sendNewsletterConfirmation(email: string): Promise<boolean
 }
 
 /**
- * Generate unsubscribe token for email
- */
-function generateUnsubscribeToken(email: string): string {
-  const secret = process.env.NEXTAUTH_SECRET || 'cms-unsubscribe-secret';
-  return createHmac('sha256', secret).update(email).digest('hex').slice(0, 32);
-}
-
-/**
  * Send newsletter campaign email
  */
 export async function sendNewsletterCampaign(
@@ -321,8 +314,10 @@ export async function sendNewsletterCampaign(
 ): Promise<boolean> {
   const safeSubject = escapeHtmlText(subject);
   const safeContent = sanitizeRichHtml(content);
-  const unsubscribeToken = generateUnsubscribeToken(email);
-  const unsubscribeUrl = `${SITE_URL}/api/newsletter/unsubscribe?email=${encodeURIComponent(email)}&token=${unsubscribeToken}`;
+  const unsubscribeUrl = createNewsletterUnsubscribeUrl(
+    getStorefrontUrl(),
+    email,
+  );
 
   const html = `
 <!DOCTYPE html>
