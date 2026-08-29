@@ -35,6 +35,8 @@ CURRENT_LINK="$DEPLOY_ROOT/current"
   fail "deploy root mora biti pod /var/www ili /srv"
 [[ "$RELEASE_ID" =~ ^[0-9a-f]{40}-[0-9]+$ ]] || \
   fail "release identifikator nije validan"
+[[ "$APP_NAME" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || \
+  fail "APP_NAME nije validan"
 [[ "$APP_PORT" =~ ^[1-9][0-9]{0,4}$ ]] && (( APP_PORT <= 65535 )) || \
   fail "APP_PORT nije validan"
 [[ "$SMOKE_PORT" =~ ^[1-9][0-9]{0,4}$ ]] && (( SMOKE_PORT <= 65535 )) || \
@@ -93,19 +95,23 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-log "Povezivanje shared podataka"
-mkdir -p "$DEPLOY_ROOT/public/uploads" "$RELEASE_DIR/public"
+# Dependency lifecycle skripte ne smeju da dobiju pristup produkcionim tajnama
+# ili korisničkim uploadima. Shared linkovi se dodaju tek posle npm ci.
 [[ ! -e "$RELEASE_DIR/.env" && ! -L "$RELEASE_DIR/.env" ]] || \
   fail "release ne sme sadržati .env"
 [[ ! -e "$RELEASE_DIR/public/uploads" && ! -L "$RELEASE_DIR/public/uploads" ]] || \
   fail "release ne sme sadržati public/uploads"
-ln -s "$DEPLOY_ROOT/.env" "$RELEASE_DIR/.env"
-ln -s "$DEPLOY_ROOT/public/uploads" "$RELEASE_DIR/public/uploads"
 
 cd "$RELEASE_DIR"
 
 log "Instalacija zaključanih zavisnosti"
-npm ci --legacy-peer-deps --no-audit --no-fund
+DATABASE_URL="postgresql://build:build@127.0.0.1:1/build" \
+  npm ci --legacy-peer-deps --no-audit --no-fund
+
+log "Povezivanje shared podataka"
+mkdir -p "$DEPLOY_ROOT/public/uploads" "$RELEASE_DIR/public"
+ln -s "$DEPLOY_ROOT/.env" "$RELEASE_DIR/.env"
+ln -s "$DEPLOY_ROOT/public/uploads" "$RELEASE_DIR/public/uploads"
 
 log "Prisma validacija"
 npx prisma validate

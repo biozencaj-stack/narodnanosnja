@@ -30,6 +30,18 @@ interface PaymentSuccessPageProps {
   }>;
 }
 
+function orderStatusHref(
+  pathname: '/order/success' | '/payment/failed',
+  orderId: string,
+  legacyToken?: string,
+) {
+  const query = new URLSearchParams({ oid: orderId });
+  // Novi tok koristi HttpOnly cookie. Token čuvamo samo za kompatibilnost sa
+  // ranije izdatim guest linkovima koji još nemaju pristupni cookie.
+  if (legacyToken) query.set('token', legacyToken);
+  return `${pathname}?${query.toString()}`;
+}
+
 async function PaymentSuccessContent({
   searchParams,
 }: PaymentSuccessPageProps) {
@@ -94,14 +106,12 @@ async function PaymentSuccessContent({
   // Sama autorizacija nije dokaz uspešnog plaćanja. Direktno otvaranje URL-a
   // ne sme prikazati success niti isprazniti korpu za CASH/PENDING/FAILED order.
   if (order.paymentMethod !== "CARD") {
-    redirect(`/order/success?oid=${encodeURIComponent(order.id)}`);
+    redirect(orderStatusHref('/order/success', order.id, params.token));
   }
   if (order.paymentStatus !== "PAID") {
-    redirect(
-      order.paymentStatus === "FAILED"
-        ? `/payment/failed?oid=${encodeURIComponent(order.id)}`
-        : `/order/success?oid=${encodeURIComponent(order.id)}`,
-    );
+    // FAILED i svi neodređeni statusi idu direktno na status-first stranicu;
+    // ona jedina odlučuje da li prikazuje retry ili neutralnu proveru.
+    redirect(orderStatusHref('/payment/failed', order.id, params.token));
   }
 
   const customerName = order.user?.firstName || order.guestFirstName || "Kupac";

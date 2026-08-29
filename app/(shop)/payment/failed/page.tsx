@@ -175,7 +175,7 @@ async function PaymentFailedContent({ searchParams }: PaymentFailedPageProps) {
       {clearPendingAttempt && order && (
         <ClearPendingCardPaymentOnMount
           orderId={order.id}
-          clearCheckoutAttempt={isFailed}
+          clearCheckoutAttempt={clearPendingAttempt}
         />
       )}
 

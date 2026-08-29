@@ -3,9 +3,9 @@
 import { useEffect } from "react";
 import {
   clearPendingCardPayment,
+  clearTerminalCardPaymentAttempt,
   readPendingCardPayment,
 } from "@/lib/payments/pending-card";
-import { clearCheckoutAttemptForOrder } from "@/lib/checkout/idempotency";
 
 export function ClearPendingCardPaymentOnMount({
   orderId,
@@ -15,11 +15,12 @@ export function ClearPendingCardPaymentOnMount({
   clearCheckoutAttempt?: boolean;
 }) {
   useEffect(() => {
+    if (clearCheckoutAttempt) {
+      clearTerminalCardPaymentAttempt(orderId);
+      return;
+    }
     if (readPendingCardPayment()?.orderId === orderId) {
       clearPendingCardPayment();
-    }
-    if (clearCheckoutAttempt) {
-      clearCheckoutAttemptForOrder(orderId);
     }
   }, [clearCheckoutAttempt, orderId]);
   return null;

@@ -5,6 +5,12 @@ import {
   validateCoupon,
 } from "@/lib/promotions";
 import { getStoreCommerceSettings } from "@/lib/config/store-settings";
+import {
+  CheckoutQuoteError,
+  resolveCheckoutStock,
+} from "./inventory-policy";
+
+export { CheckoutQuoteError, resolveCheckoutStock } from "./inventory-policy";
 
 export interface CheckoutRequestItem {
   productId: string;
@@ -14,7 +20,7 @@ export interface CheckoutRequestItem {
 
 export interface CheckoutQuoteLine {
   productId: string;
-  stockId: string | null;
+  stockId: string;
   productCode: string;
   productName: string;
   size: string;
@@ -41,17 +47,6 @@ export interface CheckoutQuote {
   promotionIds: string[];
   couponCode: string | null;
   couponPromotionId: string | null;
-}
-
-export class CheckoutQuoteError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly status = 400,
-  ) {
-    super(message);
-    this.name = "CheckoutQuoteError";
-  }
 }
 
 const money = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
@@ -112,7 +107,7 @@ export async function buildCheckoutQuote(
   const productIds = [...new Set(items.map((item) => item.productId))];
   const products = await prisma.product.findMany({
     where: { id: { in: productIds }, active: true },
-    include: { sizes: true },
+    include: { sizes: { where: { active: true } } },
   });
   const byId = new Map(products.map((product) => [product.id, product]));
 
@@ -133,34 +128,20 @@ export async function buildCheckoutQuote(
         ? salePrice
         : regularPrice;
 
-    let stockId: string | null = null;
-    let selectedSize = item.size || "Podrazumevano";
-    if (product.sizes.length > 0) {
-      const stock = product.sizes.find((entry) => entry.size === item.size);
-      if (!stock) {
-        throw new CheckoutQuoteError(
-          `Izaberite dostupnu opciju za „${getLocalized(product.name, "sr")}”`,
-          "OPTION_UNAVAILABLE",
-          409,
-        );
-      }
-      if (stock.stock < item.quantity) {
-        throw new CheckoutQuoteError(
-          `Nema dovoljno proizvoda „${getLocalized(product.name, "sr")}” na stanju`,
-          "INSUFFICIENT_STOCK",
-          409,
-        );
-      }
-      stockId = stock.id;
-      selectedSize = stock.size;
-    }
+    const productName = getLocalized(product.name, "sr");
+    const stock = resolveCheckoutStock(
+      productName,
+      product.sizes,
+      item.size || "",
+      item.quantity,
+    );
 
     return {
       productId: product.id,
-      stockId,
+      stockId: stock.id,
       productCode: product.sku || product.id,
-      productName: getLocalized(product.name, "sr"),
-      size: selectedSize,
+      productName,
+      size: stock.size,
       quantity: item.quantity,
       unitPrice: money(unitPrice),
       lineTotal: money(unitPrice * item.quantity),

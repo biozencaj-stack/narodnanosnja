@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import type { PaymentMethod, PaymentStatus, OrderStatus } from "@prisma/client";
 import type { CheckoutQuote } from "@/lib/checkout/quote";
+import { lockProductInventoryRows } from "@/lib/inventory/product-size-sync";
 
 export interface CreateOrderInput {
   // Customer info (either userId or guest info)
@@ -168,6 +169,13 @@ export async function createSecureOrder(input: CreateSecureOrderInput) {
 
   return prisma.$transaction(
     async (tx) => {
+      // Admin izmena zalihe, rezervacija i povrat koriste isti parent lock.
+      // Bez ovoga bi apsolutni admin stock mogao da prepiše paralelni decrement.
+      await lockProductInventoryRows(
+        tx,
+        input.quote.lines.map((line) => line.productId),
+      );
+
       // Cene mogu biti promenjene između quote-a i transakcije. Pre upisa
       // proveravamo da je quote i dalje aktuelan.
       const products = await tx.product.findMany({
@@ -197,21 +205,20 @@ export async function createSecureOrder(input: CreateSecureOrderInput) {
           );
         }
 
-        if (line.stockId) {
-          const reserved = await tx.productSize.updateMany({
-            where: {
-              id: line.stockId,
-              productId: line.productId,
-              stock: { gte: line.quantity },
-            },
-            data: { stock: { decrement: line.quantity } },
-          });
-          if (reserved.count !== 1) {
-            throw new OrderInventoryError(
-              `Nema dovoljno proizvoda „${line.productName}” na stanju`,
-              "INSUFFICIENT_STOCK",
-            );
-          }
+        const reserved = await tx.productSize.updateMany({
+          where: {
+            id: line.stockId,
+            productId: line.productId,
+            active: true,
+            stock: { gte: line.quantity },
+          },
+          data: { stock: { decrement: line.quantity } },
+        });
+        if (reserved.count !== 1) {
+          throw new OrderInventoryError(
+            `Nema dovoljno proizvoda „${line.productName}” na stanju`,
+            "INSUFFICIENT_STOCK",
+          );
         }
       }
 
@@ -238,7 +245,7 @@ export async function createSecureOrder(input: CreateSecureOrderInput) {
           currency: input.quote.currency,
           couponCode: input.quote.couponCode,
           promotionIds: input.quote.promotionIds,
-          inventoryAllocated: input.quote.lines.some((line) => Boolean(line.stockId)),
+          inventoryAllocated: true,
           note: input.note,
           items: {
             create: input.quote.lines.map((line) => ({

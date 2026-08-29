@@ -748,8 +748,15 @@ model ProductSize {
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
   size      String
   stock     Int     @default(0)
+  // Soft-delete čuva stabilan ID koji OrderItem.inventoryStockId koristi za
+  // tačno vraćanje rezervisane zalihe pri otkazivanju porudžbine.
+  active    Boolean @default(true)
 
+  // Exact DB invariant; servis dodatno odbija trim/case-insensitive duplikate.
+  // Expand SQL dodaje i CHECK (stock >= 0), koji Prisma schema ne modeluje.
+  @@unique([productId, size])
   @@index([productId])
+  @@index([productId, active])
 }
 
 // ============================================

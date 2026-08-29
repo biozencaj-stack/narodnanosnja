@@ -5,7 +5,9 @@
 Nova kataloška osnova je namerno **expand-only**. Postojeći `ProductSize`,
 polja proizvoda (`gender`, `color`, `material`, dimenzije...) i postojeći način
 čitanja ostaju netaknuti dok novi model ne bude popunjen, proveren i uključen u
-storefront. Ovaj commit ne sadrži migraciju i ne pokreće `db push`.
+storefront. Pregledani expand migracioni lanac je sačuvan u repozitorijumu i
+kontrolisano je primenjen nad produkcijom 29. avgusta 2026, bez korišćenja
+`db push`.
 
 Nova osnova razdvaja tri pojma:
 
@@ -18,14 +20,17 @@ Nova osnova razdvaja tri pojma:
 
 ## Preduslov: uskladiti istoriju migracija
 
-Repo trenutno nema početnu migraciju, već samo parcijalnu migraciju
-`20250226120000_add_localized_json_fields`. Pre nove produkcione migracije:
+Repo sada ima current-state baseline
+`20260829000000_baseline_production_before_v2`, napravljen iz schema-only
+snimka produkcione baze koja već sadrži localized JSONB kolone. Stara parcijalna
+localized migracija je arhivirana van aktivnog Prisma lanca. Za produkcionu
+expand migraciju sprovedeni su sledeći koraci:
 
-1. napraviti backup i klon produkcione baze;
-2. uporediti realnu šemu sa `prisma/schema.prisma`;
-3. napraviti i dokumentovati Prisma baseline za već postojeće tabele;
-4. probati kompletan restore + migrate na praznoj i na kopiji produkcione baze;
-5. tek zatim generisati expand migraciju za modele iz ovog plana.
+1. napravljen je proverljiv backup i klon produkcione baze;
+2. potvrđeno je da produkciona šema odgovara baseline-u i baseline je evidentiran sa
+   `prisma migrate resolve --applied` prema `docs/PRISMA-BASELINE.md`;
+3. kompletan restore + migrate proveren je na praznoj i na kopiji produkcione baze;
+4. expand migracije su zatim primenjene i završen je završni drift/status test.
 
 Ne koristiti `prisma db push` nad produkcijom.
 
@@ -33,6 +38,9 @@ Ne koristiti `prisma db push` nad produkcijom.
 
 Migracija samo dodaje:
 
+- `ProductSize.active` za povlačenje veličine bez promene njenog stabilnog ID-a;
+- unique ograničenje nad `ProductSize(productId, size)`, indeks nad
+  `(productId, active)` i `CHECK (stock >= 0)`;
 - opcioni `Product.productTypeId`;
 - `ProductType`, `AttributeDefinition`, `ProductTypeAttribute`;
 - `AttributeChoice`, `ProductAttributeValue` i
@@ -113,6 +121,10 @@ ograničenja, pa moraju ostati u ručno pregledanom SQL-u expand migracije (ne u
 `db push` postupku):
 
 ```sql
+ALTER TABLE "ProductSize"
+  ADD CONSTRAINT "ProductSize_stock_nonnegative_check"
+  CHECK ("stock" >= 0);
+
 ALTER TABLE "AttributeChoice"
   ADD CONSTRAINT "AttributeChoice_select_data_type_check"
   CHECK ("dataType" IN ('SELECT', 'MULTI_SELECT'));

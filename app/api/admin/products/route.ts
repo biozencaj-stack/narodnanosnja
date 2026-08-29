@@ -3,6 +3,12 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma, Prisma } from "@/lib/db";
 import { getSlugSource } from "@/lib/i18n/localized";
+import {
+  assertActiveProductHasInventory,
+  planProductSizeSync,
+  ProductSizeSyncError,
+  resolveDesiredProductActive,
+} from "@/lib/inventory/product-size-sync";
 
 function slugify(text: string): string {
   return text
@@ -56,7 +62,7 @@ export async function GET(request: NextRequest) {
       include: {
         category: { select: { id: true, name: true } },
         brand: { select: { id: true, name: true } },
-        sizes: true,
+        sizes: { where: { active: true } },
         _count: { select: { orderItems: true, reviews: true } },
       },
       orderBy: { createdAt: "desc" },
@@ -129,6 +135,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const productActive = resolveDesiredProductActive(true, active);
+    const sizePlan =
+      sizes === undefined ? null : planProductSizeSync([], sizes);
+    assertActiveProductHasInventory(
+      productActive,
+      sizePlan?.creates.length ?? 0,
+    );
+
     // Generate unique slug from sr
     let slug = slugify(nameStr);
     const existing = await prisma.product.findUnique({ where: { slug } });
@@ -136,87 +150,97 @@ export async function POST(request: NextRequest) {
       slug = `${slug}-${Date.now().toString(36)}`;
     }
 
-    const product = await prisma.product.create({
-      data: {
-        name: typeof name === "object" ? name : { sr: name, en: name },
-        slug,
-        description:
-          typeof description === "object"
-            ? description
-            : description
-              ? { sr: description, en: description }
-              : Prisma.DbNull,
-        sku: sku || null,
-        price,
-        salePrice: salePrice || null,
-        image1: image1 || null,
-        image2: image2 || null,
-        image3: image3 || null,
-        categoryId: categoryId || null,
-        brandId: brandId || null,
-        gender: gender || null,
-        active: active ?? true,
-        featured: featured ?? false,
-        onSale: onSale ?? false,
-        novo: novo ?? false,
-        metaTitle:
-          typeof metaTitle === "object"
-            ? metaTitle
-            : metaTitle
-              ? { sr: metaTitle, en: metaTitle }
-              : Prisma.DbNull,
-        metaDescription:
-          typeof metaDescription === "object"
-            ? metaDescription
-            : metaDescription
-              ? { sr: metaDescription, en: metaDescription }
-              : Prisma.DbNull,
-        color: color || null,
-        colorHex: colorHex || null,
-        material: material || null,
-        weight: weight || null,
-        length: length || null,
-        width: width || null,
-        height: height || null,
-        countryOfOrigin: countryOfOrigin || null,
-        careInstructions:
-          typeof careInstructions === "object"
-            ? careInstructions
-            : careInstructions
-              ? { sr: careInstructions, en: careInstructions }
-              : Prisma.DbNull,
-        barcode: barcode || null,
-        tags: tags || [],
-        sizes: sizes?.length
-          ? {
-              create: sizes.map((s: { size: string; stock: number }) => ({
-                size: s.size,
-                stock: s.stock || 0,
-              })),
-            }
-          : undefined,
-      },
-      include: {
-        category: true,
-        brand: true,
-        sizes: true,
-      },
-    });
-
-    // Create multi-category associations
-    const catIds: string[] = categoryIds || (categoryId ? [categoryId] : []);
-    if (catIds.length > 0) {
-      await prisma.productCategory.createMany({
-        data: catIds.map((cId: string) => ({
-          productId: product.id,
-          categoryId: cId,
-        })),
-        skipDuplicates: true,
+    const product = await prisma.$transaction(async (tx) => {
+      const created = await tx.product.create({
+        data: {
+          name: typeof name === "object" ? name : { sr: name, en: name },
+          slug,
+          description:
+            typeof description === "object"
+              ? description
+              : description
+                ? { sr: description, en: description }
+                : Prisma.DbNull,
+          sku: sku || null,
+          price,
+          salePrice: salePrice || null,
+          image1: image1 || null,
+          image2: image2 || null,
+          image3: image3 || null,
+          categoryId: categoryId || null,
+          brandId: brandId || null,
+          gender: gender || null,
+          active: productActive,
+          featured: featured ?? false,
+          onSale: onSale ?? false,
+          novo: novo ?? false,
+          metaTitle:
+            typeof metaTitle === "object"
+              ? metaTitle
+              : metaTitle
+                ? { sr: metaTitle, en: metaTitle }
+                : Prisma.DbNull,
+          metaDescription:
+            typeof metaDescription === "object"
+              ? metaDescription
+              : metaDescription
+                ? { sr: metaDescription, en: metaDescription }
+                : Prisma.DbNull,
+          color: color || null,
+          colorHex: colorHex || null,
+          material: material || null,
+          weight: weight || null,
+          length: length || null,
+          width: width || null,
+          height: height || null,
+          countryOfOrigin: countryOfOrigin || null,
+          careInstructions:
+            typeof careInstructions === "object"
+              ? careInstructions
+              : careInstructions
+                ? { sr: careInstructions, en: careInstructions }
+                : Prisma.DbNull,
+          barcode: barcode || null,
+          tags: tags || [],
+          sizes: sizePlan?.creates.length
+            ? {
+                create: sizePlan.creates.map((s) => ({
+                  size: s.size,
+                  stock: s.stock,
+                  active: s.active,
+                })),
+              }
+            : undefined,
+        },
+        include: {
+          category: true,
+          brand: true,
+          sizes: { where: { active: true } },
+        },
       });
-    }
+
+      const catIds: string[] = categoryIds || (categoryId ? [categoryId] : []);
+      if (catIds.length > 0) {
+        await tx.productCategory.createMany({
+          data: catIds.map((cId: string) => ({
+            productId: created.id,
+            categoryId: cId,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      return created;
+    });
 
     return NextResponse.json({ product }, { status: 201 });
   } catch (error) {
+    if (error instanceof ProductSizeSyncError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.status },
+      );
+    }
     console.error("Create product error:", error);
     return NextResponse.json(
       { error: "Failed to create product" },

@@ -1,11 +1,19 @@
 # GitHub Actions objavljivanje
 
-Workflow `.github/workflows/objavi.yml` automatski proverava i objavljuje svaki
-push na `main`. Može se pokrenuti i ručno iz GitHub Actions kartice.
+Workflow `.github/workflows/objavi.yml` proverava svaki pull request ka `main`
+i svaki push na `main`. Pull request pokreće samo CI proveru i nikada ne pokreće
+produkcijski deploy. Svaki push na `main` posle uspešne provere automatski
+objavljuje novu verziju. Workflow može da se pokrene i ručno iz GitHub Actions
+kartice.
 
 ## GitHub podešavanja
 
-U `Settings → Secrets and variables → Actions` dodati repository secrets:
+U `Settings → Environments` najpre kreirati environment `production`. U
+njegovom odeljku `Deployment branches and tags` izabrati custom branch policy
+i dozvoliti samo granu `main`. Produkcijske vrednosti je preporučeno čuvati u
+tom environmentu, umesto u širem repository scope-u.
+
+U environment `production` dodati secrets:
 
 - `SSH_PRIVATE_KEY` — zaseban privatni deploy ključ bez passphrase-a;
 - `SSH_KNOWN_HOSTS` — unapred verifikovan known-hosts red za produkcioni server;
@@ -13,28 +21,43 @@ U `Settings → Secrets and variables → Actions` dodati repository secrets:
 - `SERVER_USER` — ograničeni deploy korisnik koji poseduje deploy direktorijum
   i svoj PM2 proces.
 
-Dodati repository variables:
+U isti environment dodati variables:
 
-- `PRODUCTION_URL` — puna javna adresa sajta, privremeno može biti
-  `http://IP:8090`, a nakon domena treba da bude HTTPS;
+- `PRODUCTION_URL` — konačna puna HTTPS adresa sajta, bez HTTP ili `www`
+  preusmerenja;
 - `SERVER_PORT` — opciono, podrazumevano `22`;
-- `DEPLOY_PATH` — opciono, podrazumevano `/var/www/narodnanosnja`.
+- `DEPLOY_PATH` — opciono, podrazumevano `/var/www/narodnanosnja`;
+- `APP_PORT` — opciono, interni port aplikacije, podrazumevano `3007`;
+- `SMOKE_PORT` — opciono, privremeni lokalni port za proveru novog release-a,
+  podrazumevano `39007` i mora biti različit od `APP_PORT`;
+- `APP_NAME` — opciono, PM2 ime procesa, podrazumevano `narodnanosnja`.
+
+`PRODUCTION_URL` mora već pokazivati na ovaj produkcijski server, a
+`/api/health` mora biti dostupan bez autentifikacije, preusmerenja ili CDN
+keširanja. Javni health check potvrđuje tačan commit SHA i u suprotnom vraća
+prethodni release.
 
 `SSH_KNOWN_HOSTS` se ne generiše u workflow-u. Uzmite host ključ sa pouzdanog
 računara, uporedite fingerprint sa serverom i tek onda ceo izlaz sačuvajte kao
 secret. Za nestandardni SSH port red mora sadržati `[host]:port` oblik.
 
-Preporuka je da se secrets dodaju i u GitHub environment `production`. Ako taj
-environment dobije required reviewers, svaki main push će proći provere, ali će
-objavljivanje čekati ručno odobrenje.
+Required reviewers nisu obavezni i ne treba ih uključiti ako je cilj da svaki
+uspešan push na `main` automatski objavi novu verziju. Mogu se privremeno
+uključiti samo tokom kontrolisanog prvog produkcijskog puštanja.
 
 ## Zahtevi na serveru
 
-- Node.js 22, npm, PM2, rsync, curl i `flock`;
+- Linux sa Node.js 22, npm, PM2, rsync, curl i `flock`; alati moraju biti
+  dostupni deploy korisniku i u neinteraktivnoj SSH sesiji;
 - postojeći `$DEPLOY_PATH/.env` sa produkcionim tajnama;
-- deploy korisnik ima write pristup `$DEPLOY_PATH` i upravlja PM2 procesom
-  `narodnanosnja`;
+- deploy korisnik ima write pristup `$DEPLOY_PATH` i upravlja PM2 procesom čije
+  ime određuje `APP_NAME`;
 - PostgreSQL je dostupan i njegova šema je već usklađena sa Prisma šemom.
+
+Reverse proxy mora prosleđivati zahteve na `APP_PORT`, a `SMOKE_PORT` mora biti
+slobodan na lokalnom interfejsu servera. Ako se promene `APP_NAME`, `APP_PORT`
+ili `DEPLOY_PATH`, PM2, reverse proxy i dozvole moraju biti usklađeni sa istim
+vrednostima.
 
 Workflow namerno ne primenjuje migracije. Ako Prisma otkrije razliku između
 baze i koda, deploy staje pre aktivacije. Migracija se prvo pregleda i primenjuje
@@ -45,8 +68,12 @@ uslovi iz rollout dokumenta.
 
 ## Kako deploy radi
 
-1. GitHub runner instalira zaključane zavisnosti, validira Prisma/TypeScript,
-   izvršava sigurnosne testove i pravi probni production build.
+1. GitHub runner podiže praznu PostgreSQL 16 bazu, instalira zaključane
+   zavisnosti, primenjuje celu Prisma migration istoriju i proverava da između
+   baze i aktuelne Prisma šeme nema drifta. Zatim kroz `psql` pokreće rollback-only
+   DB invariant smoke (uključujući očekivana odbijanja nevalidnih redova),
+   proverava TypeScript, izvršava sigurnosne testove i pravi probni production
+   build.
 2. Kod se šalje u novu `$DEPLOY_PATH/releases/<commit>-<attempt>` fasciklu.
 3. Produkcijski `.env` i `public/uploads` ostaju shared podaci i povezuju se
    simboličkim linkovima; korisničke slike se nikada ne brišu rsync-om.

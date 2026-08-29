@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { lockProductInventoryRows } from "@/lib/inventory/product-size-sync";
 
 export class InventoryReleaseError extends Error {
   constructor(
@@ -57,6 +58,13 @@ export async function releaseOrderInventoryInTransaction(
       "INVENTORY_ALLOCATION_MAPPING_MISSING",
     );
   }
+
+  // Serijalizuje povrat sa admin upisom i novim rezervacijama. Zaključavanje
+  // svih proizvoda pre stock redova sprečava izgubljen increment i deadlock.
+  await lockProductInventoryRows(
+    tx,
+    [...exactAllocations.values()].map((allocation) => allocation.productId),
+  );
 
   const exactIds = [...exactAllocations.keys()];
   if (exactIds.length > 0) {

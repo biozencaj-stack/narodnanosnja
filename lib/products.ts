@@ -155,6 +155,7 @@ export async function fetchProducts(options: ProductFilterOptions = {}) {
       some: {
         size: { in: sizes },
         stock: { gt: 0 },
+        active: true,
       },
     };
   }
@@ -202,7 +203,7 @@ export async function fetchProducts(options: ProductFilterOptions = {}) {
       include: {
         category: { select: { id: true, name: true, slug: true } },
         brand: { select: { id: true, name: true, slug: true } },
-        sizes: { orderBy: { size: "asc" } },
+        sizes: { where: { active: true }, orderBy: { size: "asc" } },
       },
       orderBy,
       skip: (page - 1) * limit,
@@ -245,7 +246,7 @@ export async function fetchProductBySlug(
     include: {
       category: { select: { id: true, name: true, slug: true } },
       brand: { select: { id: true, name: true, slug: true } },
-      sizes: { orderBy: { size: "asc" } },
+      sizes: { where: { active: true }, orderBy: { size: "asc" } },
     },
   });
 
@@ -297,7 +298,7 @@ export async function fetchProductById(
     include: {
       category: { select: { id: true, name: true, slug: true } },
       brand: { select: { id: true, name: true, slug: true } },
-      sizes: { orderBy: { size: "asc" } },
+      sizes: { where: { active: true }, orderBy: { size: "asc" } },
     },
   });
 
@@ -475,7 +476,7 @@ export async function getFilterOptions() {
       orderBy: { name: "asc" },
     }),
     prisma.productSize.findMany({
-      where: { stock: { gt: 0 }, product: { active: true } },
+      where: { active: true, stock: { gt: 0 }, product: { active: true } },
       select: { size: true },
       distinct: ["size"],
       orderBy: { size: "asc" },
@@ -522,7 +523,9 @@ function buildCountsWhere(params: GetFilterCountsParams): Prisma.ProductWhereInp
     where.brandId = { in: params.brandIds };
   }
   if (params.sizes?.length) {
-    where.sizes = { some: { size: { in: params.sizes }, stock: { gt: 0 } } };
+    where.sizes = {
+      some: { active: true, size: { in: params.sizes }, stock: { gt: 0 } },
+    };
   }
   if (params.colors?.length) {
     where.AND = [
@@ -605,6 +608,7 @@ export async function getFilterCounts(
       by: ["size"],
       where: {
         product: baseWhere,
+        active: true,
         stock: { gt: 0 },
       },
       _count: { size: true },

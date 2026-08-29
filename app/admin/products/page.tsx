@@ -64,16 +64,16 @@ export default function AdminProductsPage() {
   }, [fetchProducts]);
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Da li ste sigurni da želite da obrišete ovaj proizvod?"))
+    if (!confirm("Da li ste sigurni da želite da arhivirate ovaj proizvod?"))
       return;
     try {
       const res = await fetch(`/api/admin/products/${id}`, {
         method: "DELETE",
       });
       if (res.ok) fetchProducts();
-      else alert("Greška pri brisanju");
+      else alert("Greška pri arhiviranju");
     } catch {
-      alert("Greška pri brisanju");
+      alert("Greška pri arhiviranju");
     }
   };
 
@@ -85,6 +85,10 @@ export default function AdminProductsPage() {
         body: JSON.stringify({ active: !active }),
       });
       if (res.ok) fetchProducts();
+      else {
+        const error = await res.json();
+        alert(error.error || "Status proizvoda nije moguće promeniti");
+      }
     } catch {
       console.error("Toggle failed");
     }
@@ -260,6 +264,7 @@ export default function AdminProductsPage() {
                       <button
                         onClick={() => handleDelete(product.id)}
                         className="p-2 hover:bg-stone-100 rounded-lg"
+                        title="Arhiviraj proizvod"
                       >
                         <Trash2 className="h-4 w-4 text-red-600" />
                       </button>

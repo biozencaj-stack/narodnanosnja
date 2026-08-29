@@ -4,13 +4,20 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
-# Deployi se izvršavaju redom. Aktivni deploy se ne prekida na pola kada stigne
-# sledeći push.
+# Produkcijski push i ručno pokretanje dele jednu serijsku grupu, pa se aktivni
+# deploy nikada ne prekida niti izvršava paralelno sa sledećim. Svaki PR ima
+# zasebnu CI grupu i ne zadržava produkciju ni druge pull request-ove.
 concurrency:
-  group: production-${{ github.repository }}
-  cancel-in-progress: false
+  group: >-
+    ${{ github.event_name == 'pull_request'
+        && format('ci-{0}-pr-{1}', github.repository, github.event.pull_request.number)
+        || format('production-{0}', github.repository) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -23,9 +30,25 @@ jobs:
     name: Provera verzije
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: provera
+          POSTGRES_PASSWORD: provera
+          POSTGRES_DB: provera
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U provera -d provera"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       CI: "true"
-      DATABASE_URL: postgresql://provera:provera@127.0.0.1:5432/provera
+      DATABASE_URL: postgresql://provera:provera@127.0.0.1:5432/provera?schema=public
+      # libpq/psql ne poznaje Prisma `schema` query parametar.
+      PSQL_DATABASE_URL: postgresql://provera:provera@127.0.0.1:5432/provera
       NEXTAUTH_SECRET: ci-nextauth-secret-nije-za-produkciju
       ORDER_ACCESS_SECRET: ci-order-secret-nije-za-produkciju
       NEXTAUTH_URL: https://ci.example.invalid
@@ -34,10 +57,10 @@ jobs:
 
     steps:
       - name: Preuzmi kod
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Postavi Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -47,6 +70,22 @@ jobs:
 
       - name: Proveri Prisma šemu
         run: npx prisma validate
+
+      - name: Primeni migracije na praznu CI bazu
+        run: npx prisma migrate deploy
+
+      - name: Potvrdi da migracije nemaju drift prema Prisma šemi
+        run: >-
+          npx prisma migrate diff
+          --from-schema-datasource prisma/schema.prisma
+          --to-schema-datamodel prisma/schema.prisma
+          --exit-code
+
+      - name: Proveri DB invarijante
+        run: >-
+          psql "$PSQL_DATABASE_URL"
+          -v ON_ERROR_STOP=1
+          -f scripts/db-invariant-smoke.sql
 
       - name: Proveri TypeScript
         run: npx tsc --noEmit --incremental false
@@ -58,6 +97,10 @@ jobs:
           lib/nestpay/index.test.ts
           lib/orders/payment-policy.test.ts
           lib/orders/access.test.ts
+          lib/orders/inventory.test.ts
+          lib/inventory/product-size-sync.test.ts
+          lib/checkout/quote.test.ts
+          lib/payments/pending-card.test.ts
 
       - name: Probna produkcijska izgradnja
         run: npm run build
@@ -65,6 +108,12 @@ jobs:
   objavi:
     name: Objavi na produkciju
     needs: provera
+    # Repo workflow samostalno dozvoljava deploy samo sa main; GitHub
+    # environment branch policy ostaje drugi, nezavisan zaštitni sloj.
+    if: >-
+      ${{ github.ref == 'refs/heads/main'
+          && (github.event_name == 'push'
+              || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     environment:
@@ -74,11 +123,14 @@ jobs:
       SERVER_PORT: ${{ vars.SERVER_PORT || '22' }}
       DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/var/www/narodnanosnja' }}
       PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+      APP_PORT: ${{ vars.APP_PORT || '3007' }}
+      SMOKE_PORT: ${{ vars.SMOKE_PORT || '39007' }}
+      APP_NAME: ${{ vars.APP_NAME || 'narodnanosnja' }}
       RELEASE_ID: ${{ github.sha }}-${{ github.run_attempt }}
 
     steps:
       - name: Preuzmi provereni kod
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Proveri deploy podešavanja
         shell: bash
@@ -90,6 +142,24 @@ jobs:
             echo "SERVER_PORT nije validan" >&2
             exit 1
           }
+          [[ "$APP_PORT" =~ ^[1-9][0-9]{0,4}$ ]] &&
+            (( APP_PORT <= 65535 )) || {
+            echo "APP_PORT nije validan" >&2
+            exit 1
+          }
+          [[ "$SMOKE_PORT" =~ ^[1-9][0-9]{0,4}$ ]] &&
+            (( SMOKE_PORT <= 65535 )) || {
+            echo "SMOKE_PORT nije validan" >&2
+            exit 1
+          }
+          [[ "$SMOKE_PORT" != "$APP_PORT" ]] || {
+            echo "SMOKE_PORT i APP_PORT moraju biti različiti" >&2
+            exit 1
+          }
+          [[ "$APP_NAME" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || {
+            echo "APP_NAME nije validan" >&2
+            exit 1
+          }
           [[ "$DEPLOY_PATH" =~ ^/(var/www|srv)/[A-Za-z0-9._/-]+$ ]] &&
             [[ "$DEPLOY_PATH" != *'/../'* ]] &&
             [[ "$DEPLOY_PATH" != *'/./'* ]] &&
@@ -98,8 +168,8 @@ jobs:
             echo "DEPLOY_PATH mora biti bezbedna aplikaciona putanja pod /var/www ili /srv" >&2
             exit 1
           }
-          [[ "$PRODUCTION_URL" =~ ^https?://[^[:space:]]+$ ]] || {
-            echo "PRODUCTION_URL mora biti puna HTTP(S) adresa" >&2
+          [[ "$PRODUCTION_URL" =~ ^https://[^[:space:]]+$ ]] || {
+            echo "PRODUCTION_URL mora biti puna HTTPS adresa" >&2
             exit 1
           }
           [[ "$RELEASE_ID" =~ ^[0-9a-f]{40}-[0-9]+$ ]] || {
@@ -171,8 +241,9 @@ jobs:
         run: |
           RELEASE_DIR="${DEPLOY_PATH%/}/releases/${RELEASE_ID}"
           printf -v REMOTE_COMMAND \
-            'PRODUCTION_URL=%q APPLY_DATABASE_MIGRATIONS=false bash %q' \
-            "$PRODUCTION_URL" "$RELEASE_DIR/scripts/deploy.sh"
+            'PRODUCTION_URL=%q APP_PORT=%q SMOKE_PORT=%q APP_NAME=%q APPLY_DATABASE_MIGRATIONS=false bash %q' \
+            "$PRODUCTION_URL" "$APP_PORT" "$SMOKE_PORT" "$APP_NAME" \
+            "$RELEASE_DIR/scripts/deploy.sh"
           ssh production "$REMOTE_COMMAND"
 
       - name: Ukloni neuspešan release

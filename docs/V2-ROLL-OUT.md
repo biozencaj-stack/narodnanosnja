@@ -21,10 +21,11 @@ se generičke varijante ne popune i ne provere.
 
 1. Napraviti proverljiv PostgreSQL backup i testirati restore.
 2. Klonirati produkcionu bazu u izolovano staging okruženje.
-3. Popisati realnu šemu i napraviti Prisma baseline; postojeća istorija sadrži
-   samo parcijalnu localized-JSON migraciju.
-4. Generisati expand SQL diff, ručno ga pregledati i sačuvati kao novu
-   migraciju. Ne koristiti `prisma db push`.
+3. Potvrditi da realna šema odgovara current-state baseline-u i, nad postojećom
+   produkcionom bazom bez Prisma istorije, evidentirati baseline kao primenjen
+   prema `docs/PRISMA-BASELINE.md`.
+4. Pokrenuti samo četiri već pregledane i checksumovane migracije iz aktivnog
+   lanca. Ne generisati novi expand SQL i ne koristiti `prisma db push`.
 5. Primeniti migraciju na klonu i pokrenuti Prisma validate/generate,
    TypeScript i produkcijski build.
 6. Smoke testirati: anonimnu i prijavljenu porudžbinu, izgubljen/replayed
@@ -49,6 +50,46 @@ se generičke varijante ne popune i ne provere.
   `.env.example`;
 - `APPLY_DATABASE_MIGRATIONS=true` koristiti samo u kontrolisanom izdanju sa
   kompletnim migration chain-om. U redovnom deployu ostaje isključeno.
+
+## Legacy preflight i maintenance prozor
+
+Za svaku buduću postojeću bazu, pre backup-a i bilo kakve migracije pokrenuti
+read-only proveru:
+
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/db-legacy-preflight.sql
+```
+
+Skripta radi u `READ ONLY` transakciji, postavlja `lock_timeout=5s` i
+`statement_timeout=60s`, ne menja podatke i završava sa `ROLLBACK`. Ona prekida
+izvršavanje jasnom porukom ako pronađe exact ili `lower(trim(...))` duplikate
+veličina, nevalidne nazive veličina, negativne cene/zalihe/mere/order iznose,
+nevalidnu količinu ili aktivan legacy proizvod bez ijednog stock reda. Svaki
+nalaz mora biti očišćen kontrolisanom, posebno pregledanom data migracijom, a
+preflight potom ponovljen do uspeha.
+
+Produkcijski postupak za migraciju postojeće baze je:
+
+1. uvežbati migraciju i izmeriti trajanje na svežem restore klonu;
+2. napraviti i verifikovati neposredni backup;
+3. uključiti maintenance/read-only režim i zaustaviti aplikacione upise;
+4. pregledati aktivne transakcije i blokirajuće lockove; sesije se ne prekidaju
+   bez eksplicitnog operativnog odobrenja;
+5. pokrenuti samo pregledani migration chain sa ograničenim čekanjem na lock,
+   na primer `PGOPTIONS='-c lock_timeout=5s -c statement_timeout=15min' npx
+   prisma migrate deploy`; statement timeout se prilagođava rezultatu probe na
+   restore klonu, ne nagađa se tokom produkcionog prozora;
+6. proveriti `prisma migrate status`, drift, invalidne constraints/indekse,
+   ključne countove i `scripts/db-invariant-smoke.sql`, pa tek onda vratiti
+   aplikacione upise.
+
+`ALTER TABLE`, unique constraint i standardno kreiranje indeksa mogu čekati
+lock ili blokirati upise, zato se ovaj expand ne pušta pod redovnim saobraćajem.
+Ako lock ili statement timeout prekine migraciju, ne ponavljati je naslepo:
+zaustaviti rollout, pregledati `_prisma_migrations` i PostgreSQL stanje i
+napraviti eksplicitan recovery/resolve plan. Četiri već primenjena
+`migration.sql` fajla su nepromenljiva istorija; svaka buduća promena ide u
+novu migraciju, nikada izmenom njihovog sadržaja ili checksum-a.
 
 ## Dodatni uslovi pre uključivanja kartica
 

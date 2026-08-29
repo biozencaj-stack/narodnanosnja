@@ -10,8 +10,12 @@ import { LocalizedTextarea } from "@/components/admin/LocalizedTextarea";
 import { parseLocalized } from "@/lib/i18n/localized";
 
 interface SizeRow {
+  id?: string;
   size: string;
   stock: number;
+  // Stock koji je forma učitala. Server ga koristi kao optimistic concurrency
+  // token kako rezervacija ili povrat robe ne bi bili tiho prepisani.
+  expectedStock?: number;
 }
 
 interface CategoryOption {
@@ -130,7 +134,12 @@ export default function ProductForm({ productId }: ProductFormProps) {
             tags: p.tags || [],
           });
           setSizes(
-            p.sizes?.map((s: SizeRow) => ({ size: s.size, stock: s.stock })) ||
+            p.sizes?.map((s: SizeRow) => ({
+              id: s.id,
+              size: s.size,
+              stock: s.stock,
+              expectedStock: s.stock,
+            })) ||
               [],
           );
         }

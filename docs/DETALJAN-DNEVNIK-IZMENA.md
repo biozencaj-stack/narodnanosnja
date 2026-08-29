@@ -5,7 +5,7 @@
 > Grana: `verzija/v2.0-univerzalna-platforma`<br>
 > Lokalna polazna revizija: `f6e3dac`<br>
 > GitHub snapshot commit: `3dc757ac6280b77c7951a888ec2d3ad609ddae1d`<br>
-> Status dokumenta: V2 feature grana je commitovana i objavljena na GitHub-u; `main` i produkcija nisu promenjeni.
+> Status dokumenta: V2 feature grana je objavljena na GitHub-u, produkciona baza je bezbedno migrirana na V2 šemu, dok `main` i javna aplikaciona verzija nisu promenjeni niti deployovani.
 
 ## 1. Svrha dokumenta
 
@@ -15,7 +15,8 @@ Dokument namerno razlikuje četiri vrste stanja:
 
 - **implementirano** — kod postoji u lokalnom projektu;
 - **lokalno provereno** — implementacija je prošla navedenu statičku proveru, test ili build;
-- **pripremljeno, ali neaktivno** — kod postoji, ali zahteva migraciju baze, konfiguraciju, bankarsku sertifikaciju, Git push ili deploy;
+- **primenjeno na produkcionu bazu** — pregledana promena šeme je izvršena uz backup, restore i post-migration proveru, ali to samo po sebi ne znači da je nova aplikaciona verzija objavljena;
+- **pripremljeno, ali neaktivno** — kod postoji, ali zahteva konfiguraciju, bankarsku sertifikaciju, Git merge ili aplikacioni deploy;
 - **nije završeno / poznat rizik** — nalaz revizije ili sledeći potreban korak, a ne gotova funkcionalnost.
 
 Ovo razdvajanje je važno: prisustvo koda u radnom stablu ne znači automatski da je funkcionalnost već aktivna na javnom sajtu.
@@ -52,10 +53,11 @@ Git presek razlikuje funkcionalne promene od naknadne Git normalizacije redova:
 | Funkcionalno uklonjene linije pre LF normalizacije | 2.739 |
 | Staged insertions/deletions posle LF/whitespace normalizacije | 20.201 / 11.381 |
 | Nova dokumenta pre ovog dnevnika | 4 |
-| Ciljni automatski testovi | 17/17 prolazi |
+| Ciljni automatski testovi | 33/33 prolazi |
 | TypeScript provera | prolazi |
 | Produkcioni build | prolazi |
 | Prisma schema validacija | prolazi |
+| Produkcioni DB baseline/expand | uspešno primenjeno; 4/4 migracije završene |
 
 ## 3. Arhitektonska odluka i granice platforme
 
@@ -926,17 +928,18 @@ Pored generičkog kataloga, dodata/proširena su sledeća commerce polja i model
 
 ### 19.1. Važna napomena o migracijama
 
-SQL migracija za ove promene **nije napravljena niti primenjena**. To je namerna sigurnosna odluka dok se ne urade:
+SQL migracioni lanac je napravljen, pregledan, testiran nad praznom bazom i
+restore klonom, a zatim uspešno primenjen na produkcionu bazu. Lanac čine:
 
-1. backup;
-2. stvarni restore test;
-3. staging klon produkcione baze;
-4. inventar realne DB šeme;
-5. Prisma baseline postojeće baze;
-6. ručno pregledan expand SQL;
-7. seed i backfill;
-8. dual-read i integraciona provera;
-9. tek zatim contract/cleanup faza.
+1. current-state produkcioni baseline;
+2. zasebna enum migracija za `PROCESSING`;
+3. zasebna enum migracija za `REVIEW`;
+4. transakcijski expand za order/payment polja, generički katalog,
+   `ProductSize` stabilnost, DB `CHECK` ograničenja i deferred triggere.
+
+Produkcioni seed/backfill generičkog kataloga, dual-read i buduća
+contract/cleanup faza i dalje nisu izvršeni. To su odvojene poslovne migracije,
+a ne preduslov za bezbedno additive proširenje šeme.
 
 Ne treba koristiti `prisma db push` nad produkcionom bazom.
 
@@ -947,17 +950,20 @@ Ne treba koristiti `prisma db push` nad produkcionom bazom.
 `.github/workflows/objavi.yml` je prepravljen da reaguje na:
 
 - svaki push na `main`;
+- svaki pull request ka `main`, samo kroz CI proveru bez deploy-a;
 - ručno pokretanje (`workflow_dispatch`).
 
 Workflow koristi:
 
 - `permissions: contents: read`;
-- concurrency grupu koja serializuje produkcione deploy-eve;
+- odvojene concurrency grupe: serijsku za produkciju i zasebnu po pull request-u;
 - Node.js 22;
+- izolovani PostgreSQL 16 servis za CI;
 - `npm ci` sa lock fajlom;
 - odvojen verify job pre deploy job-a;
 - GitHub production environment;
 - validaciju potrebnih vars/secrets;
+- obaveznu punu HTTPS validaciju `PRODUCTION_URL` vrednosti;
 - tajne samo u koraku gde su potrebne;
 - prethodno verifikovan `SSH_KNOWN_HOSTS` bez runtime `ssh-keyscan` i bez gašenja host provere;
 - jedinstveni release ID oblika `<sha>-<run-attempt>`;
@@ -973,9 +979,12 @@ Pre deploymenta workflow pokreće:
 
 1. `npm ci`;
 2. Prisma schema validaciju;
-3. TypeScript proveru;
-4. 17 ciljnih sigurnosnih/commerce testova;
-5. produkcioni build.
+3. kompletan `prisma migrate deploy` nad praznom PostgreSQL 16 bazom;
+4. Prisma schema-drift proveru;
+5. rollback-only DB invariant smoke kroz `psql`;
+6. TypeScript proveru;
+7. 33 ciljna sigurnosna/commerce/inventory/payment testa;
+8. produkcioni build.
 
 Deploy job se ne pokreće ako bilo koja od ovih provera padne.
 
@@ -992,13 +1001,23 @@ Dokumentovane variables:
 
 - `PRODUCTION_URL` — obavezna;
 - `SERVER_PORT` — opciona;
-- `DEPLOY_PATH` — opciona.
+- `DEPLOY_PATH` — opciona;
+- `APP_PORT` — opciona;
+- `SMOKE_PORT` — opciona i mora biti različita od `APP_PORT`;
+- `APP_NAME` — opciono, validirano PM2 ime.
 
 Stvarne vrednosti tajni nisu upisane u repozitorijum niti ovaj dokument.
 
 ### 20.4. Trenutno operativno stanje workflow-a
 
-Workflow je commitovan i nalazi se na remote grani `verzija/v2.0-univerzalna-platforma`. Pošto reaguje samo na `main` i ručno pokretanje, samo objavljivanje feature grane nije pokrenulo produkcijski deploy. Automatski CI/CD za svaki `main` push postaće aktivan tek kada se V2 PR bezbedno spoji u `main` i kada se podese production environment, vars i secrets.
+GitHub environment `production` je kreiran i njegova custom deployment branch
+policy dozvoljava samo `main`. Naknadni read-only audit potvrđuje da environment
+trenutno ima **0 secrets i 0 variables**. Potrebne vrednosti nisu upisane bez
+eksplicitnog odobrenja vlasnika.
+
+Workflow je na V2 feature grani. Sam push te grane nije pokrenuo produkcijski
+deploy. Automatski tok može postati operativan tek kada se podese potrebni
+environment secrets/variables i kada se V2 bezbedno spoji u `main`.
 
 ## 21. Release deployment skripta
 
@@ -1076,7 +1095,9 @@ Originalna lokalna webshop istorija i remote `main` nisu imali zajedničkog pret
 
 Umesto toga napravljen je sanitizovan snapshot commit čiji je jedini roditelj postojeći remote `main`. Provere potvrđuju da je `origin/main` direktan roditelj, da je broj novih commitova tačno jedan i da stara lokalna istorija nije predak snapshot-a. Time je feature grana kompatibilna sa normalnim GitHub PR-om bez force push-a.
 
-Commit i push feature grane su završeni. Nije urađen merge u `main` niti produkcijski deploy.
+Commit i push ranijeg feature snapshot-a su završeni. Produkciona DB migracija
+je naknadno primenjena zasebnim kontrolisanim postupkom, ali nije urađen merge
+u `main` niti aplikacioni produkcijski deploy.
 
 ## 23. Lokalno pokrenute provere
 
@@ -1086,7 +1107,7 @@ Commit i push feature grane su završeni. Nije urađen merge u `main` niti produ
 | --- | --- | --- |
 | `npx prisma validate` | prolazi | upozorenje da je Prisma config u `package.json` deprecated za Prisma 7 |
 | `npx tsc --noEmit --incremental false` | prolazi | TypeScript bez grešaka |
-| ciljni Node/TS testovi | 17/17 prolazi | admin policy, NestPay, payment policy, order access |
+| ciljni Node/TS testovi | 33/33 prolazi | admin policy, NestPay, payment/order access, inventory sync, reservation, pending-card i quote fail-closed politika |
 | produkcioni Next build | prolazi | Next.js 16.1.6, TypeScript i 91/91 generisanih stranica |
 | `bash -n scripts/deploy.sh` | prolazi | shell sintaksa validna |
 | YAML parse workflow-a | prolazi | workflow sintaksno parsiran |
@@ -1096,12 +1117,9 @@ Tokom builda lokalni PostgreSQL na `127.0.0.1` nije bio dostupan. Settings i odr
 
 ### 23.2. Ciljni testovi
 
-Pokrenuti test paket obuhvata:
-
-- 5 admin-policy testova;
-- 5 NestPay testova;
-- 6 payment-policy testova;
-- 1 order-access test.
+Pokrenuti test paket obuhvata osam ciljnih test fajlova: admin policy, NestPay,
+payment policy, order access, order inventory, stabilni ProductSize sync,
+checkout quote/inventory i pending-card politiku — ukupno 33 testa.
 
 Pokriveni su role/method/path slučajevi, callback origin i potpis, tajnost logova, nepouzdana provider polja, review klasifikacija, replay, terminalni konflikti, scope i istek access tokena.
 
@@ -1116,35 +1134,34 @@ Potrebno je prebaciti skriptu na direktan ESLint poziv, dodati/uskladiti konfigu
 Nisu još urađeni:
 
 - E2E browser test checkout toka;
-- PostgreSQL concurrency integracioni testovi;
+- puni PostgreSQL concurrency/stress testovi izvan ciljanih inventory scenarija;
 - stvarni NestPay staging/HPP test;
 - Lighthouse budžeti;
 - automatizovani accessibility audit;
 - cross-browser/mobile QA;
-- restore test produkcionog backup-a;
 - staging deploy i rollback vežba.
 
 ## 24. Poznati kritični rizici i blokatori
 
-### 24.1. P0 — nema pregledane i primenjene Prisma migracije
+### 24.1. Zatvoreno — Prisma baseline i expand su primenjeni
 
-Nova schema trenutno predstavlja kodni ugovor, ali postojeća baza nema odgovarajuće SQL promene. Admin API generičkog kataloga i nova order/payment polja ne smeju se smatrati produkciono spremnim pre baseline/expand migracije.
+Prethodni P0 je zatvoren: napravljen je produkcioni baseline, tri expand
+migracije, restore/fresh/drift testovi i kontrolisana produkciona primena.
+Produkcija sada ima četiri završena Prisma migration zapisa i šemu bez drifta.
 
-### 24.2. P0 — admin product update ruši stabilni stock identitet
+### 24.2. Zatvoreno — ProductSize identitet je stabilan
 
-Postojeća `app/api/admin/products/[id]/route.ts` implementacija pri izmeni proizvoda briše sve `ProductSize` redove i pravi nove. Time se menjaju ID-evi koje stare porudžbine čuvaju kao `inventoryStockId`.
+Admin više ne radi delete/recreate. Postojeći redovi se zaključavaju i
+reconcilišu po stabilnom ID-u; uklonjena veličina dobija `active=false`, a
+ponovno dodavanje reaktivira isti red. DB dodaje `active`, unique
+`(productId,size)`, indeks `(productId,active)` i validacije zalihe/naziva.
 
-Posledica: kasnije otkazivanje stare porudžbine može ostati bez tačnog stock reda na koji treba vratiti zalihu. Pre produkcije treba zameniti delete/recreate stabilnim upsert/deactivate modelom ili ledger pristupom.
+### 24.3. Zatvoreno — checkout bez inventory konfiguracije radi fail-closed
 
-### 24.3. P0 — proizvod bez stock reda nema jedno značenje
-
-Trenutno se isti slučaj tumači različito:
-
-- quote ga tretira kao nepraćenu/neograničenu zalihu;
-- admin prikazuje nula komada;
-- trenutni detalj proizvoda ga praktično ne dozvoljava dodati.
-
-Potrebno je eksplicitno polje/politika za tracked i untracked inventory i ista implementacija kroz admin, storefront i checkout.
+Aktivan proizvod mora imati bar jedan aktivni stock red. Quote odbija proizvod
+bez konfigurisanog inventory-ja, nepostojeću/povučenu opciju i nedovoljnu
+zalihu. Kreiranje porudžbine ponovo proverava tačan aktivni `stockId` i atomarno
+smanjuje zalihu, pa nema više implicitnog „neograničenog” proizvoda.
 
 ### 24.4. P0 — generička varijanta nije snapshot porudžbine
 
@@ -1318,12 +1335,12 @@ Stara lokalna Git istorija i dalje sadrži raniju demo vrednost. Zbog toga nije 
 
 ### Faza 1 — baza i kritične invarijante
 
-1. Napraviti stvaran backup i dokazati restore.
-2. Baseline-ovati produkcionu šemu.
-3. Napraviti reviewable expand migraciju.
-4. Ispraviti ProductSize delete/recreate problem.
-5. Definisati tracked/untracked inventory.
-6. Dodati PostgreSQL concurrency integracione testove.
+1. Završeno: napravljen je stvaran backup i dokazan restore.
+2. Završeno: baseline-ovana je produkciona šema.
+3. Završeno: napravljen je i primenjen pregledani expand lanac.
+4. Završeno: ProductSize delete/recreate je zamenjen stabilnim soft-retire tokom.
+5. Završeno: checkout inventory politika radi fail-closed.
+6. Sledeće: proširiti PostgreSQL concurrency testove na duže stress scenarije.
 
 ### Faza 2 — vertikalni generički katalog
 
@@ -1664,12 +1681,351 @@ Dosadašnji rad je postavio ozbiljnu osnovu za univerzalni web shop: identitet i
 
 Najveći preostali posao nije još jedno površinsko UI proširenje, već završavanje vertikalnih tokova:
 
-- stvarna i pregledana DB migracija;
-- stabilan generički variant/inventory identitet od admina do OrderItem snapshot-a;
+- aplikacioni deploy tek posle odobrene server/GitHub/HTTPS konfiguracije;
+- stabilan generički variant identitet od opcija do OrderItem snapshot-a;
 - kompletan content/media sistem za menjanje branše;
 - operativni admin moduli;
 - payment reconciliation/refund/cleanup;
 - integracioni, E2E i accessibility testovi;
 - pregled i merge GitHub PR-a, pa tek potom aktivacija deployment workflow-a.
 
-Drugim rečima: platforma sada ima mnogo kvalitetniju arhitektonsku i bezbednosnu osnovu i bezbedno objavljenu V2 feature granu, ali zbog namerno neprimenjene migracije, isključenih kartica i nespojenog `main` PR-a još nije spremna da se tretira kao završena produkciona V2 verzija.
+Drugim rečima: produkciona baza je sada bezbedno proširena i spremna za V2 kod,
+ali javna aplikacija još nije V2. Kartice su isključene, GitHub/server tajne i
+HTTPS nisu završeni, a `main` nije spojen niti deployovan.
+
+## 32. Production-readiness rad — 29. avgust 2026.
+
+Ovaj odeljak beleži naknadni operativni rad obavljen posle prvog V2 snapshot-a.
+Vrednosti tajni, privatni ključevi, kredencijali i mrežne adrese namerno nisu
+zapisani. Navedene checksum vrednosti su javni integritetski otisci fajlova, a
+ne autentifikacioni podaci.
+
+### 32.1. GitHub production environment
+
+Na GitHub-u je kreiran environment `production`. Podešena je custom deployment
+branch policy koja dozvoljava produkcijski deploy samo sa grane `main`.
+
+Read-only audit environment-a posle podešavanja pokazao je:
+
+- environment secrets: **0**;
+- environment variables: **0**.
+
+To znači da sam environment i deployment branch politika postoje, ali deploy i dalje ne
+može početi. Nisu upisani sledeći obavezni secrets:
+
+- `SSH_PRIVATE_KEY`;
+- `SSH_KNOWN_HOSTS`;
+- `SERVER_HOST`;
+- `SERVER_USER`.
+
+Nije upisana obavezna variable `PRODUCTION_URL`, niti opcione variables
+`SERVER_PORT`, `DEPLOY_PATH`, `APP_PORT`, `SMOKE_PORT` i `APP_NAME`.
+Vrednosti se neće pretpostavljati niti automatski kopirati iz lokalnog sistema;
+zahtevaju eksplicitno odobrenje vlasnika i unos u odgovarajući GitHub
+environment scope.
+
+### 32.2. Read-only serverski i DB audit
+
+Pre bilo kakve promene urađen je read-only pregled produkcionog servera i
+PostgreSQL šeme. Audit je potvrdio:
+
+- PostgreSQL 16 produkcionu bazu;
+- postojeću legacy šemu sa localized JSONB kolonama i
+  `User.preferredLocale`;
+- odsustvo Prisma `_prisma_migrations` istorije pre baseline postupka;
+- početne countove: `Product=18`, `ProductSize=18`, `Order=0`,
+  `Transaction=0`;
+- da novi V2 katalog/order/payment objekti pre migracije nisu postojali;
+- da deploy korisnik, deploy SSH ključ, aplikacioni `.env`, PM2 i reverse-proxy
+  promene nisu autorizovane samim auditom.
+
+Audit nije ispisivao connection string, lozinke, ključeve, tajne ni konkretnu
+mrežnu adresu. Naknadna DB migracija bila je zasebna, eksplicitno kontrolisana
+operacija i nije proširila ovlašćenje na aplikacioni deploy ili serverske naloge.
+
+### 32.3. Produkcioni backup-i i javni checksumovi
+
+Pre migracije su napravljena dva schema/data backup preseka.
+
+Prvi backup, korišćen za restore i pripremu baseline-a:
+
+```text
+/var/backups/narodnanosnja/prod-20260829-before-v2.dump
+SHA-256: b2a75af62fb6df014588540bafa16cf726e3b88b8e3f25c8c5e6039930b7eed4
+schema SHA-256: dabe254c3b2accaae4b0bf0d439d15065a7fff5a334682cbb8535aedb497b31d
+```
+
+Neposredni pre-migration backup, napravljen tik pre produkcione primene:
+
+```text
+/var/backups/narodnanosnja/prod-20260829-immediate-pre-v2.dump
+SHA-256: 7c5e4ac67119d7dd40b58d6756b945d573e9810e4a4b664013b02fff361d
+schema SHA-256: 07b604f29dd7a7ac5b139a75e03ed605e92ce008c8ed0420c310456f86caead8
+```
+
+Backup putanje su serverske operativne putanje, a checksumovi omogućavaju da se
+pre restore-a potvrdi da fajl nije promenjen. Backup nije dodat u Git i ne
+nalazi se u aplikacionom release paketu.
+
+### 32.4. Prisma baseline i expand lanac
+
+Aktivna migraciona istorija sada ima četiri koraka:
+
+| Redosled | Migracija | SHA-256 |
+| ---: | --- | --- |
+| 1 | `20260829000000_baseline_production_before_v2` | `0aff56aa04c0bc388a5ca53f67c6a7ffc65c5d9ea2e41139789756186ef26942` |
+| 2 | `20260829010000_add_payment_status_processing` | `b80018daa574c030f2a896d53aa23427627e5897f05348ecda5b3039d508c946` |
+| 3 | `20260829010100_add_payment_status_review` | `831ecf4688ad95a700136fdaa04143dedb25da3994e52ea8b840f8d1d70cc48a` |
+| 4 | `20260829020000_expand_v2_platform` | `d064d2b2af0275923546fcce5622e95cc83a2f0e940866ef14fc63d08b2d283a` |
+
+Baseline je current-state schema-only snimak stare produkcije. Stara parcijalna
+localized-JSON migracija nije bila evidentirana u produkcionoj bazi i nije bila
+deo pouzdane aktivne istorije, pa je arhivirana van `prisma/migrations` lanca.
+Postojeća produkcija je baseline samo evidentirala kao primenjen; baseline DDL
+se nije izvršavao preko već postojećih tabela.
+
+Dve `PaymentStatus` vrednosti su razdvojene zbog PostgreSQL kompatibilnosti i
+imaju eksplicitan redosled:
+
+- `PROCESSING AFTER PENDING`;
+- `REVIEW AFTER FAILED`.
+
+Glavni expand je transakcijski. Dodaje order/payment polja i `PaymentEvent`,
+generičke kataloške tabele, kompozitne FK/unique invarijante, ručne `CHECK`
+provere i deferred cardinality triggere za `SELECT`, `MULTI_SELECT` i skalarne
+atribute.
+
+### 32.5. Fresh-DB P1014 nalaz i baseline popravka
+
+Prvi test kompletnog migracionog lanca nad praznom bazom otkrio je runtime
+problem koji običan `prisma validate` ne može da vidi. Originalni schema-only
+`pg_dump` sadržao je:
+
+```sql
+SELECT pg_catalog.set_config('search_path', '', false);
+```
+
+Prisma je posle baseline-a nastavio u istoj sesiji sa praznim `search_path` i
+prijavio `P1014` za sopstvenu `_prisma_migrations` tabelu. Baseline je zato
+namerno normalizovan na:
+
+```sql
+SET search_path = public, pg_catalog;
+```
+
+Ova korekcija ne menja poslovne tabele, podatke, indekse ili ograničenja. Ona
+samo čuva `public` dostupnim Prisma migration engine-u. Posle izmene fresh-DB
+test je ponovljen i kompletan lanac je uspešno primenjen.
+
+### 32.6. Restore, fresh, drift, negative i smoke provere
+
+Pre produkcione primene sprovedene su sledeće provere:
+
+1. backup je vraćen u izolovanu PostgreSQL bazu;
+2. realna pre-V2 šema je popisana i korišćena za current-state baseline;
+3. kompletan lanac je primenjen od nule nad praznom PostgreSQL 16 bazom;
+4. restore klon je prošao baseline/expand proceduru bez gubitka legacy redova;
+5. Prisma diff posle migracije vratio je drift rezultat `0`;
+6. katalog je posle migracije imao `0` invalidnih constraints i `0` invalidnih
+   indeksa;
+7. negativne transakcione probe potvrdile su da DB odbija pogrešan typed-scalar
+   atribut, nedozvoljen choice tip/cardinality, negativnu cenu/zalihu/iznos,
+   praznu ili netrimovanu veličinu i dupli `(productId,size)`;
+8. validni smoke test je ubacio sopstveni rollback-only Product fixture i svih
+   deset `ProductAttributeDataType` vrednosti;
+9. `SET CONSTRAINTS ALL IMMEDIATE` je uspešno pokrenuo deferred triggere za
+   `SELECT` sa jednim i `MULTI_SELECT` sa više izbora;
+10. smoke transakcija je završena sa `ROLLBACK`, bez trajnih fixture podataka.
+11. posle P1 hardening-a novi read-only legacy preflight je ponovo prošao nad
+    produkcijom, a prošireni validni/negativni invariant smoke nad izolovanim
+    restore klonom; i ta provera se završila sa `ROLLBACK`.
+
+Reusable smoke scenario sačuvan je kao `scripts/db-invariant-smoke.sql`.
+Naknadnim P1 hardening-om u isti rollback-only scenario dodate su kontrolisane
+negativne probe unutar PL/pgSQL exception subtransakcija. Zato cela skripta
+uspeva samo ako baza očekivano odbije nevalidne redove, bez ostavljanja fixture
+podataka.
+
+### 32.7. Uspešna produkciona DB primena
+
+Posle neposrednog backup-a i svih izolovanih provera migracioni lanac je
+uspešno primenjen na produkcionu bazu. Post-migration audit potvrđuje:
+
+- broj tabela posle expand-a: **42**;
+- završeni Prisma migration zapisi: **4**;
+- invalid constraints: **0**;
+- invalid indeksi: **0**;
+- Prisma schema drift: **0**.
+
+Pre/post countovi poslovnih tabela su očuvani:
+
+| Tabela | Pre | Posle |
+| --- | ---: | ---: |
+| `Product` | 18 | 18 |
+| `ProductSize` | 18 | 18 |
+| `Order` | 0 | 0 |
+| `Transaction` | 0 | 0 |
+
+Ovo potvrđuje additive prirodu migracije: postojeći proizvodi i zalihe nisu
+obrisani niti duplirani. Produkciona DB primena nije menjala Git `main`, nije
+slala novu aplikacionu verziju i nije uključila payment capability.
+
+### 32.8. Stabilan ProductSize identitet i fail-closed checkout
+
+Prethodni delete/recreate admin tok je zamenjen stabilnim reconciliation
+modelom:
+
+- svaki postojeći `ProductSize.id` ostaje isti tokom izmene;
+- red koji administrator ukloni iz ponude dobija `active=false` umesto fizičkog
+  brisanja;
+- ponovno dodavanje iste veličine reaktivira postojeći red;
+- parent `Product` red se zaključava tokom sync-a radi serijalizacije paralelnih
+  admin izmena;
+- admin za svaki postojeći red šalje `expectedStock`; server odbija zastarelu
+  izmenu sa `409 PRODUCT_SIZE_STALE_STOCK`, a postojeći red bez očekivane
+  verzije sa `409 PRODUCT_SIZE_VERSION_REQUIRED`, pa admin unos ne može da
+  prepiše rezervaciju ili povrat koji se dogodio u međuvremenu;
+- case-insensitive duplikati, tuđi/dupli ID-evi, negativna zaliha i nevalidan
+  naziv odbijaju se pre upisa;
+- checkout, release/cancel i admin sync koriste iste sortirane parent Product
+  lockove, što smanjuje deadlock rizik kod porudžbina sa više proizvoda;
+- reaktivacija povučenog reda sabira novu količinu sa eventualnim povratom koji
+  je stigao dok je red bio neaktivan, umesto da povrat neprimetno prepiše;
+- DB dodatno garantuje unique `(productId,size)`, `stock >= 0`, trimovan naziv
+  dužine 1–100 i indeksira `(productId,active)`.
+
+Checkout sada radi fail-closed:
+
+- proizvod bez aktivnog stock reda vraća `INVENTORY_NOT_CONFIGURED`;
+- povučena ili nepostojeća opcija vraća `OPTION_UNAVAILABLE`;
+- nedovoljna količina vraća `INSUFFICIENT_STOCK`;
+- order transakcija rezerviše isključivo tačan aktivni `stockId`;
+- `OrderItem.inventoryStockId` ostaje pouzdan za exactly-once vraćanje zalihe.
+
+### 32.9. CI workflow ojačavanje
+
+CI više ne proverava samo Prisma datamodel sintaksu. Verify job sada:
+
+1. podiže PostgreSQL 16 service;
+2. čeka DB health;
+3. pokreće `prisma validate`;
+4. primenjuje celu migration istoriju na praznu bazu;
+5. blokira schema drift;
+6. kroz `psql` pokreće rollback-only DB invariant smoke;
+7. proverava TypeScript;
+8. pokreće ciljane sigurnosne testove, uključujući REVIEW cleanup i
+   pending-card politiku;
+9. pravi produkcijski Next.js build.
+
+Pull request ka `main` pokreće samo CI i nikada deploy. Svaki PR ima sopstvenu
+concurrency grupu i noviji run može otkazati zastareli run istog PR-a.
+Produkcijski push i ručni deploy dele jednu serijsku concurrency grupu i ne
+prekidaju aktivan deploy.
+
+Deploy validacije sada zahtevaju:
+
+- ispravan `SERVER_PORT`, `APP_PORT` i `SMOKE_PORT`;
+- različite app/smoke portove;
+- bezbedan `APP_NAME`;
+- aplikacioni `DEPLOY_PATH` pod `/var/www` ili `/srv`;
+- `PRODUCTION_URL` koji počinje isključivo sa `https://`;
+- tačan release ID;
+- strogu known-hosts SSH proveru.
+
+Ručni deploy je takođe ograničen na `main`, korišćene GitHub Actions su pinovane
+na pune commit SHA vrednosti, a produkcioni `.env` symlink se u novom release-u
+pravi tek posle uspešnog `npm ci`, tako da install lifecycle ne dobija pristup
+produkcijskim tajnama.
+
+Serverski deploy i cleanup koriste isti `flock`; javni health check mora vratiti
+tačan deployment SHA i ne prihvata HTTP→HTTPS ili `www` preusmerenje kao zamenu
+za direktno zdrav HTTPS poreklo.
+
+### 32.10. Aplikacione provere
+
+Posle inventory, payment-review i migracionih promena potvrđeno je:
+
+- `33/33` ciljna Node/TypeScript testa;
+- `npx tsc --noEmit --incremental false` prolazi;
+- produkcioni Next.js build prolazi;
+- Prisma schema validacija prolazi;
+- migration deploy i drift provera prolaze nad praznom PostgreSQL 16 bazom;
+- DB invariant smoke prolazi za validne redove i sva očekivana odbijanja;
+- `git diff --check` prolazi.
+
+Ove provere ne zamenjuju browser E2E, accessibility, bankarski staging i stvarni
+HTTPS deployment smoke test, koji ostaju deo kasnije aplikacione objave.
+
+### 32.11. Precizni preostali produkcioni blokatori
+
+DB šema je spremna, ali aplikacioni deploy ostaje blokiran sledećim stavkama:
+
+1. **Deploy korisnik i dozvole** — kreiranje/izbor ograničenog serverskog
+   deploy korisnika, vlasništvo nad deploy putanjom i PM2 proces zahtevaju
+   eksplicitno odobrenje. Read-only audit i DB migracija nisu dozvola za ove
+   sistemske promene.
+2. **Deploy SSH ključ** — javni ključ još nije odobreno instaliran za ciljnog
+   deploy korisnika; privatna polovina ne sme biti kopirana u repo ili server.
+3. **Produkcioni server `.env`** — mora biti zasebno pregledan i postavljen uz
+   eksplicitno odobrenje; GitHub workflow očekuje postojeći `$DEPLOY_PATH/.env`.
+4. **GitHub environment vrednosti** — `production` trenutno ima 0 secrets i 0
+   variables; bez četiri SSH/server secrets i `PRODUCTION_URL` deploy staje pre
+   slanja koda.
+5. **Domen i HTTPS** — konačni domen, DNS, TLS sertifikat i reverse proxy moraju
+   biti spremni tako da kanonski `PRODUCTION_URL` i `/api/health` rade direktno
+   preko HTTPS-a bez preusmerenja.
+6. **`ORDER_ACCESS_SECRET`** — potreban je jak, zaseban produkcioni secret koji
+   nije isti kao `NEXTAUTH_SECRET`; nijedna stvarna vrednost nije generisana ili
+   zabeležena ovde.
+7. **reCAPTCHA** — oba produkciona ključa, očekivane action vrednosti, score prag
+   i hostname allow-list moraju biti potvrđeni. Checkout u produkciji namerno
+   radi fail-closed bez ove konfiguracije.
+8. **SMTP** — host, port, nalog, credential, sender identitet i TLS validacija
+   moraju biti potvrđeni stvarnim kontrolisanim testom.
+9. **Capability/feature flagovi** — COD, wishlist, reviews, newsletter, chat,
+   locations i druge javne funkcije treba eksplicitno potvrditi za ovu
+   prodavnicu. Kartično plaćanje ostaje `false` do bankarske sertifikacije,
+   REVIEW/reconciliation/refund i reservation-cleanup tokova.
+10. **Git merge i deploy odluka** — production-readiness promene su sačuvane na
+    V2 feature grani; remote `main` nije promenjen i javna aplikacija nije V2.
+    Merge u `main` automatski aktivira workflow, pa se ne radi pre završetka
+    svih prethodnih stavki.
+
+Konačni production-readiness zaključak: **DB sloj je migriran i verifikovan;
+aplikacioni deploy još nije odobren ni konfigurisan.**
+
+### 32.12. P1 legacy preflight i DB/CI hardening
+
+Posle produkcione expand primene dodat je hardening za buduće postojeće baze,
+bez izmene produkcije i bez menjanja četiri već primenjena migration fajla:
+
+- `scripts/db-legacy-preflight.sql` je izvršiva read-only provera sa lokalnim
+  lock/statement timeoutima i završnim `ROLLBACK`-om;
+- preflight zaustavlja postupak jasnim exception porukama za exact i
+  case/trim-normalizovane `ProductSize` duplikate, blank/netrimovane/preduge
+  veličine, negativne zalihe/cene/mere/order iznose, nevalidne količine i
+  aktivan legacy proizvod bez size reda;
+- rollout dokument sada zahteva maintenance/read-only prozor, zaustavljanje
+  aplikacionih upisa, pregled lockova, timeout kalibrisan na restore klonu i
+  eksplicitan recovery plan umesto slepog ponavljanja prekinute migracije;
+- reusable DB smoke sada, pored validnih vrednosti svih deset attribute tipova,
+  dokazuje odbijanje pogrešne scalar kolone, `SELECT` sa 0 i 2 izbora, izbora
+  iz druge definicije i negativne zalihe;
+- očekivane greške su izolovane PL/pgSQL exception subtransakcijama, a cela
+  smoke transakcija se na kraju vraća sa `ROLLBACK`;
+- CI posle migrate/drift koraka pokreće smoke direktno kroz `psql` sa
+  `ON_ERROR_STOP=1` i uključuje novi `lib/payments/pending-card.test.ts` u
+  ciljanu test listu; REVIEW cleanup je obuhvaćen postojećim payment-policy
+  testovima.
+
+Checksumovi četiri primenjene migracije ostaju kanonski i ne smeju se menjati:
+
+| Migracija | SHA-256 |
+| --- | --- |
+| baseline | `0aff56aa04c0bc388a5ca53f67c6a7ffc65c5d9ea2e41139789756186ef26942` |
+| `PaymentStatus.PROCESSING` | `b80018daa574c030f2a896d53aa23427627e5897f05348ecda5b3039d508c946` |
+| `PaymentStatus.REVIEW` | `831ecf4688ad95a700136fdaa04143dedb25da3994e52ea8b840f8d1d70cc48a` |
+| glavni expand | `d064d2b2af0275923546fcce5622e95cc83a2f0e940866ef14fc63d08b2d283a` |
+
+Ovaj P1 rad nije pokrenuo novu migraciju nad produkcijom niti menjao produkcione
+podatke. Sačuvan je na V2 feature grani; nije pushovan niti spojen u `main`.

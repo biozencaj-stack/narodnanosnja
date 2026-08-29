@@ -1,3 +1,5 @@
+import { clearCheckoutAttemptForOrder } from "@/lib/checkout/idempotency";
+
 export const PENDING_CARD_PAYMENT_KEY = "pending-card-payment";
 
 export interface PendingCardPayment {
@@ -41,4 +43,16 @@ export function clearPendingCardPayment(): void {
   } catch {
     // Storage može biti onemogućen; nema dodatnog oporavka.
   }
+}
+
+/**
+ * Terminalni FAILED/REVIEW ishod oslobađa browser za novu porudžbinu. Funkcija
+ * namerno ne dira korpu ni cart-clear marker: oni ostaju vezani za originalnu
+ * porudžbinu dok korisnik ne dobije potvrđen uspeh ili sam izmeni korpu.
+ */
+export function clearTerminalCardPaymentAttempt(orderId: string): void {
+  if (readPendingCardPayment()?.orderId === orderId) {
+    clearPendingCardPayment();
+  }
+  clearCheckoutAttemptForOrder(orderId);
 }

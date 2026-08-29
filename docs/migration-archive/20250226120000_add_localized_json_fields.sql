@@ -1,3 +1,6 @@
+-- ARHIVIRANO: ova parcijalna migracija nije deo aktivnog Prisma lanca.
+-- Produkciona šema iz baseline-a već sadrži preferredLocale i JSONB kolone.
+
 -- Add preferredLocale to User
 ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "preferredLocale" TEXT NOT NULL DEFAULT 'sr';
 

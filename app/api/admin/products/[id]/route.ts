@@ -3,6 +3,13 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma, Prisma } from "@/lib/db";
 import { getSlugSource } from "@/lib/i18n/localized";
+import {
+  assertActiveProductHasInventory,
+  lockProductInventory,
+  ProductSizeSyncError,
+  resolveDesiredProductActive,
+  syncProductSizes,
+} from "@/lib/inventory/product-size-sync";
 
 function slugify(text: string): string {
   return text
@@ -33,7 +40,7 @@ export async function GET(
     include: {
       category: true,
       brand: true,
-      sizes: { orderBy: { size: "asc" } },
+      sizes: { where: { active: true }, orderBy: { size: "asc" } },
       categories: { select: { categoryId: true } },
     },
   });
@@ -96,40 +103,6 @@ export async function PUT(
       tags,
     } = body;
 
-    const existing = await prisma.product.findUnique({ where: { id } });
-    if (!existing) {
-      return NextResponse.json({ error: "Product not found" }, { status: 404 });
-    }
-
-    // Update slug if name changed
-    let slug = existing.slug;
-    const newNameStr = name !== undefined ? getSlugSource(name) : "";
-    const existingNameStr = getSlugSource(existing.name);
-    if (newNameStr && newNameStr !== existingNameStr) {
-      slug = slugify(newNameStr);
-      const slugExists = await prisma.product.findFirst({
-        where: { slug, id: { not: id } },
-      });
-      if (slugExists) {
-        slug = `${slug}-${Date.now().toString(36)}`;
-      }
-    }
-
-    // Update sizes if provided
-    if (sizes !== undefined) {
-      // Delete existing sizes and recreate
-      await prisma.productSize.deleteMany({ where: { productId: id } });
-      if (sizes.length > 0) {
-        await prisma.productSize.createMany({
-          data: sizes.map((s: { size: string; stock: number }) => ({
-            productId: id,
-            size: s.size,
-            stock: s.stock || 0,
-          })),
-        });
-      }
-    }
-
     const toJson = (v: unknown): Prisma.InputJsonValue | typeof Prisma.DbNull =>
       typeof v === "object" && v && "sr" in (v as object)
         ? (v as Prisma.InputJsonValue)
@@ -137,78 +110,123 @@ export async function PUT(
           ? { sr: v, en: v }
           : Prisma.DbNull;
 
-    const product = await prisma.product.update({
-      where: { id },
-      data: {
-        ...(name !== undefined && {
-          name:
-            typeof name === "object" && name
-              ? { sr: (name as { sr?: string }).sr ?? "", en: (name as { en?: string }).en ?? "" }
-              : { sr: String(name || ""), en: String(name || "") },
-        }),
-        slug,
-        ...(description !== undefined && {
-          description: description ? toJson(description) : Prisma.DbNull,
-        }),
-        ...(sku !== undefined && { sku: sku || null }),
-        ...(price !== undefined && { price }),
-        ...(salePrice !== undefined && { salePrice: salePrice || null }),
-        ...(image1 !== undefined && { image1: image1 || null }),
-        ...(image2 !== undefined && { image2: image2 || null }),
-        ...(image3 !== undefined && { image3: image3 || null }),
-        ...(categoryId !== undefined && { categoryId: categoryId || null }),
-        ...(brandId !== undefined && { brandId: brandId || null }),
-        ...(gender !== undefined && { gender: gender || null }),
-        ...(active !== undefined && { active }),
-        ...(featured !== undefined && { featured }),
-        ...(onSale !== undefined && { onSale }),
-        ...(novo !== undefined && { novo }),
-        ...(metaTitle !== undefined && {
-          metaTitle: metaTitle ? toJson(metaTitle) : Prisma.DbNull,
-        }),
-        ...(metaDescription !== undefined && {
-          metaDescription: metaDescription ? toJson(metaDescription) : Prisma.DbNull,
-        }),
-        ...(color !== undefined && { color: color || null }),
-        ...(colorHex !== undefined && { colorHex: colorHex || null }),
-        ...(material !== undefined && { material: material || null }),
-        ...(weight !== undefined && { weight: weight || null }),
-        ...(length !== undefined && { length: length || null }),
-        ...(width !== undefined && { width: width || null }),
-        ...(height !== undefined && { height: height || null }),
-        ...(countryOfOrigin !== undefined && {
-          countryOfOrigin: countryOfOrigin || null,
-        }),
-        ...(careInstructions !== undefined && {
-          careInstructions: careInstructions ? toJson(careInstructions) : Prisma.DbNull,
-        }),
-        ...(barcode !== undefined && { barcode: barcode || null }),
-        ...(tags !== undefined && { tags }),
-      },
-      include: {
-        category: true,
-        brand: true,
-        sizes: true,
-      },
-    });
+    const product = await prisma.$transaction(async (tx) => {
+      // Lock, size sync, inventory invariant i svi ostali upisi pripadaju istoj
+      // transakciji: neuspešna validacija nikada ne ostavlja polovičnu izmenu.
+      await lockProductInventory(tx, id);
+      const existing = await tx.product.findUniqueOrThrow({ where: { id } });
+      const desiredActive = resolveDesiredProductActive(existing.active, active);
 
-    // Sync multi-category associations
-    if (categoryIds !== undefined) {
-      await prisma.productCategory.deleteMany({ where: { productId: id } });
-      const catIds: string[] = categoryIds || (categoryId ? [categoryId] : []);
-      if (catIds.length > 0) {
-        await prisma.productCategory.createMany({
-          data: catIds.map((cId: string) => ({
-            productId: id,
-            categoryId: cId,
-          })),
-          skipDuplicates: true,
+      let slug = existing.slug;
+      const newNameStr = name !== undefined ? getSlugSource(name) : "";
+      const existingNameStr = getSlugSource(existing.name);
+      if (newNameStr && newNameStr !== existingNameStr) {
+        slug = slugify(newNameStr);
+        const slugExists = await tx.product.findFirst({
+          where: { slug, id: { not: id } },
         });
+        if (slugExists) {
+          slug = `${slug}-${Date.now().toString(36)}`;
+        }
       }
-    }
+
+      if (sizes !== undefined) {
+        await syncProductSizes(tx, id, sizes);
+      }
+
+      const activeSizeCount = await tx.productSize.count({
+        where: { productId: id, active: true },
+      });
+      assertActiveProductHasInventory(desiredActive, activeSizeCount);
+
+      const updated = await tx.product.update({
+        where: { id },
+        data: {
+          ...(name !== undefined && {
+            name:
+              typeof name === "object" && name
+                ? {
+                    sr: (name as { sr?: string }).sr ?? "",
+                    en: (name as { en?: string }).en ?? "",
+                  }
+                : { sr: String(name || ""), en: String(name || "") },
+          }),
+          slug,
+          ...(description !== undefined && {
+            description: description ? toJson(description) : Prisma.DbNull,
+          }),
+          ...(sku !== undefined && { sku: sku || null }),
+          ...(price !== undefined && { price }),
+          ...(salePrice !== undefined && { salePrice: salePrice || null }),
+          ...(image1 !== undefined && { image1: image1 || null }),
+          ...(image2 !== undefined && { image2: image2 || null }),
+          ...(image3 !== undefined && { image3: image3 || null }),
+          ...(categoryId !== undefined && { categoryId: categoryId || null }),
+          ...(brandId !== undefined && { brandId: brandId || null }),
+          ...(gender !== undefined && { gender: gender || null }),
+          ...(active !== undefined && { active }),
+          ...(featured !== undefined && { featured }),
+          ...(onSale !== undefined && { onSale }),
+          ...(novo !== undefined && { novo }),
+          ...(metaTitle !== undefined && {
+            metaTitle: metaTitle ? toJson(metaTitle) : Prisma.DbNull,
+          }),
+          ...(metaDescription !== undefined && {
+            metaDescription: metaDescription
+              ? toJson(metaDescription)
+              : Prisma.DbNull,
+          }),
+          ...(color !== undefined && { color: color || null }),
+          ...(colorHex !== undefined && { colorHex: colorHex || null }),
+          ...(material !== undefined && { material: material || null }),
+          ...(weight !== undefined && { weight: weight || null }),
+          ...(length !== undefined && { length: length || null }),
+          ...(width !== undefined && { width: width || null }),
+          ...(height !== undefined && { height: height || null }),
+          ...(countryOfOrigin !== undefined && {
+            countryOfOrigin: countryOfOrigin || null,
+          }),
+          ...(careInstructions !== undefined && {
+            careInstructions: careInstructions
+              ? toJson(careInstructions)
+              : Prisma.DbNull,
+          }),
+          ...(barcode !== undefined && { barcode: barcode || null }),
+          ...(tags !== undefined && { tags }),
+        },
+        include: {
+          category: true,
+          brand: true,
+          sizes: { where: { active: true }, orderBy: { size: "asc" } },
+        },
+      });
+
+      if (categoryIds !== undefined) {
+        await tx.productCategory.deleteMany({ where: { productId: id } });
+        const catIds: string[] =
+          categoryIds || (categoryId ? [categoryId] : []);
+        if (catIds.length > 0) {
+          await tx.productCategory.createMany({
+            data: catIds.map((cId: string) => ({
+              productId: id,
+              categoryId: cId,
+            })),
+            skipDuplicates: true,
+          });
+        }
+      }
+
+      return updated;
+    });
 
     return NextResponse.json({ product });
   } catch (error) {
+    if (error instanceof ProductSizeSyncError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.status },
+      );
+    }
     console.error("Update product error:", error);
     return NextResponse.json(
       { error: "Failed to update product" },
@@ -232,8 +250,15 @@ export async function DELETE(
   const { id } = await params;
 
   try {
-    await prisma.product.delete({ where: { id } });
-    return NextResponse.json({ success: true });
+    // Proizvod ostaje kao istorijski zapis: fizičko brisanje bi kaskadno
+    // obrisalo ProductSize ID-jeve koje aktivne porudžbine koriste za tačno
+    // vraćanje zalihe. Postojeći active flag je bezbedna arhiva i reverzibilan
+    // admin tok.
+    await prisma.product.update({
+      where: { id },
+      data: { active: false },
+    });
+    return NextResponse.json({ success: true, archived: true });
   } catch (error) {
     console.error("Delete product error:", error);
     return NextResponse.json(
