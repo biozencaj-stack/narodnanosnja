@@ -1,31 +1,10 @@
-import nodemailer from "nodemailer";
+import { createSmtpTransport } from "@/lib/email/smtp";
 import {
   storeName,
   storePhone,
   storeEmail,
   siteUrl,
 } from "@/lib/config/store";
-
-/**
- * Create email transporter - consistent with mailer.ts
- */
-function createTransporter() {
-  return nodemailer.createTransport({
-    host: process.env.SMTP_SERVER_HOST || process.env.SMTP_SERVER,
-    port: Number(process.env.SMTP_SERVER_PORT || process.env.SMTP_PORT) || 587,
-    secure: false,
-    auth: {
-      user: process.env.SMTP_SERVER_USERNAME,
-      pass: process.env.SMTP_SERVER_PASSWORD,
-    },
-    tls: {
-      rejectUnauthorized: false,
-      minVersion: 'TLSv1.2',
-      maxVersion: 'TLSv1.3',
-      ciphers: 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384',
-    },
-  });
-}
 
 const FROM_EMAIL = process.env.EMAIL_FROM || `${storeName} <${storeEmail}>`;
 
@@ -111,7 +90,7 @@ export async function sendPasswordResetEmail(
     </p>
   `;
 
-  const transporter = createTransporter();
+  const transporter = createSmtpTransport();
   await transporter.sendMail({
     from: FROM_EMAIL,
     to: email,
@@ -169,7 +148,7 @@ export async function sendWelcomeEmail(
     </div>
   `;
 
-  const transporter = createTransporter();
+  const transporter = createSmtpTransport();
   await transporter.sendMail({
     from: FROM_EMAIL,
     to: email,
@@ -235,7 +214,7 @@ export async function sendVerificationEmail(
     </p>
   `;
 
-  const transporter = createTransporter();
+  const transporter = createSmtpTransport();
   await transporter.sendMail({
     from: FROM_EMAIL,
     to: email,

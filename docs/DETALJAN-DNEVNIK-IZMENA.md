@@ -909,7 +909,10 @@ Reklamacija ograničava prilog i priprema ga za bezbednije slanje kao attachment
 
 ### 18.3. SMTP
 
-Mailer sada podrazumevano proverava TLS sertifikat i ograničava TLS na moderne verzije. Isključivanje validacije mora biti eksplicitno i namenjeno je samo kontrolisanom lokalnom self-signed okruženju.
+Prvobitna zaštita je uključila proveru TLS sertifikata u opštem maileru i
+prijavi za posao, ali su auth, order i wishlist moduli zadržali zasebne
+fail-open transportere. Naknadni P1 pregled i potpuna centralizacija opisani su
+u odeljku 34.
 
 ## 19. Prisma schema promene
 
@@ -2207,3 +2210,39 @@ GitHub CI-ju nad izolovanim PostgreSQL service-om.
 Ovaj sprint ne rešava dinamičke `ProductType`/attribute filtere, jedinstven
 inventory ledger, kompletan order timeline, RMA/refund tok, media biblioteku,
 page builder, produkcione secrets niti domen/HTTPS. To ostaju sledeći epici.
+
+## 34. Centralizacija SMTP TLS politike
+
+Naknadni bezbednosni pregled pronašao je pet nezavisnih Nodemailer
+konfiguracija. Auth, order i wishlist transporteri su bezuslovno postavljali
+`rejectUnauthorized: false`, pa su reset/verifikacioni tokeni, podaci
+porudžbine i wishlist poruke ignorisali dokumentovanu produkcionu TLS
+zastavicu. Sva petorka je imala `secure: false` bez `requireTLS`, što je port
+587 ostavljalo na oportunističkom STARTTLS-u, a port 465 bez implicitnog TLS-a.
+
+Dodat je jedini transport adapter `lib/email/smtp.ts`, koji koriste:
+
+- auth poruke za reset, dobrodošlicu i verifikaciju;
+- potvrde porudžbine i promene statusa;
+- wishlist obaveštenja;
+- kontakt, reklamacije i generički mailer;
+- API za prijavu za posao.
+
+Adapter sprovodi sledeće invarijante pre pravljenja transporta:
+
+- port mora biti strogo parsiran ceo broj od 1 do 65535;
+- 465 koristi implicitni TLS, a svi drugi portovi zahtevaju uspešan STARTTLS;
+- TLS minimum je 1.2, bez ručno pinovane nepotpune cipher liste;
+- sertifikat se podrazumevano proverava;
+- isključivanje provere sertifikata dozvoljeno je samo u `development` ili
+  `test` režimu i samo za loopback host;
+- host, korisničko ime i lozinka su obavezni, bez tihog localhost/no-auth
+  fallback-a;
+- canonical `SMTP_SERVER_*` vrednosti i zatečeni legacy alias-i prolaze kroz
+  istu politiku.
+
+Wishlist transport se više ne pravi pri importu modula, već tek pri pokušaju
+slanja. `lib/email/smtp.test.ts` proverava STARTTLS/implicitni TLS, validaciju
+sertifikata, lokalni self-signed izuzetak, portove, obaveznu konfiguraciju,
+legacy alias-e i eksplicitni SMTP nalog bez otvaranja mrežne veze.
+Promena nema Prisma migraciju, ne menja podatke i ne aktivira deploy.

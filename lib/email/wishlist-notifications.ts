@@ -1,23 +1,9 @@
 'use server';
 
-import nodemailer from 'nodemailer';
 import { prisma } from '@/lib/db';
+import { createSmtpTransport } from '@/lib/email/smtp';
 import { fetchProducts } from '@/lib/products';
 import { formatPriceWithCurrency } from '@/lib/utils/format';
-
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_SERVER_HOST || process.env.SMTP_SERVER,
-  port: Number(process.env.SMTP_SERVER_PORT || process.env.SMTP_PORT) || 587,
-  secure: false,
-  auth: {
-    user: process.env.SMTP_SERVER_USERNAME,
-    pass: process.env.SMTP_SERVER_PASSWORD,
-  },
-  tls: {
-    rejectUnauthorized: false,
-    minVersion: 'TLSv1.2',
-  },
-});
 
 const FROM_EMAIL = process.env.EMAIL_FROM || 'My Store <info@example.com>';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || '[SITE_URL]';
@@ -152,6 +138,7 @@ export async function sendWishlistSaleEmail(
   `;
 
   try {
+    const transporter = createSmtpTransport();
     await transporter.sendMail({
       from: FROM_EMAIL,
       to: userEmail,

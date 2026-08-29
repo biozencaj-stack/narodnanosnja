@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import nodemailer from 'nodemailer';
 import JobForm from '@/lib/models/JobForm';
 import { getStoreSettings } from '@/lib/config/store-settings';
+import { createSmtpTransport } from '@/lib/email/smtp';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { verifyRecaptchaToken } from '@/lib/security/recaptcha';
 import { validateEmailAddress } from '@/lib/utils/validation';
@@ -92,21 +92,7 @@ export async function POST(request: NextRequest) {
     const storeName = settings['store.name'];
     const storeEmail = settings['contact.email'];
 
-    // Create transporter
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_SERVER_HOST || process.env.SMTP_HOST || '[SMTP_HOST]',
-      port: parseInt(process.env.SMTP_SERVER_PORT || process.env.SMTP_PORT || '587'),
-      secure: false,
-      auth: {
-        user: process.env.SMTP_SERVER_USERNAME || process.env.SMTP_USER || storeEmail,
-        pass: process.env.SMTP_SERVER_PASSWORD || process.env.SMTP_PASS,
-      },
-      tls: {
-        rejectUnauthorized: process.env.SMTP_TLS_REJECT_UNAUTHORIZED !== 'false',
-        minVersion: 'TLSv1.2',
-        maxVersion: 'TLSv1.3',
-      },
-    });
+    const transporter = createSmtpTransport();
 
     // Create JobForm instance and format email body
     const jobForm = new JobForm(

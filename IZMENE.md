@@ -3,7 +3,7 @@
 Zapis svega što je urađeno na projektu narodne nošnje, sa razlozima i zamkama
 na koje se naišlo. Namenjeno je i tebi i svakom ko posle preuzme rad.
 
-Poslednja dopuna: 29. avgust 2026.
+Poslednja dopuna: 30. avgust 2026.
 
 ## Gde je koji dokument
 
@@ -532,3 +532,27 @@ probe na klonu baze.
   upisuje kao shipping ZIP.
 - Javne forme proveravaju reCAPTCHA token, honeypot, rate limit i veličinu
   sadržaja na serveru; SMTP TLS validacija je podrazumevano uključena.
+
+---
+
+## XII. Centralni SMTP TLS sloj — 30. avgust 2026.
+
+Bezbednosni pregled je pokazao da su reset lozinke, verifikacija naloga,
+porudžbine i wishlist poruke imali sopstvene transportere koji su prihvatali
+nevažeće TLS sertifikate. Preostala dva transportera jesu proveravala
+sertifikat, ali nisu zahtevala STARTTLS i nisu pravilno podržavala implicitni
+TLS na portu 465.
+
+Sada svih pet email tokova koristi `lib/email/smtp.ts` kao jedini izvor SMTP
+politike. Port 465 uključuje implicitni TLS; 587, 2525 i drugi portovi zahtevaju
+uspešan STARTTLS pre autentifikacije ili slanja sadržaja. Node-ova održavana
+cipher lista zamenjuje ručno ograničenje koje je praktično isključivalo TLS
+1.2 iako je bio deklarisan kao podržan minimum.
+
+Konfiguracija radi fail-closed: port mora biti ceo broj 1–65535, host i oba
+credential-a su obavezni, a nepoznata TLS boolean vrednost se odbija.
+`SMTP_TLS_REJECT_UNAUTHORIZED=false` prihvata se samo u `development`/`test`
+okruženju i samo za loopback SMTP, pa produkcija ne može slučajno da pošalje
+reset token, podatke porudžbine ili prijavu za posao preko neproverenog ili
+plaintext kanala. Novi testovi proveravaju obe TLS varijante, neispravnu
+konfiguraciju, legacy alias-e i lokalni self-signed izuzetak bez mrežnog slanja.
