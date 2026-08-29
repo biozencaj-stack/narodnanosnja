@@ -6,7 +6,10 @@ test("mobilni kupac prolazi katalog, korpu i checkout", async ({ page }) => {
   expect(response?.headers()["content-security-policy"]).toContain(
     "default-src 'self'",
   );
-  await expect(page.getByRole("heading", { name: "Katalog" })).toBeVisible();
+  expect(response?.ok()).toBe(true);
+  await expect(
+    page.getByRole("heading", { name: "Svi proizvodi" }),
+  ).toBeVisible();
 
   await page
     .getByRole("link", { name: "E2E test proizvod", exact: true })
