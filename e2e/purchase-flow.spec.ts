@@ -36,13 +36,17 @@ test("mobilni kupac prolazi katalog, korpu i checkout", async ({ page }) => {
   ).toBeVisible();
   await expect(page.getByLabel("Email *")).toBeFocused();
 
-  await page.getByLabel("Email *").fill(`e2e-${Date.now()}@example.com`);
-  await page.getByLabel("Telefon *").fill("0601234567");
-  await page.getByLabel("Ime *").fill("E2E");
-  await page.getByLabel("Prezime *").fill("Kupac");
-  await page.getByLabel("Ulica i kućni broj *").fill("Test ulica 1");
-  await page.getByLabel("Grad *").fill("Beograd");
-  await page.getByLabel("Poštanski broj *").fill("11000");
+  await page
+    .getByLabel("Email *", { exact: true })
+    .fill(`e2e-${Date.now()}@example.com`);
+  await page.getByLabel("Telefon *", { exact: true }).fill("0601234567");
+  await page.getByLabel("Ime *", { exact: true }).fill("E2E");
+  await page.getByLabel("Prezime *", { exact: true }).fill("Kupac");
+  await page
+    .getByLabel("Ulica i kućni broj *", { exact: true })
+    .fill("Test ulica 1");
+  await page.getByLabel("Grad *", { exact: true }).fill("Beograd");
+  await page.getByLabel("Poštanski broj *", { exact: true }).fill("11000");
   await page
     .getByRole("checkbox", { name: /uslove korišćenja/i })
     .check();
