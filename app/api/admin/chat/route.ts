@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { sanitizeRichHtml } from "@/lib/security/html";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -26,14 +27,15 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { question, answer, category, sortOrder, active } = body;
 
-    if (!question || !answer) {
+    const safeAnswer = sanitizeRichHtml(answer);
+    if (!question || !safeAnswer.trim()) {
       return NextResponse.json({ error: "Pitanje i odgovor su obavezni" }, { status: 400 });
     }
 
     const faq = await prisma.chatFAQ.create({
       data: {
         question,
-        answer,
+        answer: safeAnswer,
         category: category || null,
         sortOrder: sortOrder ?? 0,
         active: active ?? true,
@@ -61,11 +63,20 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "ID is required" }, { status: 400 });
     }
 
+    const safeAnswer =
+      answer === undefined ? undefined : sanitizeRichHtml(answer);
+    if (safeAnswer !== undefined && !safeAnswer.trim()) {
+      return NextResponse.json(
+        { error: "Odgovor ne sme biti prazan" },
+        { status: 400 },
+      );
+    }
+
     const faq = await prisma.chatFAQ.update({
       where: { id },
       data: {
         ...(question !== undefined && { question }),
-        ...(answer !== undefined && { answer }),
+        ...(safeAnswer !== undefined && { answer: safeAnswer }),
         ...(category !== undefined && { category: category || null }),
         ...(sortOrder !== undefined && { sortOrder }),
         ...(active !== undefined && { active }),

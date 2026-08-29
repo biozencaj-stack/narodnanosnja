@@ -1,12 +1,14 @@
 'use server';
 
 import nodemailer from 'nodemailer';
+import { createHmac } from 'node:crypto';
 import type { Order, TransactionDetails } from '@/types/order';
 import type { CartItem } from '@/types/cart';
 import { formatPriceWithCurrency, clearProductSufix } from '@/lib/utils/format';
 import { headers } from 'next/headers';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { verifyRecaptchaToken } from '@/lib/security/recaptcha';
+import { escapeHtmlText, sanitizeRichHtml } from '@/lib/security/html';
 
 // Configurable store constants (read from environment)
 const STORE_NAME = process.env.NEXT_PUBLIC_STORE_NAME || 'My Store';
@@ -305,9 +307,8 @@ export async function sendNewsletterConfirmation(email: string): Promise<boolean
  * Generate unsubscribe token for email
  */
 function generateUnsubscribeToken(email: string): string {
-  const crypto = require('crypto');
   const secret = process.env.NEXTAUTH_SECRET || 'cms-unsubscribe-secret';
-  return crypto.createHmac('sha256', secret).update(email).digest('hex').slice(0, 32);
+  return createHmac('sha256', secret).update(email).digest('hex').slice(0, 32);
 }
 
 /**
@@ -318,6 +319,8 @@ export async function sendNewsletterCampaign(
   subject: string,
   content: string
 ): Promise<boolean> {
+  const safeSubject = escapeHtmlText(subject);
+  const safeContent = sanitizeRichHtml(content);
   const unsubscribeToken = generateUnsubscribeToken(email);
   const unsubscribeUrl = `${SITE_URL}/api/newsletter/unsubscribe?email=${encodeURIComponent(email)}&token=${unsubscribeToken}`;
 
@@ -327,7 +330,7 @@ export async function sendNewsletterCampaign(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${subject}</title>
+    <title>${safeSubject}</title>
 </head>
 <body style="font-family: 'DM Sans', Arial, sans-serif; background-color: #4F46E5; margin: 0; padding: 20px;">
   <div style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
@@ -340,7 +343,7 @@ export async function sendNewsletterCampaign(
 
     <!-- Content -->
     <div style="padding: 32px;">
-      <h2 style="color: #4F46E5; font-size: 22px; margin: 0 0 24px; font-weight: 600;">${subject}</h2>
+      <h2 style="color: #4F46E5; font-size: 22px; margin: 0 0 24px; font-weight: 600;">${safeSubject}</h2>
       <div style="color: #444; font-size: 16px; line-height: 1.7;">
         <style>
           .newsletter-content p { margin: 0 0 16px; }
@@ -352,7 +355,7 @@ export async function sendNewsletterCampaign(
           .newsletter-content a { color: #4F46E5; text-decoration: underline; }
           .newsletter-content img { max-width: 100%; height: auto; border-radius: 8px; margin: 16px 0; }
         </style>
-        <div class="newsletter-content">${content}</div>
+        <div class="newsletter-content">${safeContent}</div>
       </div>
 
       <div style="margin-top: 32px; text-align: center;">

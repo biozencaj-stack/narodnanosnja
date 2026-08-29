@@ -1,9 +1,19 @@
 import { prisma } from "@/lib/db";
-import { Package, Users, CreditCard, TrendingUp } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowRight,
+  Package,
+  TrendingUp,
+  Users,
+} from "lucide-react";
 import { formatPriceWithCurrency } from "@/lib/utils/format";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import Link from "next/link";
+import { parseLocalized } from "@/lib/i18n/localized";
+
+const LOW_STOCK_THRESHOLD = 5;
 
 // Force dynamic rendering - this page requires database access
 export const dynamic = 'force-dynamic';
@@ -25,7 +35,9 @@ export default async function AdminDashboardPage() {
     totalUsers,
     recentOrders,
     todayOrders,
-    totalRevenue,
+    paidRevenue,
+    lowStockCount,
+    lowStockItems,
   ] = await Promise.all([
     prisma.order.count(),
     prisma.order.count({ where: { status: "PENDING" } }),
@@ -44,12 +56,39 @@ export default async function AdminDashboardPage() {
     }),
     prisma.order.aggregate({
       _sum: { total: true },
-      where: { status: { not: "CANCELLED" } },
+      where: {
+        paymentStatus: "PAID",
+        status: { not: "CANCELLED" },
+      },
+    }),
+    prisma.productSize.count({
+      where: {
+        active: true,
+        stock: { lte: LOW_STOCK_THRESHOLD },
+        product: { active: true },
+      },
+    }),
+    prisma.productSize.findMany({
+      where: {
+        active: true,
+        stock: { lte: LOW_STOCK_THRESHOLD },
+        product: { active: true },
+      },
+      orderBy: [{ stock: "asc" }, { size: "asc" }],
+      take: 5,
+      select: {
+        id: true,
+        size: true,
+        stock: true,
+        product: {
+          select: { id: true, name: true, sku: true },
+        },
+      },
     }),
   ]);
 
-  const revenue = totalRevenue._sum.total
-    ? Number(totalRevenue._sum.total)
+  const revenue = paidRevenue._sum.total
+    ? Number(paidRevenue._sum.total)
     : 0;
 
   const statusLabels: Record<string, string> = {
@@ -119,7 +158,7 @@ export default async function AdminDashboardPage() {
         <div className="bg-white rounded-xl p-6 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-stone-500">Ukupan prihod</p>
+              <p className="text-sm text-stone-500">Plaćeni prihod</p>
               <p className="text-3xl font-bold text-green-600">
                 {formatPriceWithCurrency(revenue)}
               </p>
@@ -128,8 +167,73 @@ export default async function AdminDashboardPage() {
               <TrendingUp className="h-6 w-6 text-green-600" />
             </div>
           </div>
-          <p className="text-sm text-stone-500 mt-2">Sve porudžbine (bez otkazanih)</p>
+          <p className="text-sm text-stone-500 mt-2">
+            Plaćene, neotkazane porudžbine
+          </p>
         </div>
+      </div>
+
+      {/* Inventory attention queue */}
+      <div className="overflow-hidden rounded-xl border border-amber-200 bg-amber-50 shadow-sm">
+        <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex gap-4">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-amber-100">
+              <AlertTriangle className="h-5 w-5 text-amber-700" />
+            </div>
+            <div>
+              <h2 className="font-semibold text-amber-950">
+                Zalihe koje zahtevaju pažnju
+              </h2>
+              <p className="mt-1 text-sm text-amber-800">
+                {lowStockCount === 0
+                  ? "Sve aktivne lager stavke imaju više od pet komada."
+                  : `${lowStockCount} aktivnih lager stavki ima ${LOW_STOCK_THRESHOLD} ili manje komada.`}
+              </p>
+            </div>
+          </div>
+          <Link
+            href="/admin/products"
+            className="inline-flex items-center gap-2 self-start rounded-lg bg-amber-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-amber-800"
+          >
+            Svi proizvodi
+            <ArrowRight className="h-4 w-4" />
+          </Link>
+        </div>
+
+        {lowStockItems.length > 0 && (
+          <div className="divide-y divide-amber-200 border-t border-amber-200 bg-white/70">
+            {lowStockItems.map((item) => {
+              const localizedName = parseLocalized(item.product.name);
+              const productName =
+                localizedName.sr ||
+                localizedName.en ||
+                item.product.sku ||
+                "Proizvod";
+
+              return (
+                <Link
+                  key={item.id}
+                  href={`/admin/products/${item.product.id}`}
+                  className="flex items-center justify-between gap-4 px-6 py-3 text-sm transition-colors hover:bg-amber-50"
+                >
+                  <span className="min-w-0 truncate text-stone-800">
+                    {productName}
+                    <span className="ml-2 text-stone-500">
+                      Veličina: {item.size}
+                    </span>
+                  </span>
+                  <span
+                    className={`shrink-0 font-semibold ${
+                      item.stock === 0 ? "text-red-700" : "text-amber-700"
+                    }`}
+                  >
+                    {item.stock} kom
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Recent orders */}

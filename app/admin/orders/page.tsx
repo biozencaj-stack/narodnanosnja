@@ -2,8 +2,59 @@ import { prisma } from "@/lib/db";
 import Link from "next/link";
 import { formatPriceWithCurrency } from "@/lib/utils/format";
 import { Eye, Search } from "lucide-react";
-import { Prisma } from "@prisma/client";
+import type { OrderStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { ExportOrders } from "./ExportOrders";
+
+const orderStatusFilters: Array<{ value: OrderStatus | ""; label: string }> = [
+  { value: "", label: "Sve" },
+  { value: "PENDING", label: "Na čekanju" },
+  { value: "CONFIRMED", label: "Potvrđene" },
+  { value: "SHIPPED", label: "Poslate" },
+  { value: "CANCELLED", label: "Otkazane" },
+];
+
+const paymentStatusFilters: Array<{
+  value: PaymentStatus | "";
+  label: string;
+}> = [
+  { value: "", label: "Sva plaćanja" },
+  { value: "PENDING", label: "Čeka" },
+  { value: "PROCESSING", label: "U obradi" },
+  { value: "PAID", label: "Plaćeno" },
+  { value: "FAILED", label: "Neuspešno" },
+  { value: "REVIEW", label: "Provera" },
+  { value: "REFUNDED", label: "Refundirano" },
+];
+
+const paymentStatusLabels: Record<PaymentStatus, string> = {
+  PENDING: "Čeka",
+  PROCESSING: "U obradi",
+  PAID: "Plaćeno",
+  FAILED: "Neuspešno",
+  REVIEW: "Provera",
+  REFUNDED: "Refundirano",
+};
+
+const paymentStatusColors: Record<PaymentStatus, string> = {
+  PENDING: "text-amber-700 bg-amber-100",
+  PROCESSING: "text-blue-700 bg-blue-100",
+  PAID: "text-green-700 bg-green-100",
+  FAILED: "text-red-700 bg-red-100",
+  REVIEW: "text-purple-700 bg-purple-100",
+  REFUNDED: "text-stone-700 bg-stone-200",
+};
+
+function isOrderStatus(value: string | undefined): value is OrderStatus {
+  return orderStatusFilters.some(
+    (option) => option.value !== "" && option.value === value,
+  );
+}
+
+function isPaymentStatus(value: string | undefined): value is PaymentStatus {
+  return paymentStatusFilters.some(
+    (option) => option.value !== "" && option.value === value,
+  );
+}
 
 // Force dynamic rendering - this page requires database access
 export const dynamic = 'force-dynamic';
@@ -15,6 +66,7 @@ export const metadata = {
 interface PageProps {
   searchParams: Promise<{
     status?: string;
+    paymentStatus?: string;
     page?: string;
     q?: string;
   }>;
@@ -23,7 +75,10 @@ interface PageProps {
 export default async function AdminOrdersPage({ searchParams }: PageProps) {
   const params = await searchParams;
   const page = parseInt(params.page || "1");
-  const status = params.status as string | undefined;
+  const status = isOrderStatus(params.status) ? params.status : undefined;
+  const paymentStatus = isPaymentStatus(params.paymentStatus)
+    ? params.paymentStatus
+    : undefined;
   const search = params.q?.trim() || "";
   const perPage = 20;
 
@@ -31,7 +86,11 @@ export default async function AdminOrdersPage({ searchParams }: PageProps) {
   const where: Prisma.OrderWhereInput = {};
 
   if (status) {
-    where.status = status as never;
+    where.status = status;
+  }
+
+  if (paymentStatus) {
+    where.paymentStatus = paymentStatus;
   }
 
   if (search) {
@@ -79,19 +138,19 @@ export default async function AdminOrdersPage({ searchParams }: PageProps) {
     CANCELLED: "text-red-600 bg-red-100",
   };
 
-  const statuses = [
-    { value: "", label: "Sve" },
-    { value: "PENDING", label: "Na čekanju" },
-    { value: "CONFIRMED", label: "Potvrđene" },
-    { value: "SHIPPED", label: "Poslate" },
-    { value: "CANCELLED", label: "Otkazane" },
-  ];
-
   // Build query string for links
-  const buildQueryString = (newParams: { status?: string; q?: string; page?: string }) => {
-    const merged = { status, q: search, ...newParams };
+  const buildQueryString = (newParams: {
+    status?: OrderStatus;
+    paymentStatus?: PaymentStatus;
+    q?: string;
+    page?: string;
+  }) => {
+    const merged = { status, paymentStatus, q: search, ...newParams };
     const parts: string[] = [];
     if (merged.status) parts.push(`status=${merged.status}`);
+    if (merged.paymentStatus) {
+      parts.push(`paymentStatus=${merged.paymentStatus}`);
+    }
     if (merged.q) parts.push(`q=${encodeURIComponent(merged.q)}`);
     if (merged.page && merged.page !== "1") parts.push(`page=${merged.page}`);
     return parts.length > 0 ? `?${parts.join("&")}` : "";
@@ -111,6 +170,9 @@ export default async function AdminOrdersPage({ searchParams }: PageProps) {
         {/* Search */}
         <form action="/admin/orders" method="GET" className="flex gap-2">
           {status && <input type="hidden" name="status" value={status} />}
+          {paymentStatus && (
+            <input type="hidden" name="paymentStatus" value={paymentStatus} />
+          )}
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" />
             <input
@@ -130,7 +192,10 @@ export default async function AdminOrdersPage({ searchParams }: PageProps) {
           </button>
           {search && (
             <Link
-              href={`/admin/orders${status ? `?status=${status}` : ""}`}
+              href={`/admin/orders${buildQueryString({
+                q: undefined,
+                page: undefined,
+              })}`}
               className="px-4 py-2 bg-stone-100 text-stone-700 text-sm rounded-lg hover:bg-stone-200 transition-colors"
             >
               Poništi
@@ -140,7 +205,7 @@ export default async function AdminOrdersPage({ searchParams }: PageProps) {
 
         {/* Status filters */}
         <div className="flex flex-wrap gap-2">
-          {statuses.map((s) => (
+          {orderStatusFilters.map((s) => (
             <Link
               key={s.value}
               href={`/admin/orders${buildQueryString({ status: s.value || undefined, page: undefined })}`}
@@ -153,6 +218,32 @@ export default async function AdminOrdersPage({ searchParams }: PageProps) {
               {s.label}
             </Link>
           ))}
+        </div>
+
+        {/* Payment status filters */}
+        <div className="space-y-2 border-t border-stone-100 pt-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-stone-500">
+            Status plaćanja
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {paymentStatusFilters.map((paymentFilter) => (
+              <Link
+                key={paymentFilter.value}
+                href={`/admin/orders${buildQueryString({
+                  paymentStatus: paymentFilter.value || undefined,
+                  page: undefined,
+                })}`}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  paymentStatus === paymentFilter.value ||
+                  (!paymentStatus && !paymentFilter.value)
+                    ? "bg-stone-900 text-white"
+                    : "bg-stone-100 text-stone-700 hover:bg-stone-200"
+                }`}
+              >
+                {paymentFilter.label}
+              </Link>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -229,14 +320,10 @@ export default async function AdminOrdersPage({ searchParams }: PageProps) {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span
-                      className={`px-2 py-1 text-xs rounded-full ${
-                        order.paymentStatus === "PAID"
-                          ? "text-green-600 bg-green-100"
-                          : "text-yellow-600 bg-yellow-100"
-                      }`}
+                      className={`px-2 py-1 text-xs rounded-full ${paymentStatusColors[order.paymentStatus]}`}
                     >
                       {order.paymentMethod === "CARD" ? "Kartica" : "Pouzeće"} -{" "}
-                      {order.paymentStatus === "PAID" ? "Plaćeno" : "Čeka"}
+                      {paymentStatusLabels[order.paymentStatus]}
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap font-medium">

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { sanitizeRichHtml } from "@/lib/security/html";
 
 function slugify(text: string): string {
   return text
@@ -65,6 +66,15 @@ export async function PUT(
       return NextResponse.json({ error: "Article not found" }, { status: 404 });
     }
 
+    const safeContent =
+      content === undefined ? undefined : sanitizeRichHtml(content);
+    if (safeContent !== undefined && !safeContent.trim()) {
+      return NextResponse.json(
+        { error: "Article content cannot be empty" },
+        { status: 400 },
+      );
+    }
+
     let slug = existing.slug;
     if (title && title !== existing.title) {
       slug = slugify(title);
@@ -87,7 +97,7 @@ export async function PUT(
       data: {
         ...(title !== undefined && { title }),
         slug,
-        ...(content !== undefined && { content }),
+        ...(safeContent !== undefined && { content: safeContent }),
         ...(excerpt !== undefined && { excerpt: excerpt || null }),
         ...(image1 !== undefined && { image1: image1 || null }),
         ...(image2 !== undefined && { image2: image2 || null }),

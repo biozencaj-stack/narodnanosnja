@@ -3,6 +3,7 @@ import Link from "next/link";
 import { fetchArticleBySlug } from "@/lib/products";
 import { ArrowLeft } from "lucide-react";
 import type { Metadata } from "next";
+import { sanitizeRichHtml } from "@/lib/security/html";
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -76,7 +77,7 @@ export default async function ArticleDetailPage({ params }: Props) {
         {/* Content */}
         <div
           className="prose prose-stone max-w-none"
-          dangerouslySetInnerHTML={{ __html: article.content }}
+          dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(article.content) }}
         />
       </article>
     </div>

@@ -29,8 +29,8 @@ export function SortDropdown() {
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
-        <button className="inline-flex items-center gap-2 px-4 py-2 text-sm border border-border rounded-md hover:border-primary transition-colors">
-          <span className="text-text-muted">Sortiraj po:</span>
+        <button className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-border rounded-md hover:border-primary transition-colors sm:gap-2 sm:px-4">
+          <span className="hidden text-text-muted sm:inline">Sortiraj po:</span>
           <span className="font-medium">{currentLabel}</span>
           <ChevronDown className="h-4 w-4 text-text-muted" />
         </button>

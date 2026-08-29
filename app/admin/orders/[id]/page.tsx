@@ -159,12 +159,9 @@ export default async function AdminOrderDetailPage({ params }: PageProps) {
               <p>{order.user?.email || order.guestEmail}</p>
               {order.guestPhone && <p>{order.guestPhone}</p>}
               {order.userId && (
-                <Link
-                  href={`/admin/users/${order.userId}`}
-                  className="text-blue-600 hover:underline text-sm"
-                >
-                  Pogledaj profil →
-                </Link>
+                <span className="inline-flex rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700">
+                  Registrovan korisnik
+                </span>
               )}
             </div>
           </div>

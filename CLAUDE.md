@@ -46,6 +46,10 @@ npm install --legacy-peer-deps   # OBAVEZNO --legacy-peer-deps, vidi zamke
 npx prisma generate
 npm run dev                      # razvojni server
 npm run build                    # produkcijski build
+npm run lint                     # ESLint 9 flat config; greške blokiraju CI
+npm run typecheck                # stroga TypeScript provera bez emitovanja
+npm test                         # automatski pronalazi sve lib/**/*.test.ts
+npm run test:e2e                 # Playwright; samo nad jasno označenom test bazom
 npx tsx scripts/uvoz-nosnja.ts   # uvoz kategorija i proizvoda iz podaci/
 npx tsx scripts/create-admin.ts --email … --password … --role ADMIN
 ```
@@ -154,6 +158,28 @@ Politika je deny-by-default u `lib/auth/admin-policy.ts` i sprovodi se u
 `proxy.ts`. `ADMIN` ima pun pristup. `OPERATOR` ima samo porudžbine/status i
 poruke kupaca. Svaka nova admin ruta mora dobiti eksplicitnu odluku u politici
 i sopstvenu serversku proveru; skrivanje linka nije autorizacija.
+
+## Rich HTML i browser bezbednost (v2)
+
+Javni rich HTML nikada ne prosleđuj direktno u `dangerouslySetInnerHTML`.
+Članci, FAQ odgovori i lokalizovani opisi proizvoda prolaze kroz allow-list
+helper-e u `lib/security/html.ts` pri admin upisu i ponovo na javnoj read/render
+granici. Novi HTML sink mora koristiti isti sloj i dobiti negativan XSS test.
+JSON-LD se serijalizuje isključivo kroz `serializeJsonLd`.
+
+Globalni browser headeri su u `next.config.ts`. `ENABLE_HSTS=true` se uključuje
+tek kada javni domen i svi poddomeni zaista rade isključivo preko HTTPS-a.
+Unsafe API write zahtevi moraju proći same-origin proveru u `proxy.ts`; javni
+payment-provider callback ostaje eksplicitno izuzet pre te provere.
+
+## Browser E2E (v2)
+
+`e2e/purchase-flow.spec.ts` proverava mobilni tok katalog → proizvod → korpa →
+checkout → uspešna COD porudžbina. `scripts/seed-e2e.ts` je idempotentan, ali
+namerno odbija svaku bazu čiji naziv jasno ne sadrži `e2e`, `test` ili
+`provera`. Nikada ne zaobilazi tu zaštitu i nikada ne pokreći E2E seed nad
+produkcijskom bazom. CI koristi zaseban PostgreSQL service i instalira Chromium
+pre browser testa.
 
 ## Server
 

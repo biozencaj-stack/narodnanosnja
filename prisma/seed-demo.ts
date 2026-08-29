@@ -1376,7 +1376,7 @@ async function main() {
 
     const imgPath = path.join(process.cwd(), "public", "uploads", "products", b.filename);
     let imageData = "";
-    let contentType = "image/jpeg";
+    const contentType = "image/jpeg";
     try {
       const buffer = fs.readFileSync(imgPath);
       imageData = buffer.toString("base64");

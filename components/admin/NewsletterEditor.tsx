@@ -30,6 +30,34 @@ interface NewsletterEditorProps {
   onChange: (html: string) => void;
 }
 
+interface ToolbarButtonProps {
+  onClick: () => void;
+  isActive?: boolean;
+  children: React.ReactNode;
+  title: string;
+}
+
+function ToolbarButton({
+  onClick,
+  isActive = false,
+  children,
+  title,
+}: ToolbarButtonProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-pressed={isActive}
+      className={`p-2 rounded hover:bg-stone-100 transition-colors ${
+        isActive ? "bg-stone-200 text-primary" : "text-stone-600"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
 export interface NewsletterEditorRef {
   insertImage: (src: string) => void;
 }
@@ -104,29 +132,6 @@ export const NewsletterEditor = forwardRef<NewsletterEditorRef, NewsletterEditor
   if (!editor) {
     return null;
   }
-
-  const ToolbarButton = ({
-    onClick,
-    isActive = false,
-    children,
-    title,
-  }: {
-    onClick: () => void;
-    isActive?: boolean;
-    children: React.ReactNode;
-    title: string;
-  }) => (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      className={`p-2 rounded hover:bg-stone-100 transition-colors ${
-        isActive ? "bg-stone-200 text-primary" : "text-stone-600"
-      }`}
-    >
-      {children}
-    </button>
-  );
 
   return (
     <div className="border border-stone-300 rounded-lg overflow-hidden bg-white">

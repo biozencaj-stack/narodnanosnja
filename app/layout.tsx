@@ -14,6 +14,7 @@ import type { StoreSettingsMap } from "@/lib/config/store-settings-schema";
 import { storeIdentityFromSettings } from "@/lib/config/store-identity";
 import { getStorefrontUrl } from "@/lib/config/storefront-url";
 import { StoreIdentityProvider } from "@/components/StoreIdentityProvider";
+import { serializeJsonLd } from "@/lib/security/json-ld";
 
 const configuredGaId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID;
 const GA_ID = configuredGaId && /^G-[A-Z0-9]+$/i.test(configuredGaId)
@@ -74,10 +75,6 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-function jsonLd(value: object) {
-  return JSON.stringify(value).replace(/</g, "\\u003c");
-}
-
 // Organization JSON-LD Schema
 function OrganizationJsonLd({ settings }: { settings: StoreSettingsMap }) {
   const siteUrl = getStorefrontUrl().toString().replace(/\/$/, "");
@@ -95,7 +92,7 @@ function OrganizationJsonLd({ settings }: { settings: StoreSettingsMap }) {
   return (
     <script
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: jsonLd(data) }}
+      dangerouslySetInnerHTML={{ __html: serializeJsonLd(data) }}
     />
   );
 }
@@ -121,7 +118,7 @@ function WebSiteJsonLd({ settings }: { settings: StoreSettingsMap }) {
   return (
     <script
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: jsonLd(data) }}
+      dangerouslySetInnerHTML={{ __html: serializeJsonLd(data) }}
     />
   );
 }

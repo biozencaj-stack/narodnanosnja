@@ -59,11 +59,13 @@ export function NewsletterPreview({ subject, content }: NewsletterPreviewProps) 
         <span className="text-sm font-medium text-stone-700">Preview</span>
       </div>
 
-      {/* Preview iframe */}
+      {/* Sandboxed preview: user-authored markup cannot execute in admin UI. */}
       <div className="flex-1 overflow-auto bg-stone-100 p-4">
-        <div
-          className="transform scale-[0.85] origin-top"
-          dangerouslySetInnerHTML={{ __html: emailHtml }}
+        <iframe
+          title="Pregled newsletter poruke"
+          sandbox=""
+          srcDoc={emailHtml}
+          className="w-full min-h-[720px] border-0 bg-white"
         />
       </div>
     </div>

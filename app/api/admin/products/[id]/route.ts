@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma, Prisma } from "@/lib/db";
 import { getSlugSource } from "@/lib/i18n/localized";
+import { sanitizeLocalizedRichText } from "@/lib/security/html";
 import {
   assertActiveProductHasInventory,
   lockProductInventory,
@@ -153,7 +154,8 @@ export async function PUT(
           }),
           slug,
           ...(description !== undefined && {
-            description: description ? toJson(description) : Prisma.DbNull,
+            description:
+              sanitizeLocalizedRichText(description) ?? Prisma.DbNull,
           }),
           ...(sku !== undefined && { sku: sku || null }),
           ...(price !== undefined && { price }),

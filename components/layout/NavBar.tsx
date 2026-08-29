@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocale } from "next-intl";
 import { getLocalized } from "@/lib/i18n/localized";
 import {
@@ -14,7 +14,6 @@ import {
   HeartIcon,
   UserIcon,
 } from "@heroicons/react/24/outline";
-import Image from "next/image";
 import Link from "next/link";
 import { Logo } from "./Logo";
 import { useSession, signOut } from "next-auth/react";
@@ -115,21 +114,16 @@ export function NavBar({
     };
   }, [openDesktopPanel]);
 
-  const toggleDesktopPanel = useCallback((id: string) => {
+  const toggleDesktopPanel = (id: string) => {
     setOpenDesktopPanel((prev) => (prev === id ? null : id));
-  }, []);
-
-  // Placeholder categories when DB has none (for demo/presentation)
-  const PLACEHOLDER_CATEGORIES: NavCategory[] = [
-    { id: "1", name: "Obuca", slug: "obuca", children: [{ id: "1a", name: "Cipele", slug: "cipele" }, { id: "1b", name: "Sandale", slug: "sandale" }, { id: "1c", name: "Patike", slug: "patike" }] },
-    { id: "2", name: "Odeca", slug: "odeca", children: [{ id: "2a", name: "Majice", slug: "majice" }, { id: "2b", name: "Dukserice", slug: "dukserice" }, { id: "2c", name: "Jakne", slug: "jakne" }] },
-    { id: "3", name: "Aksesori", slug: "aksesori", children: [{ id: "3a", name: "Torbe", slug: "torbe" }, { id: "3b", name: "Novcanici", slug: "novcanici" }, { id: "3c", name: "Nakit", slug: "nakit" }] },
-  ];
+  };
 
   const locale = useLocale();
-  const categoriesToUse = navCategories.length > 0 ? navCategories : PLACEHOLDER_CATEGORIES;
+  const categoriesToUse = navCategories;
 
-  // Build dynamic navigation from DB categories (or placeholders)
+  // Navigacija sme da prikazuje samo podatke koji zaista postoje u katalogu.
+  // Kada kategorije nisu dostupne, siguran link ka celom katalogu renderuje se
+  // u glavnom meniju ispod.
   const dynamicCategories = categoriesToUse.map((cat) => {
     const catName = typeof cat.name === "string" ? cat.name : getLocalized(cat.name, locale);
     return {
@@ -154,20 +148,13 @@ export function NavBar({
         items: [
           { name: "Sniženje", href: `/category/${cat.slug}?sale=true`, highlight: true },
           { name: "Novo", href: `/category/${cat.slug}?novo=true` },
-          { name: "Popularno", href: `/category/${cat.slug}?sort=popular` },
         ],
       },
     ],
   };
   });
 
-  // Placeholder brands when DB has none
-  const PLACEHOLDER_BRANDS = [
-    { id: "b1", name: "Brend A", slug: "brend-a" },
-    { id: "b2", name: "Brend B", slug: "brend-b" },
-    { id: "b3", name: "Brend C", slug: "brend-c" },
-  ];
-  const brandsToUse = groupsAvailable.length > 0 ? groupsAvailable : PLACEHOLDER_BRANDS;
+  const brandsToUse = groupsAvailable;
 
   const navigation = {
     categories: dynamicCategories,
@@ -436,6 +423,15 @@ export function NavBar({
 
               {/* Desktop navigation - controlled mega-menu */}
               <div ref={desktopNavRef} className="hidden xl:flex xl:flex-1 xl:items-center xl:justify-center xl:gap-0.5 2xl:gap-1">
+                {navigation.categories.length === 0 && (
+                  <Link
+                    href="/catalog"
+                    className="flex h-16 items-center whitespace-nowrap border-b-2 border-transparent px-3 text-sm font-medium text-text transition-colors hover:border-primary hover:text-primary 2xl:px-4"
+                  >
+                    Svi proizvodi
+                  </Link>
+                )}
+
                 {navigation.categories.map((category) => (
                   <button
                     key={category.id}

@@ -1,4 +1,4 @@
-import { forwardRef, type InputHTMLAttributes, useState } from 'react';
+import { forwardRef, type InputHTMLAttributes, useId, useState } from 'react';
 import { cn } from '@/lib/utils';
 
 export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
@@ -8,9 +8,30 @@ export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
 }
 
 const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ className, type, label, error, helperText, id, ...props }, ref) => {
+  (
+    {
+      className,
+      type,
+      label,
+      error,
+      helperText,
+      id,
+      'aria-describedby': ariaDescribedBy,
+      'aria-invalid': ariaInvalid,
+      ...props
+    },
+    ref,
+  ) => {
     const [isFocused, setIsFocused] = useState(false);
-    const inputId = id || label?.toLowerCase().replace(/\s+/g, '-');
+    const generatedId = useId();
+    const inputId = id || (typeof props.name === 'string' ? props.name : generatedId);
+    const descriptionId = `${inputId}-description`;
+    const describedBy = [
+      ariaDescribedBy,
+      error || helperText ? descriptionId : undefined,
+    ]
+      .filter(Boolean)
+      .join(' ') || undefined;
 
     return (
       <div className="w-full">
@@ -28,6 +49,8 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
         <input
           type={type}
           id={inputId}
+          aria-invalid={error ? true : ariaInvalid}
+          aria-describedby={describedBy}
           className={cn(
             'flex h-12 w-full rounded-md border bg-background px-4 py-3 text-base font-body',
             'transition-all duration-200',
@@ -52,6 +75,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
         />
         {(error || helperText) && (
           <p
+            id={descriptionId}
             className={cn(
               'mt-1.5 text-sm',
               error ? 'text-error' : 'text-text-muted'

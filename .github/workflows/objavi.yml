@@ -87,20 +87,20 @@ jobs:
           -v ON_ERROR_STOP=1
           -f scripts/db-invariant-smoke.sql
 
+      - name: Proveri lint pravila
+        run: npm run lint -- --quiet
+
       - name: Proveri TypeScript
-        run: npx tsc --noEmit --incremental false
+        run: npm run typecheck
 
       - name: Pokreni sigurnosne testove
-        run: >-
-          node --import tsx --test
-          lib/auth/admin-policy.test.ts
-          lib/nestpay/index.test.ts
-          lib/orders/payment-policy.test.ts
-          lib/orders/access.test.ts
-          lib/orders/inventory.test.ts
-          lib/inventory/product-size-sync.test.ts
-          lib/checkout/quote.test.ts
-          lib/payments/pending-card.test.ts
+        run: npm test
+
+      - name: Instaliraj Chromium za browser smoke test
+        run: npx playwright install --with-deps chromium
+
+      - name: Proveri mobilni tok kupovine
+        run: npm run test:e2e
 
       - name: Probna produkcijska izgradnja
         run: npm run build

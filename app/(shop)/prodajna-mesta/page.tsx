@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { storeCapabilities } from "@/lib/config/capabilities";
+import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Prodajna mesta",
@@ -24,7 +25,7 @@ export default async function StoresPage() {
       <div className="border-b border-stone-200 bg-stone-50">
         <div className="container-wide py-5 lg:py-6">
           <nav className="flex items-center gap-2 text-sm text-stone-400 mb-3">
-            <a href="/" className="hover:text-stone-700 transition-colors">Početna</a>
+            <Link href="/" className="hover:text-stone-700 transition-colors">Početna</Link>
             <span>/</span>
             <span className="text-stone-700 font-medium">Prodajna mesta</span>
           </nav>

@@ -12,6 +12,29 @@ import {
 import { useCartStore } from '@/store';
 import { readPendingCardPayment } from '@/lib/payments/pending-card';
 
+function CheckoutLoading({ message }: { message: string }) {
+  return (
+    <div
+      className="container-wide py-8 lg:py-12"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <span className="sr-only">{message}</span>
+      <div className="mb-8 h-5 w-32 animate-pulse rounded bg-background-alt" />
+      <div className="mb-8 h-10 w-48 animate-pulse rounded bg-background-alt" />
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-3 lg:gap-12">
+        <div className="space-y-6 lg:col-span-2">
+          <div className="h-28 animate-pulse rounded-xl bg-background-alt" />
+          <div className="h-44 animate-pulse rounded-xl bg-background-alt" />
+          <div className="h-56 animate-pulse rounded-xl bg-background-alt" />
+        </div>
+        <div className="h-64 animate-pulse rounded-xl bg-background-alt lg:col-span-1" />
+      </div>
+    </div>
+  );
+}
+
 export default function CheckoutPage() {
   const router = useRouter();
   const { items, hasHydrated } = useCartStore();
@@ -42,7 +65,7 @@ export default function CheckoutPage() {
   }, [hasHydrated, items, pendingOrderId, router]);
 
   if (!hasHydrated || pendingOrderId === undefined) {
-    return null;
+    return <CheckoutLoading message="Učitavamo vašu korpu i podatke za plaćanje." />;
   }
 
   if (pendingOrderId) {
@@ -56,7 +79,9 @@ export default function CheckoutPage() {
     );
   }
 
-  if (items.length === 0) return null;
+  if (items.length === 0) {
+    return <CheckoutLoading message="Korpa je prazna. Vraćamo vas u korpu." />;
+  }
 
   return (
     <div className="container-wide py-8 lg:py-12">
@@ -74,16 +99,16 @@ export default function CheckoutPage() {
       </h1>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:gap-12">
-        {/* Form */}
-        <div className="lg:col-span-2">
-          <CheckoutForm />
-        </div>
-
-        {/* Sidebar */}
-        <div className="lg:col-span-1">
-          <div className="lg:sticky lg:top-24 space-y-6">
+        {/* Jedan pregled: pre forme na telefonu, sticky sidebar na desktopu. */}
+        <div className="order-1 lg:order-2 lg:col-span-1">
+          <div className="lg:sticky lg:top-24">
             <OrderSummary />
           </div>
+        </div>
+
+        {/* Form */}
+        <div className="order-2 lg:order-1 lg:col-span-2">
+          <CheckoutForm />
         </div>
       </div>
     </div>

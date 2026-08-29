@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma, Prisma } from "@/lib/db";
 import { getSlugSource } from "@/lib/i18n/localized";
+import { sanitizeLocalizedRichText } from "@/lib/security/html";
 import {
   assertActiveProductHasInventory,
   planProductSizeSync,
@@ -156,11 +157,7 @@ export async function POST(request: NextRequest) {
           name: typeof name === "object" ? name : { sr: name, en: name },
           slug,
           description:
-            typeof description === "object"
-              ? description
-              : description
-                ? { sr: description, en: description }
-                : Prisma.DbNull,
+            sanitizeLocalizedRichText(description) ?? Prisma.DbNull,
           sku: sku || null,
           price,
           salePrice: salePrice || null,

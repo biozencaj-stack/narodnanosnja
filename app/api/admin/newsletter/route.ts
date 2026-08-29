@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { sendNewsletterCampaign } from "@/lib/email/mailer";
+import { sanitizeRichHtml } from "@/lib/security/html";
 
 // GET - Lista poslatih newsletter kampanja
 export async function GET() {
@@ -59,7 +60,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!content || typeof content !== "string" || content.trim().length < 10) {
+    const safeContent = sanitizeRichHtml(content);
+    if (safeContent.trim().length < 10) {
       return NextResponse.json(
         { error: "Sadržaj mora imati najmanje 10 karaktera" },
         { status: 400 }
@@ -105,7 +107,7 @@ export async function POST(request: NextRequest) {
 
     for (const email of allEmails) {
       try {
-        const success = await sendNewsletterCampaign(email, subject.trim(), content.trim());
+        const success = await sendNewsletterCampaign(email, subject.trim(), safeContent);
         if (success) {
           sent++;
         } else {
@@ -126,7 +128,7 @@ export async function POST(request: NextRequest) {
     await prisma.newsletter.create({
       data: {
         subject: subject.trim(),
-        content: content.trim(),
+        content: safeContent,
         sentBy: session.user.id,
         recipientCount: sent,
       },

@@ -50,6 +50,154 @@ const GENDER_OPTIONS = [
   { value: 'zenske', label: 'Ženski' },
 ];
 
+const FILTER_PARAM_NAMES = [
+  'size',
+  'color',
+  'type',
+  'brand',
+  'price',
+  'priceMin',
+  'priceMax',
+  'sale',
+  'novo',
+  'gender',
+] as const;
+
+interface ActiveFilterChip {
+  key: string;
+  param: string;
+  value?: string;
+  label: string;
+}
+
+/**
+ * Na telefonu sidebar nije vidljiv, pa aktivni filteri moraju ostati vidljivi
+ * iznad rezultata. Brisanje jednog čipa čuva sortiranje i broj proizvoda po
+ * strani, a reset uklanja samo parametre koje poseduje sistem filtera.
+ */
+export function ActiveMobileFilterChips({ brands = [] }: MobileFiltersProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const brandNames = new Map(brands.map((brand) => [String(brand.id), brand.name]));
+  const colorNames = new Map(COLOR_OPTIONS.map((color) => [color.value, color.label]));
+  const genderNames = new Map(GENDER_OPTIONS.map((gender) => [gender.value, gender.label]));
+  const chips: ActiveFilterChip[] = [];
+
+  searchParams.getAll('size').forEach((value) => {
+    chips.push({ key: `size-${value}`, param: 'size', value, label: `Veličina ${value}` });
+  });
+  searchParams.getAll('color').forEach((value) => {
+    chips.push({
+      key: `color-${value}`,
+      param: 'color',
+      value,
+      label: colorNames.get(value) || value,
+    });
+  });
+  searchParams.getAll('type').forEach((value) => {
+    chips.push({ key: `type-${value}`, param: 'type', value, label: value });
+  });
+  searchParams.getAll('brand').forEach((value) => {
+    chips.push({
+      key: `brand-${value}`,
+      param: 'brand',
+      value,
+      label: brandNames.get(value) || value,
+    });
+  });
+
+  const gender = searchParams.get('gender');
+  if (gender) {
+    chips.push({
+      key: 'gender',
+      param: 'gender',
+      label: genderNames.get(gender) || gender,
+    });
+  }
+  if (searchParams.get('sale') === 'true') {
+    chips.push({ key: 'sale', param: 'sale', label: 'Na akciji' });
+  }
+  if (searchParams.get('novo') === 'true') {
+    chips.push({ key: 'novo', param: 'novo', label: 'Novo' });
+  }
+
+  const priceMin = searchParams.get('priceMin');
+  const priceMax = searchParams.get('priceMax') || searchParams.get('price');
+  if (priceMin || priceMax) {
+    const formatter = new Intl.NumberFormat('sr-RS');
+    const formatAmount = (value: string) => {
+      const amount = Number(value);
+      return Number.isFinite(amount) ? formatter.format(amount) : value;
+    };
+    const label = priceMin && priceMax
+      ? `${formatAmount(priceMin)}–${formatAmount(priceMax)} RSD`
+      : priceMin
+        ? `Od ${formatAmount(priceMin)} RSD`
+        : `Do ${formatAmount(priceMax!)} RSD`;
+    chips.push({ key: 'price', param: 'price', label });
+  }
+
+  if (chips.length === 0) return null;
+
+  const navigateWithParams = (params: URLSearchParams) => {
+    params.delete('page');
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  };
+
+  const removeChip = (chip: ActiveFilterChip) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (chip.param === 'price') {
+      params.delete('priceMin');
+      params.delete('priceMax');
+      params.delete('price');
+    } else if (chip.value !== undefined) {
+      const remaining = params.getAll(chip.param).filter((value) => value !== chip.value);
+      params.delete(chip.param);
+      remaining.forEach((value) => params.append(chip.param, value));
+    } else {
+      params.delete(chip.param);
+    }
+    navigateWithParams(params);
+  };
+
+  const clearAll = () => {
+    const params = new URLSearchParams(searchParams.toString());
+    FILTER_PARAM_NAMES.forEach((param) => params.delete(param));
+    navigateWithParams(params);
+  };
+
+  return (
+    <div className="mb-6 space-y-3 lg:hidden" aria-label="Aktivni filteri">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-medium text-text">Aktivni filteri</p>
+        <button
+          type="button"
+          onClick={clearAll}
+          className="text-sm font-medium text-primary hover:underline"
+        >
+          Obriši sve
+        </button>
+      </div>
+      <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+        {chips.map((chip) => (
+          <button
+            key={chip.key}
+            type="button"
+            onClick={() => removeChip(chip)}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-primary-light px-3 py-1.5 text-sm text-primary"
+            aria-label={`Ukloni filter ${chip.label}`}
+          >
+            {chip.label}
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function MobileFilters({ brands: initialBrands }: MobileFiltersProps = {}) {
   const { isMobileFiltersOpen, closeMobileFilters } = useUIStore();
   const router = useRouter();
@@ -98,7 +246,7 @@ export function MobileFilters({ brands: initialBrands }: MobileFiltersProps = {}
       }
     };
     fetchBrands();
-  }, []);
+  }, [initialBrands]);
 
   // Get filter counts
   const { counts, loading: countsLoading } = useFilterCounts({});
@@ -127,9 +275,6 @@ export function MobileFilters({ brands: initialBrands }: MobileFiltersProps = {}
     setOnSale(sale);
     setOnNovo(novo);
   }, [searchParams]);
-
-  // Standardized param names
-  const paramNames = { color: 'color', type: 'type', sale: 'sale', novo: 'novo', price: 'priceMax' };
 
   // Apply filters
   const applyFilters = () => {
@@ -613,13 +758,17 @@ export function MobileFilterButton() {
   const searchParams = useSearchParams();
 
   // Count active filters (standardized params)
+  const hasPriceFilter = Boolean(
+    searchParams.get('price') || searchParams.get('priceMin') || searchParams.get('priceMax'),
+  );
   const activeCount = searchParams.getAll('size').length +
     searchParams.getAll('color').length +
     searchParams.getAll('type').length +
     searchParams.getAll('brand').length +
-    (searchParams.get('priceMax') ? 1 : 0) +
-    (searchParams.get('sale') ? 1 : 0) +
-    (searchParams.get('novo') ? 1 : 0);
+    (hasPriceFilter ? 1 : 0) +
+    (searchParams.get('gender') ? 1 : 0) +
+    (searchParams.get('sale') === 'true' ? 1 : 0) +
+    (searchParams.get('novo') === 'true' ? 1 : 0);
 
   return (
     <button

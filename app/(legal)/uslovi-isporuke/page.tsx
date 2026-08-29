@@ -28,7 +28,7 @@ export default function UsloviIsporukePage() {
           ROK ISPORUKE
         </h2>
         <p className="text-sm leading-6 text-text-muted mb-6">
-          Nakon što ste završili proces poručivanja klikom na dugme „Potvrdi",
+          Nakon što ste završili proces poručivanja klikom na dugme „Potvrdi”,
           na svoju e-mail adresu, koju ste prijavili prilikom popunjavanja
           podataka, automatski ćete dobiti potvrdni mail o uspešnoj kupovini.
           Time je Vaša porudžbina ušla u proces obrade i slanja.

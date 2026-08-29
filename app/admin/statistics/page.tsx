@@ -15,25 +15,32 @@ export default async function AdminStatisticsPage() {
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
   const [
-    totalRevenue,
+    paidRevenue,
     monthlyOrders,
-    avgOrderValue,
+    averagePaidOrderValue,
     ordersByStatus,
     ordersByPaymentMethod,
     topProducts,
   ] = await Promise.all([
-    // Total revenue (all orders except cancelled)
+    // Realized revenue: only paid, non-cancelled orders.
     prisma.order.aggregate({
       _sum: { total: true },
-      where: { status: { not: "CANCELLED" } },
+      where: {
+        paymentStatus: "PAID",
+        status: { not: "CANCELLED" },
+      },
     }),
     // Orders in last 30 days
     prisma.order.count({
       where: { createdAt: { gte: thirtyDaysAgo } },
     }),
-    // Average order value
+    // Average realized order value uses the same scope as paid revenue.
     prisma.order.aggregate({
       _avg: { total: true },
+      where: {
+        paymentStatus: "PAID",
+        status: { not: "CANCELLED" },
+      },
     }),
     // Orders by status
     prisma.order.groupBy({
@@ -76,9 +83,12 @@ export default async function AdminStatisticsPage() {
           <div className="flex items-center justify-between mb-4">
             <TrendingUp className="h-8 w-8 text-green-600" />
           </div>
-          <p className="text-sm text-stone-500">Ukupan prihod</p>
+          <p className="text-sm text-stone-500">Plaćeni prihod</p>
           <p className="text-2xl font-bold text-stone-900">
-            {formatPriceWithCurrency(Number(totalRevenue._sum.total || 0))}
+            {formatPriceWithCurrency(Number(paidRevenue._sum.total || 0))}
+          </p>
+          <p className="mt-1 text-xs text-stone-500">
+            Plaćene, neotkazane porudžbine
           </p>
         </div>
 
@@ -94,9 +104,14 @@ export default async function AdminStatisticsPage() {
           <div className="flex items-center justify-between mb-4">
             <BarChart3 className="h-8 w-8 text-purple-600" />
           </div>
-          <p className="text-sm text-stone-500">Prosečna vrednost</p>
+          <p className="text-sm text-stone-500">Prosečna plaćena porudžbina</p>
           <p className="text-2xl font-bold text-stone-900">
-            {formatPriceWithCurrency(Number(avgOrderValue._avg.total || 0))}
+            {formatPriceWithCurrency(
+              Number(averagePaidOrderValue._avg.total || 0),
+            )}
+          </p>
+          <p className="mt-1 text-xs text-stone-500">
+            Bez otkazanih i neplaćenih
           </p>
         </div>
 
@@ -104,7 +119,9 @@ export default async function AdminStatisticsPage() {
           <div className="flex items-center justify-between mb-4">
             <TrendingDown className="h-8 w-8 text-amber-600" />
           </div>
-          <p className="text-sm text-stone-500">Kartica vs Pouzeće</p>
+          <p className="text-sm text-stone-500">
+            Sve porudžbine: Kartica / Pouzeće
+          </p>
           <p className="text-2xl font-bold text-stone-900">
             {ordersByPaymentMethod.find((p) => p.paymentMethod === "CARD")?._count || 0}
             {" / "}

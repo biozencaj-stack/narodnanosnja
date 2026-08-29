@@ -5,7 +5,30 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
-import { ArrowLeft, LogOut, Menu, X } from "lucide-react";
+import {
+  ArrowLeft,
+  BarChart3,
+  FileText,
+  FolderTree,
+  ImageIcon,
+  Inbox,
+  LayoutDashboard,
+  LogOut,
+  Mail,
+  MapPin,
+  Menu,
+  MessageCircle,
+  MessageSquare,
+  Package,
+  Palette,
+  Percent,
+  Settings,
+  ShoppingBag,
+  Tag,
+  Users,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -27,9 +50,28 @@ interface AdminShellProps {
   userRole: string;
 }
 
+const ADMIN_ICONS: Record<string, LucideIcon> = {
+  BarChart3,
+  FileText,
+  FolderTree,
+  ImageIcon,
+  Inbox,
+  LayoutDashboard,
+  Mail,
+  MapPin,
+  MessageCircle,
+  MessageSquare,
+  Package,
+  Palette,
+  Percent,
+  Settings,
+  ShoppingBag,
+  Tag,
+  Users,
+};
+
 function DynamicIcon({ name, className }: { name: string; className?: string }) {
-  const icons = require("lucide-react");
-  const Icon = icons[name];
+  const Icon = ADMIN_ICONS[name];
   if (!Icon) return null;
   return <Icon className={className} />;
 }

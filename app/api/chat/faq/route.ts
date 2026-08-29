@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { sanitizeRichHtml } from "@/lib/security/html";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,12 @@ export async function GET() {
       },
     });
 
-    return NextResponse.json({ faqs }, {
+    const safeFaqs = faqs.map((faq) => ({
+      ...faq,
+      answer: sanitizeRichHtml(faq.answer),
+    }));
+
+    return NextResponse.json({ faqs: safeFaqs }, {
       headers: { "Cache-Control": "public, max-age=300" },
     });
   } catch (error) {

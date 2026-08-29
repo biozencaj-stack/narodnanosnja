@@ -157,7 +157,15 @@ export async function getPromotionProducts() {
     where: { isActive: true, startDate: { lte: now }, endDate: { gte: now } },
     include: { products: { include: { product: { include: { category: { select: { name: true, slug: true } }, brand: { select: { name: true, slug: true } } } } } } },
   });
-  const map = new Map<string, { product: any; promoList: { name: string; type: string; value: number }[] }>();
+  type PromotionProduct =
+    (typeof promos)[number]["products"][number]["product"];
+  const map = new Map<
+    string,
+    {
+      product: PromotionProduct;
+      promoList: { name: string; type: string; value: number }[];
+    }
+  >();
   for (const pr of promos) {
     const info = { name: pr.name, type: pr.type, value: Number(pr.value) };
     for (const pp of pr.products) {

@@ -133,7 +133,7 @@ export function OrderStatusForm({
             />
           </div>
           <p className="text-xs text-stone-500">
-            Obavezan za status "Poslata" - korisnik će dobiti email sa brojem za
+            Obavezan za status „Poslata” - korisnik će dobiti email sa brojem za
             praćenje
           </p>
         </div>

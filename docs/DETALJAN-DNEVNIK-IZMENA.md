@@ -2029,3 +2029,181 @@ Checksumovi četiri primenjene migracije ostaju kanonski i ne smeju se menjati:
 
 Ovaj P1 rad nije pokrenuo novu migraciju nad produkcijom niti menjao produkcione
 podatke. Sačuvan je na V2 feature grani; nije pushovan niti spojen u `main`.
+
+## 33. Prvi UX, bezbednosni i operativni sprint
+
+Posle pregleda storefronta, checkout-a, admin operacija i tehničkog kvaliteta
+urađen je prvi paket popravki sa najvećim odnosom efekta i rizika. Sprint ne
+uvodi novu Prisma migraciju, ne menja produkcione podatke i ne aktivira
+aplikacioni deploy. Promene ostaju na V2 feature grani do prolaska CI-ja i
+posebne merge odluke.
+
+### 33.1. Stored-XSS zaštita i bezbedno prikazivanje rich HTML-a
+
+Dodat je centralni `lib/security/html.ts`, zasnovan na provereno održavanoj
+`sanitize-html` biblioteci. Dozvoljena je mala urednička allow-lista za pasuse,
+naslove, liste, naglašavanje, linkove, kod i slike. Automatski se uklanjaju:
+
+- `script`, `iframe`, SVG i drugi nedozvoljeni elementi;
+- inline event handleri kao `onclick`, `onerror` i `onmouseover`;
+- inline stilovi i proizvoljni atributi;
+- `javascript:` i druge nedozvoljene URL šeme;
+- protocol-relative URL-ovi.
+
+Link sa `target="_blank"` dobija `rel="noopener noreferrer"`, a dozvoljene slike
+podrazumevano dobijaju lazy loading. Lokalizovani opisi proizvoda zadržavaju
+samo podržane `sr` i `en` vrednosti.
+
+Zaštita je postavljena na dve granice:
+
+1. pri admin create/update upisu članaka, FAQ odgovora i opisa proizvoda;
+2. ponovo pri javnom čitanju/renderovanju postojećeg sadržaja.
+
+Time su zaštićeni i budući unosi i ranije sačuvani redovi bez masovne izmene
+baze. Admin API odbija članak ili FAQ odgovor koji posle sanitizacije ostane
+prazan. Blog, detalj proizvoda i javni FAQ tok koriste sanitizovane vrednosti.
+Newsletter sadržaj se takođe sanitizuje pre slanja i upisa istorije, naslov se
+escape-uje pre umetanja u email HTML, a admin preview radi u sandboxovanom
+iframe-u bez dozvole za izvršavanje skripti.
+
+JSON-LD više ne koristi običan `JSON.stringify` direktno u script elementu.
+Novi `serializeJsonLd` escape-uje znakove koji mogu zatvoriti script kontekst i
+koristi se za organization, website, breadcrumb i product strukturisane
+podatke.
+
+Dodato je sedam negativnih/pozitivnih testova za HTML, plain-text escaping i
+same-origin zaštitu.
+
+### 33.2. Browser security headeri i fail-closed Origin provera
+
+`next.config.ts` sada šalje globalne browser headere:
+
+- Content Security Policy sa eksplicitnim izvorima potrebnim za aplikaciju,
+  Google Analytics, reCAPTCHA i YouTube;
+- `X-Content-Type-Options: nosniff`;
+- zabranu frame-ovanja kroz CSP `frame-ancestors` i `X-Frame-Options`;
+- strožu referrer politiku;
+- Permissions Policy koja isključuje kameru, mikrofon, geolokaciju i Topics.
+
+HSTS je namerno iza `ENABLE_HSTS=true` zastavice. Ne sme se uključiti pre nego
+što domen i svi relevantni poddomeni rade isključivo preko validnog HTTPS-a.
+
+Prethodna CSRF provera je prihvatala unsafe API zahtev kada `Origin` ili `Host`
+nedostaje. Novi `isTrustedWriteRequest` radi fail-closed: zahteva podudaran
+Origin ili browserov `Sec-Fetch-Site: same-origin` signal. NextAuth i potpisani
+NestPay callback tokovi ostaju eksplicitno izuzeti pre ove provere.
+
+### 33.3. Mobilni katalog, filteri, navigacija i pretraga
+
+Storefront više ne prikazuje izmišljene demo kategorije, brendove i linkove
+kada navigacioni DB upit vrati prazno ili grešku. Umesto toga ostaje bezbedan
+link ka kompletnom katalogu. Uklonjen je link „Popularno” jer trenutni model
+nema pouzdan popularity signal; prethodni parametar je zapravo vraćao najnovije
+proizvode i davao pogrešno obećanje kupcu.
+
+Mobilni katalog sada:
+
+- prikazuje dve kartice po redu;
+- ima jednostavniju filter/sort alatku bez `perPage` kontrole na malom ekranu;
+- prikazuje horizontalne aktivne filter chips;
+- omogućava uklanjanje pojedinačnog filtera ili svih filtera;
+- pravilno računa veličinu, boju, tip, brend, cenu, pol, akciju i novo u badge-u;
+- u praznom rezultatu nudi direktan reset filtera.
+
+Isti reset tok dodat je kategorijskim rezultatima. Brand nazivi za chips se
+lokalizuju na serveru i prosleđuju mobile filteru.
+
+Search modal sada razlikuje legitimnih nula rezultata od mrežne/API greške,
+prikazuje dostupnu poruku i `Pokušaj ponovo`, resetuje zastareli rezultat i ima
+eksplicitan pristupačni naziv inputa. Hardkodirane „popularne pretrage” su
+uklonjene dok ne postoji data-driven izvor.
+
+### 33.4. Checkout UX i pristupačnost
+
+Checkout više ne vraća prazan ekran dok Zustand korpa i pending payment stanje
+nisu hidrirani. Prikazuje skeleton sa `role=status`, `aria-live` i `aria-busy`.
+
+Pregled porudžbine je sada jedna responsive komponenta:
+
+- na telefonu je sklopivi pregled sa ukupnim iznosom iznad duge forme;
+- na desktopu ostaje sticky sidebar;
+- nema dva odvojena izvora prikaza cene.
+
+Validacija forme sada vraća strukturisanu listu grešaka, prikazuje error summary
+na početku forme i fokusira prvo neispravno polje. Svaki `Input` povezuje grešku
+preko `aria-invalid` i `aria-describedby`. Serverske/quote greške imaju
+`aria-live`, forma prijavljuje busy stanje, napomena ima povezanu labelu, a
+checkbox uslova stabilan ID i opis greške.
+
+Polje `Country` je prevedeno u `Država`. Završni CTA je sticky na telefonu i uz
+dugme prikazuje autoritativni ukupni iznos.
+
+### 33.5. Admin payment, KPI i low-stock quick wins
+
+Lista porudžbina sada prikazuje i filtrira svih šest payment statusa:
+`PENDING`, `PROCESSING`, `PAID`, `FAILED`, `REVIEW` i `REFUNDED`. Payment filter
+se pravilno kombinuje sa order statusom, tekstualnom pretragom i paginacijom.
+Svaki status ima zaseban naziv i vizuelni badge umesto ranije podele samo na
+„Plaćeno” i „Čeka”.
+
+Dashboard i statistika više ne nazivaju svaku neotkazanu porudžbinu prihodom.
+„Plaćeni prihod” i „Prosečna plaćena porudžbina” računaju samo `PAID`,
+neotkazane porudžbine i jasno prikazuju korišćeni scope.
+
+Nepostojeći `/admin/users/[id]` link uklonjen je sa detalja porudžbine i
+zamenjen bezbednom oznakom registrovanog kupca.
+
+Dashboard je dobio akcioni low-stock pregled nad postojećim `ProductSize`
+modelom, bez migracije:
+
+- broj aktivnih lager stavki sa pet ili manje komada;
+- pet najkritičnijih stavki sortirano po zalihi;
+- posebno označeno stanje nula;
+- direktan link ka izmeni proizvoda i listi proizvoda.
+
+### 33.6. ESLint 9, automatski test discovery i Playwright
+
+Nevažeća `next lint` komanda zamenjena je ESLint 9 flat konfiguracijom.
+Stvarne lint greške blokiraju CI. Novi React compiler dijagnostički set ostaje
+vidljiv kao upozorenje za postepenu migraciju zatečenih hydration/URL-sync
+komponenti, umesto da prvi dan blokira celu granu.
+
+Usput su uklonjene zatečene blokirajuće lint greške u internim linkovima,
+newsletter toolbar komponenti, admin icon registry-ju, Node crypto importu i
+promotion tipu. Dodate su standardne komande `lint`, `typecheck` i `test`.
+`npm test` automatski pronalazi svaki `lib/**/*.test.ts`, pa novi test više ne
+mora ručno da se upisuje u workflow.
+
+Dodat je Playwright mobile Chromium smoke tok:
+
+1. otvara katalog;
+2. bira E2E proizvod i dostupnu opciju;
+3. dodaje ga u korpu;
+4. prolazi u checkout;
+5. potvrđuje novi error-summary/focus tok;
+6. popunjava guest podatke i prihvata uslove;
+7. završava COD porudžbinu i proverava success stranicu.
+
+`scripts/seed-e2e.ts` je idempotentan, ne briše podatke i odbija rad ako naziv
+baze jasno ne sadrži `e2e`, `test` ili `provera`. GitHub CI koristi zaseban
+PostgreSQL 16 service, instalira Chromium i pokreće browser smoke pre build-a.
+
+### 33.7. Provere i granice ovog sprinta
+
+Lokalno je potvrđeno:
+
+- `40/40` Node/TypeScript testova prolazi;
+- ESLint završava sa `0` blokirajućih grešaka;
+- `npm run typecheck` prolazi;
+- Playwright uspešno pronalazi mobile purchase test i učitava konfiguraciju;
+- produkcioni Next.js build prolazi sa bezbednim test HTTPS URL-om;
+- `git diff --check` prolazi.
+
+Na radnoj stanici ne postoji lokalni PostgreSQL servis, pa kompletan browser
+tok sa stvarnim upisom porudžbine nije pokrenut protiv placeholder `.env` baze.
+Namerno nije korišćena produkciona baza kao zamena. Pun E2E izvršava se u
+GitHub CI-ju nad izolovanim PostgreSQL service-om.
+
+Ovaj sprint ne rešava dinamičke `ProductType`/attribute filtere, jedinstven
+inventory ledger, kompletan order timeline, RMA/refund tok, media biblioteku,
+page builder, produkcione secrets niti domen/HTTPS. To ostaju sledeći epici.

@@ -6,7 +6,7 @@ import { useLocale } from 'next-intl';
 import Image from 'next/image';
 import Link from 'next/link';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Search, X, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { AlertCircle, Search, X, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useUIStore } from '@/store';
 import { toImageDataUri } from '@/lib/utils/image';
 import { formatPriceWithCurrency } from '@/lib/utils/format';
@@ -37,6 +37,8 @@ export function SearchModal() {
   const [results, setResults] = useState<ProductCardData[]>([]);
   const [loading, setLoading] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
@@ -55,6 +57,8 @@ export function SearchModal() {
     if (!isSearchOpen) {
       setQuery('');
       setResults([]);
+      setTotalCount(0);
+      setSearchError(null);
     }
   }, [isSearchOpen]);
 
@@ -66,24 +70,31 @@ export function SearchModal() {
       if (!debouncedQuery || debouncedQuery.length < 2) {
         setResults([]);
         setTotalCount(0);
+        setSearchError(null);
         setLoading(false);
         return;
       }
 
       setLoading(true);
+      setSearchError(null);
+      setResults([]);
+      setTotalCount(0);
       try {
         const response = await fetch(
           `/api/products?search=${encodeURIComponent(debouncedQuery)}&limit=12`,
           { signal: controller.signal },
         );
-        if (response.ok) {
-          const data = await response.json();
-          setResults(data.products || []);
-          setTotalCount(data.total ?? data.pagination?.total ?? data.products?.length ?? 0);
+        if (!response.ok) {
+          throw new Error('Search request failed');
         }
+
+        const data = await response.json();
+        setResults(data.products || []);
+        setTotalCount(data.total ?? data.pagination?.total ?? data.products?.length ?? 0);
       } catch (error) {
         if (error instanceof Error && error.name !== 'AbortError') {
           console.error('Search error:', error);
+          setSearchError('Pretraga trenutno nije dostupna. Pokušajte ponovo.');
         }
       } finally {
         if (!controller.signal.aborted) setLoading(false);
@@ -92,7 +103,7 @@ export function SearchModal() {
 
     searchProducts();
     return () => controller.abort();
-  }, [debouncedQuery]);
+  }, [debouncedQuery, retryNonce]);
 
   // Scroll carousel
   const scroll = (direction: 'left' | 'right') => {
@@ -149,8 +160,12 @@ export function SearchModal() {
                       ref={inputRef}
                       type="text"
                       value={query}
-                      onChange={(e) => setQuery(e.target.value)}
+                      onChange={(e) => {
+                        setQuery(e.target.value);
+                        setSearchError(null);
+                      }}
                       placeholder="Pretražite proizvode..."
+                      aria-label="Pretražite proizvode"
                       className="w-full h-14 pl-12 pr-4 text-lg bg-background-alt border border-border rounded-xl focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary-light transition-colors"
                     />
                     {loading && (
@@ -173,7 +188,22 @@ export function SearchModal() {
               {/* Results */}
               {query.length >= 2 && (
                 <div className="mt-6">
-                  {results.length > 0 ? (
+                  {searchError ? (
+                    <div
+                      className="flex flex-col items-center rounded-xl border border-error/20 bg-error-light px-4 py-6 text-center"
+                      role="alert"
+                    >
+                      <AlertCircle className="mb-2 h-6 w-6 text-error" aria-hidden="true" />
+                      <p className="text-sm text-error">{searchError}</p>
+                      <button
+                        type="button"
+                        onClick={() => setRetryNonce((value) => value + 1)}
+                        className="mt-3 rounded-lg border border-error/30 bg-background px-4 py-2 text-sm font-medium text-text transition-colors hover:border-error"
+                      >
+                        Pokušaj ponovo
+                      </button>
+                    </div>
+                  ) : results.length > 0 ? (
                     <>
                       <div className="flex items-center justify-between mb-4">
                         <p className="text-sm text-text-muted" role="status" aria-live="polite">
@@ -282,21 +312,12 @@ export function SearchModal() {
                 </div>
               )}
 
-              {/* Quick links when empty */}
+              {/* Neutral guidance until search suggestions become data-driven. */}
               {query.length < 2 && (
                 <div className="mt-6 pt-6 border-t border-border">
-                  <p className="text-sm text-text-muted mb-4">Popularne pretrage</p>
-                  <div className="flex flex-wrap gap-2">
-                    {['Novo', 'Akcija', 'Popularno', 'Muški', 'Ženski'].map((term) => (
-                      <button
-                        key={term}
-                        onClick={() => setQuery(term)}
-                        className="px-4 py-2 bg-background-alt text-sm text-text rounded-full hover:bg-primary-light hover:text-primary transition-colors"
-                      >
-                        {term}
-                      </button>
-                    ))}
-                  </div>
+                  <p className="text-sm text-text-muted">
+                    Unesite najmanje dva karaktera naziva proizvoda, kategorije ili šifre.
+                  </p>
                 </div>
               )}
             </div>

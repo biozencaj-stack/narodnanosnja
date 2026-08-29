@@ -29,6 +29,7 @@ import {
   submitNestPayHandoff,
 } from "@/lib/payments/browser-handoff";
 import { markCartForOrderClear } from "@/lib/checkout/cart-clear";
+import { formatPriceWithCurrency } from "@/lib/utils/format";
 import {
   bindCheckoutAttemptToOrder,
   clearCheckoutAttemptForOrder,
@@ -41,6 +42,36 @@ interface FormErrors extends Partial<Record<keyof OrderForm, string>> {
   submission?: string;
 }
 
+const ERROR_FIELD_ORDER = [
+  "email",
+  "tel",
+  "firstName",
+  "lastName",
+  "address",
+  "city",
+  "postalCode",
+  "addressAdd",
+  "cityAdd",
+  "postalCodeAdd",
+  "termsAccepted",
+] as const;
+
+type ErrorFieldName = (typeof ERROR_FIELD_ORDER)[number];
+
+const ERROR_FIELD_LABELS: Record<ErrorFieldName, string> = {
+  email: "Email",
+  tel: "Telefon",
+  firstName: "Ime",
+  lastName: "Prezime",
+  address: "Ulica i kućni broj",
+  city: "Grad",
+  postalCode: "Poštanski broj",
+  addressAdd: "Adresa za isporuku",
+  cityAdd: "Grad za isporuku",
+  postalCodeAdd: "Poštanski broj za isporuku",
+  termsAccepted: "Uslovi korišćenja",
+};
+
 export function CheckoutForm() {
   const router = useRouter();
   const { data: session } = useSession();
@@ -51,6 +82,7 @@ export function CheckoutForm() {
     isLoadingCoupon,
     isLoadingQuote,
     quoteError,
+    finalTotal,
   } = useCheckoutPricing();
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -66,10 +98,21 @@ export function CheckoutForm() {
   // Prevent double submission
   const submittedRef = useRef(false);
   const pendingCardPaymentRef = useRef<PendingCardPayment | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const errorSummaryRef = useRef<HTMLDivElement>(null);
 
   const [formData, setFormData] = useState<Partial<OrderForm>>({
     country: DEFAULT_COUNTRY || undefined,
   });
+  const submissionMessage = errors.submission || quoteError;
+
+  useEffect(() => {
+    if (!submissionMessage) return;
+    const frame = window.requestAnimationFrame(() => {
+      errorSummaryRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [submissionMessage]);
 
   const showCardRecovery = (orderId: string) => {
     const pending = { orderId };
@@ -163,12 +206,23 @@ export function CheckoutForm() {
     }));
 
     // Clear error when user types
-    if (errors[name as keyof FormErrors]) {
-      setErrors((prev) => ({ ...prev, [name]: undefined }));
+    if (errors[name as keyof FormErrors] || errors.submission) {
+      setErrors((prev) => ({
+        ...prev,
+        [name]: undefined,
+        submission: undefined,
+      }));
     }
   };
 
-  const validateForm = (): boolean => {
+  const focusErrorField = (fieldName: ErrorFieldName) => {
+    const field = formRef.current?.elements.namedItem(fieldName);
+    if (!(field instanceof HTMLElement)) return;
+    field.focus();
+    field.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
+  const validateForm = (): FormErrors => {
     const newErrors: FormErrors = {};
 
     // Email validation
@@ -219,8 +273,11 @@ export function CheckoutForm() {
       newErrors.honeypot = "Bot je detektovan.";
     }
 
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    return newErrors;
+  };
+
+  const reportSubmissionError = (message: string) => {
+    setErrors((prev) => ({ ...prev, submission: message }));
   };
 
   // Handle card payment with NestPay
@@ -319,10 +376,9 @@ export function CheckoutForm() {
     if (submittedRef.current) return;
 
     if (!storeCapabilities.cardPayments && !storeCapabilities.cashOnDelivery) {
-      setErrors((prev) => ({
-        ...prev,
-        submission: "Trenutno nema dostupnog načina plaćanja. Kontaktirajte podršku.",
-      }));
+      reportSubmissionError(
+        "Trenutno nema dostupnog načina plaćanja. Kontaktirajte podršku.",
+      );
       return;
     }
 
@@ -332,26 +388,37 @@ export function CheckoutForm() {
       if (storeCapabilities.cardPayments) {
         showCardRecovery(pendingCardPayment.orderId);
       } else {
-        setErrors((prev) => ({
-          ...prev,
-          submission:
-            "Postoji rezervisana kartična porudžbina. Kontaktirajte podršku.",
-        }));
+        reportSubmissionError(
+          "Postoji rezervisana kartična porudžbina. Kontaktirajte podršku.",
+        );
       }
       return;
     }
 
     if (isLoadingCoupon || isLoadingQuote || quoteError) {
-      setErrors((prev) => ({
-        ...prev,
-        submission: quoteError || "Sačekajte da proverimo korpu i kupon.",
-      }));
+      reportSubmissionError(
+        quoteError || "Sačekajte da proverimo korpu i kupon.",
+      );
       return;
     }
 
-    if (!validateForm()) return;
+    const validationErrors = validateForm();
+    if (Object.keys(validationErrors).length > 0) {
+      setErrors(validationErrors);
+      const firstInvalidField = ERROR_FIELD_ORDER.find(
+        (fieldName) => validationErrors[fieldName],
+      );
+      window.requestAnimationFrame(() => {
+        if (firstInvalidField) {
+          focusErrorField(firstInvalidField);
+        } else {
+          errorSummaryRef.current?.focus();
+        }
+      });
+      return;
+    }
 
-    setErrors((prev) => ({ ...prev, submission: undefined }));
+    setErrors({});
     setIsSubmitting(true);
 
     // Token se proverava zajedno sa porudžbinom na serveru. Odvojena klijentska
@@ -436,20 +503,17 @@ export function CheckoutForm() {
         // clearCart se poziva na success stranici da bi se izbegao race condition
       } else {
         const data = await response.json();
-        setErrors((prev) => ({
-          ...prev,
-          submission: data.error || "Došlo je do greške. Pokušajte ponovo.",
-        }));
+        reportSubmissionError(
+          data.error || "Došlo je do greške. Pokušajte ponovo.",
+        );
         submittedRef.current = false;
       }
     } catch (error) {
-      setErrors((prev) => ({
-        ...prev,
-        submission:
-          error instanceof Error
-            ? error.message
-            : "Došlo je do greške. Pokušajte ponovo.",
-      }));
+      reportSubmissionError(
+        error instanceof Error
+          ? error.message
+          : "Došlo je do greške. Pokušajte ponovo.",
+      );
       submittedRef.current = false;
     } finally {
       // Kod uspešnog kartičnog toka dokument se odmah zamenjuje bankarskom
@@ -458,8 +522,53 @@ export function CheckoutForm() {
     }
   };
 
+  const validationErrorItems = ERROR_FIELD_ORDER.flatMap((fieldName) => {
+    const message = errors[fieldName];
+    return message ? [{ fieldName, message }] : [];
+  });
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-8">
+    <form
+      ref={formRef}
+      onSubmit={handleSubmit}
+      className="space-y-8"
+      noValidate
+      aria-busy={isSubmitting || isLoadingQuote || isLoadingCoupon}
+    >
+      {(submissionMessage || validationErrorItems.length > 0) && (
+        <div
+          ref={errorSummaryRef}
+          tabIndex={-1}
+          role={submissionMessage ? "alert" : "region"}
+          aria-live={submissionMessage ? "assertive" : "polite"}
+          aria-atomic="true"
+          aria-labelledby="checkout-error-summary-title"
+          className="rounded-xl border border-error/25 bg-error-light p-4 text-error outline-none focus-visible:ring-2 focus-visible:ring-error/40"
+        >
+          <h2 id="checkout-error-summary-title" className="font-semibold">
+            {submissionMessage
+              ? "Porudžbina još nije poslata"
+              : "Proverite označena polja"}
+          </h2>
+          {submissionMessage && <p className="mt-1 text-sm">{submissionMessage}</p>}
+          {validationErrorItems.length > 0 && (
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
+              {validationErrorItems.map(({ fieldName, message }) => (
+                <li key={fieldName}>
+                  <button
+                    type="button"
+                    className="text-left underline underline-offset-2 hover:no-underline"
+                    onClick={() => focusErrorField(fieldName)}
+                  >
+                    {ERROR_FIELD_LABELS[fieldName]}: {message}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {/* Contact info */}
       <div>
         <h2 className="text-lg font-semibold text-text mb-4">
@@ -547,11 +656,11 @@ export function CheckoutForm() {
               placeholder="11000"
             />
             <Input
-              label="Country"
+              label="Država"
               name="country"
               value={formData.country || DEFAULT_COUNTRY || ""}
               onChange={handleChange}
-              placeholder={DEFAULT_COUNTRY ? undefined : "Enter country"}
+              placeholder={DEFAULT_COUNTRY ? undefined : "Unesite državu"}
               disabled={!!DEFAULT_COUNTRY}
             />
           </div>
@@ -564,7 +673,18 @@ export function CheckoutForm() {
           type="checkbox"
           id="diffAddress"
           checked={showDifferentAddress}
-          onChange={(e) => setShowDifferentAddress(e.target.checked)}
+          onChange={(e) => {
+            const checked = e.target.checked;
+            setShowDifferentAddress(checked);
+            if (!checked) {
+              setErrors((prev) => ({
+                ...prev,
+                addressAdd: undefined,
+                cityAdd: undefined,
+                postalCodeAdd: undefined,
+              }));
+            }
+          }}
           className="h-4 w-4 accent-primary"
         />
         <label htmlFor="diffAddress" className="text-sm text-text">
@@ -615,10 +735,11 @@ export function CheckoutForm() {
 
       {/* Note */}
       <div>
-        <label className="block text-sm font-medium text-text-muted mb-1.5">
+        <label htmlFor="checkout-note" className="block text-sm font-medium text-text-muted mb-1.5">
           Napomene o narudžbini (opciono)
         </label>
         <textarea
+          id="checkout-note"
           name="note"
           value={formData.note || ""}
           onChange={handleChange}
@@ -724,6 +845,8 @@ export function CheckoutForm() {
         <label className="flex items-start gap-2 cursor-pointer">
           <input
             type="checkbox"
+            id="termsAccepted"
+            name="termsAccepted"
             checked={termsAccepted}
             onChange={(e) => {
               setTermsAccepted(e.target.checked);
@@ -732,6 +855,8 @@ export function CheckoutForm() {
               }
             }}
             className="h-4 w-4 mt-0.5 accent-primary"
+            aria-invalid={errors.termsAccepted ? true : undefined}
+            aria-describedby={errors.termsAccepted ? "termsAccepted-error" : undefined}
           />
           <span className="text-sm text-text">
             Pročitao/la sam i prihvatam{" "}
@@ -746,7 +871,9 @@ export function CheckoutForm() {
           </span>
         </label>
         {errors.termsAccepted && (
-          <p className="text-sm text-error">{errors.termsAccepted}</p>
+          <p id="termsAccepted-error" className="text-sm text-error">
+            {errors.termsAccepted}
+          </p>
         )}
       </div>
 
@@ -761,34 +888,36 @@ export function CheckoutForm() {
         autoComplete="off"
       />
 
-      {errors.submission && (
-        <div className="p-3 bg-error-light rounded-lg" role="alert" aria-live="polite">
-          <p className="text-sm text-error">{errors.submission}</p>
-        </div>
-      )}
-
       {/* Submit */}
-      <Button
-        type="submit"
-        size="xl"
-        fullWidth
-        isLoading={isSubmitting}
-        disabled={
-          isSubmitting ||
-          isLoadingCoupon ||
-          isLoadingQuote ||
-          Boolean(quoteError) ||
-          (!storeCapabilities.cardPayments && !storeCapabilities.cashOnDelivery)
-        }
-      >
-        {isLoadingCoupon || isLoadingQuote
-          ? "Provera korpe..."
-          : isSubmitting
-          ? "Slanje..."
-          : paymentMethod === "card"
-            ? "Nastavi na plaćanje"
-            : "Potvrdi narudžbinu"}
-      </Button>
+      <div className="sticky bottom-0 z-20 -mx-4 border-t border-border bg-background/95 p-4 shadow-[0_-10px_25px_rgba(0,0,0,0.08)] backdrop-blur lg:static lg:mx-0 lg:border-0 lg:bg-transparent lg:p-0 lg:shadow-none lg:backdrop-blur-none">
+        <div className="mb-3 flex items-center justify-between lg:hidden">
+          <span className="text-sm text-text-muted">Ukupno za plaćanje</span>
+          <strong className="text-lg text-primary" aria-live="polite">
+            {isLoadingQuote ? "Provera…" : formatPriceWithCurrency(finalTotal)}
+          </strong>
+        </div>
+        <Button
+          type="submit"
+          size="xl"
+          fullWidth
+          isLoading={isSubmitting}
+          disabled={
+            isSubmitting ||
+            isLoadingCoupon ||
+            isLoadingQuote ||
+            Boolean(quoteError) ||
+            (!storeCapabilities.cardPayments && !storeCapabilities.cashOnDelivery)
+          }
+        >
+          {isLoadingCoupon || isLoadingQuote
+            ? "Provera korpe..."
+            : isSubmitting
+            ? "Slanje..."
+            : paymentMethod === "card"
+              ? "Nastavi na plaćanje"
+              : "Potvrdi narudžbinu"}
+        </Button>
+      </div>
     </form>
   );
 }

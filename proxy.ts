@@ -7,6 +7,7 @@ import {
   isAdminApiPath,
   isAdminPagePath,
 } from "@/lib/auth/admin-policy";
+import { isTrustedWriteRequest } from "@/lib/security/origin";
 
 // Paths that require authentication
 const protectedPaths = ["/moj-nalog"];
@@ -123,19 +124,7 @@ export async function proxy(request: NextRequest) {
     !isNestPayCallback &&
     ["POST", "PUT", "DELETE", "PATCH"].includes(request.method)
   ) {
-    const origin = request.headers.get("origin");
-    const host = request.headers.get("host");
-
-    let validOrigin = true;
-    if (origin && host) {
-      try {
-        validOrigin = new URL(origin).host === host;
-      } catch {
-        validOrigin = false;
-      }
-    }
-
-    if (!validOrigin) {
+    if (!isTrustedWriteRequest(request.headers)) {
       return NextResponse.json(
         { error: "CSRF validation failed" },
         { status: 403 }

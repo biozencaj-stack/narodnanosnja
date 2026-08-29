@@ -12,6 +12,8 @@ import type { Metadata } from "next";
 import LocalProductDetail from "./LocalProductDetail";
 import { getStoreSettings } from "@/lib/config/store-settings";
 import { storeCapabilities } from "@/lib/config/capabilities";
+import { sanitizeLocalizedRichText } from "@/lib/security/html";
+import { serializeJsonLd } from "@/lib/security/json-ld";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -134,10 +136,16 @@ async function ProductContent({ id }: { id: string }) {
       />
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }}
       />
 
-      <LocalProductDetail product={product} promotions={promotions} />
+      <LocalProductDetail
+        product={{
+          ...product,
+          description: sanitizeLocalizedRichText(product.description),
+        }}
+        promotions={promotions}
+      />
 
       {storeCapabilities.reviews && (
         <section className="mt-12 pt-8 border-t border-stone-200">

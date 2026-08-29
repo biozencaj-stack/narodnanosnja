@@ -1,10 +1,12 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import {
   FilterSidebar,
   SortDropdown,
   MobileFilterButton,
   MobileFilters,
+  ActiveMobileFilterChips,
   PerPageSelector,
 } from "@/components/filter";
 import { LocalProductCard } from "@/components/product/LocalProductCard";
@@ -66,10 +68,12 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
 async function CategoryProducts({
   categorySlug,
+  categoryPath,
   searchParams,
   locale,
 }: {
   categorySlug: string;
+  categoryPath: string;
   searchParams: { [key: string]: string | string[] | undefined };
   locale: string;
 }) {
@@ -115,6 +119,12 @@ async function CategoryProducts({
     return (
       <div className="text-center py-16">
         <p className="text-text-muted text-lg">Nema proizvoda u ovoj kategoriji.</p>
+        <Link
+          href={`/category/${categoryPath}`}
+          className="mt-6 inline-flex rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-hover"
+        >
+          Obriši filtere
+        </Link>
       </div>
     );
   }
@@ -133,10 +143,14 @@ async function CategoryProducts({
             </p>
             <div className="flex items-center gap-3">
               <MobileFilterButton />
-              <PerPageSelector />
+              <div className="hidden lg:block">
+                <PerPageSelector currentPerPage={perPage} />
+              </div>
               <SortDropdown />
             </div>
           </div>
+
+          <ActiveMobileFilterChips brands={brands} />
 
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
             {products.map((product) => (
@@ -182,7 +196,7 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
       <nav className="mb-6 text-sm text-text-muted">
         <ol className="flex items-center gap-1.5 flex-wrap">
           <li>
-            <a href="/" className="hover:text-primary transition-colors">Početna</a>
+            <Link href="/" className="hover:text-primary transition-colors">Početna</Link>
           </li>
           {breadcrumbs.map((bc, i) => (
             <li key={bc.href} className="flex items-center gap-1.5">
@@ -223,7 +237,12 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
 
       {/* Products */}
       <Suspense fallback={<ProductGridSkeleton count={8} />}>
-        <CategoryProducts categorySlug={category.slug} searchParams={sp} locale={locale} />
+        <CategoryProducts
+          categorySlug={category.slug}
+          categoryPath={slug.join("/")}
+          searchParams={sp}
+          locale={locale}
+        />
       </Suspense>
     </div>
   );

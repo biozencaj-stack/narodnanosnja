@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { sanitizeRichHtml } from "@/lib/security/html";
 
 function slugify(text: string): string {
   return text
@@ -70,7 +71,8 @@ export async function POST(request: NextRequest) {
       metaDescription,
     } = body;
 
-    if (!title || !content) {
+    const safeContent = sanitizeRichHtml(content);
+    if (!title || !safeContent.trim()) {
       return NextResponse.json(
         { error: "Title and content are required" },
         { status: 400 },
@@ -85,7 +87,7 @@ export async function POST(request: NextRequest) {
       data: {
         title,
         slug,
-        content,
+        content: safeContent,
         excerpt: excerpt || null,
         image1: image1 || null,
         image2: image2 || null,

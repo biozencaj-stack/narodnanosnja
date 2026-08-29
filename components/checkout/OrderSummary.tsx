@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { ShoppingBag, Tag, Percent, Gift, Truck } from 'lucide-react';
+import { ChevronDown, ShoppingBag, Tag, Percent, Gift, Truck } from 'lucide-react';
 import { useCartStore, useCartTotals } from '@/store';
 import { toImageDataUri } from '@/lib/utils/image';
 import { formatPriceWithCurrency } from '@/lib/utils/format';
@@ -53,10 +53,34 @@ export function OrderSummary() {
   const couponDiscount = promotions.find(p => p.type !== "FREE_SHIPPING")?.discount || null;
 
   return (
-    <div className="p-6 bg-background-alt rounded-xl">
-      <h2 className="text-lg font-semibold text-text mb-6">
-        Vaša porudžbina ({totalItems})
-      </h2>
+    <details className="group rounded-xl bg-background-alt">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 rounded-xl p-4 marker:content-none lg:hidden [&::-webkit-details-marker]:hidden">
+        <span>
+          <span className="block font-semibold text-text">
+            Pregled porudžbine ({totalItems})
+          </span>
+          <span className="mt-0.5 block text-xs text-text-muted">
+            {quoteError ? "Potrebna je provera korpe" : "Stavke, kupon i dostava"}
+          </span>
+        </span>
+        <span className="flex shrink-0 items-center gap-2 text-right">
+          <span aria-live="polite">
+            <span className="block text-xs text-text-muted">Ukupno</span>
+            <span className="block font-semibold text-primary">
+              {isLoadingQuote ? "Provera…" : formatPriceWithCurrency(finalTotal)}
+            </span>
+          </span>
+          <ChevronDown
+            className="h-5 w-5 text-text-muted transition-transform group-open:rotate-180"
+            aria-hidden="true"
+          />
+        </span>
+      </summary>
+
+      <div className="hidden p-4 pt-0 group-open:block lg:block lg:p-6">
+        <h2 className="mb-6 hidden text-lg font-semibold text-text lg:block">
+          Vaša porudžbina ({totalItems})
+        </h2>
 
       {isLoadingQuote && (
         <p className="mb-4 text-sm text-text-muted" role="status">
@@ -169,10 +193,11 @@ export function OrderSummary() {
         </div>
       </div>
 
-      <div className="flex justify-between text-xl font-semibold pt-4 mt-4 border-t border-border">
-        <span>Ukupno</span>
-        <span className="text-primary">{formatPriceWithCurrency(finalTotal)}</span>
+        <div className="flex justify-between text-xl font-semibold pt-4 mt-4 border-t border-border">
+          <span>Ukupno</span>
+          <span className="text-primary">{formatPriceWithCurrency(finalTotal)}</span>
+        </div>
       </div>
-    </div>
+    </details>
   );
 }

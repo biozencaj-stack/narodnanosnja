@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { Metadata } from "next";
+import Link from "next/link";
 import { getLocale } from "next-intl/server";
 import { getLocalized } from "@/lib/i18n/localized";
 import {
@@ -7,6 +8,7 @@ import {
   SortDropdown,
   MobileFilterButton,
   MobileFilters,
+  ActiveMobileFilterChips,
   PerPageSelector,
 } from "@/components/filter";
 import { LocalProductCard } from "@/components/product/LocalProductCard";
@@ -101,6 +103,12 @@ async function ProductsSection({
         <p className="text-text-muted max-w-md">
           Nismo pronašli proizvode koji odgovaraju vašim kriterijumima. Pokušajte da promenite filtere.
         </p>
+        <Link
+          href="/catalog"
+          className="mt-6 inline-flex rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-hover"
+        >
+          Obriši filtere
+        </Link>
       </div>
     );
   }
@@ -114,7 +122,7 @@ async function ProductsSection({
         </p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-6 sm:gap-8 lg:gap-10">
+      <div className="grid grid-cols-2 gap-x-3 gap-y-7 sm:gap-8 lg:grid-cols-3 lg:gap-10">
         {products.map((product: ProductCardData) => (
           <LocalProductCard key={product.id} product={product} />
         ))}
@@ -136,6 +144,10 @@ export default async function KatalogPage({ searchParams }: PageProps) {
   const search = await searchParams;
   const locale = await getLocale();
   const brands = await fetchBrands();
+  const localizedBrands = brands.map((brand) => ({
+    id: brand.id,
+    name: getLocalized(brand.name, locale),
+  }));
   const perPage = parseInt(String(search.perPage)) || 24;
 
   const currentGender = search.gender as string;
@@ -155,12 +167,12 @@ export default async function KatalogPage({ searchParams }: PageProps) {
         ]}
       />
 
-      <MobileFilters />
+      <MobileFilters brands={localizedBrands} />
 
       <div className="border-b border-stone-200 bg-stone-50">
         <div className="container-wide py-5 lg:py-6">
           <nav className="flex items-center gap-2 text-sm text-stone-400 mb-3">
-            <a href="/" className="hover:text-stone-700 transition-colors">Početna</a>
+            <Link href="/" className="hover:text-stone-700 transition-colors">Početna</Link>
             <span>/</span>
             <span className="text-stone-700 font-medium">Katalog</span>
           </nav>
@@ -178,7 +190,7 @@ export default async function KatalogPage({ searchParams }: PageProps) {
           <div className="hidden lg:block lg:w-80 shrink-0">
             <div className="sticky top-24">
               <FilterSidebar
-                brands={brands.map((b) => ({ id: b.id, name: getLocalized(b.name, locale) }))}
+                brands={localizedBrands}
                 baseUrl="/catalog"
                 showGenderFilter={true}
               />
@@ -188,11 +200,15 @@ export default async function KatalogPage({ searchParams }: PageProps) {
           <div className="flex-1 min-h-[60vh]">
             <div className="flex items-center justify-between mb-6 gap-4">
               <MobileFilterButton />
-              <div className="flex items-center gap-4">
-                <PerPageSelector currentPerPage={perPage} />
+              <div className="flex items-center gap-2 sm:gap-4">
+                <div className="hidden lg:block">
+                  <PerPageSelector currentPerPage={perPage} />
+                </div>
                 <SortDropdown />
               </div>
             </div>
+
+            <ActiveMobileFilterChips brands={localizedBrands} />
 
             <Suspense fallback={<ProductGridSkeleton count={12} />}>
               <ProductsSection searchParams={search} />
