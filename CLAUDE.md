@@ -173,6 +173,19 @@ prvo pokretanje; tajne baze, emaila i plaćanja nikada ne idu u `Setting`.
 vidljivi. Ne prikazuj kartice, lokacije, dokumente, jezike ili chat ako njihov
 capability nije uključen i stvarna usluga nije spremna.
 
+## Newsletter odjava (v2)
+
+Tokeni i URL za odjavu nastaju isključivo kroz
+`lib/newsletter/unsubscribe.ts`. U produkciji podesi jak, zaseban
+`NEWSLETTER_UNSUBSCRIBE_SECRET`; jaki `NEXTAUTH_SECRET` se prihvata samo kao
+prelazna kompatibilnost za ranije poslate linkove kada je
+`NEWSLETTER_UNSUBSCRIBE_ACCEPT_NEXTAUTH_LEGACY=true`; po završetku migracionog
+perioda vrati flag na `false`. Ne uvodi javni fallback ključ. GET link nikada
+ne menja stanje: vodi na `noindex`/`no-referrer` stranicu za potvrdu, a tek
+potpisani POST nakon izričitog klika atomarno deaktivira korisničku i gostujuću
+pretplatu. Uspešan odgovor je idempotentan i ne otkriva da li email postoji u
+bazi.
+
 ## SMTP i slanje emaila (v2)
 
 Svaki email tok mora praviti transport isključivo kroz
@@ -203,6 +216,13 @@ Globalni browser headeri su u `next.config.ts`. `ENABLE_HSTS=true` se uključuje
 tek kada javni domen i svi poddomeni zaista rade isključivo preko HTTPS-a.
 Unsafe API write zahtevi moraju proći same-origin proveru u `proxy.ts`; javni
 payment-provider callback ostaje eksplicitno izuzet pre te provere.
+
+Login `callbackUrl` je nepoverljiv browser input. Pre prosleđivanja u
+`router.push` uvek mora proći kroz `safeLoginCallbackPath` iz
+`lib/security/navigation.ts`. Dozvoljene su samo kanonske root-relative
+putanje; URL šeme, protocol-relative URL-ovi, backslash, kodirani separatori i
+nekanonski segmenti padaju na fiksni `/` fallback. Svaka promena ovog pravila
+mora dobiti pozitivne i negativne testove u `navigation.test.ts`.
 
 ## Browser E2E (v2)
 

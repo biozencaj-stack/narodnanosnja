@@ -11,8 +11,8 @@ Zapisa ima više i lako je otvoriti pogrešan. Poređano po dubini:
 
 | Dokument | Obim | Šta pokriva |
 | --- | --- | --- |
-| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 2209 linija, 33 odeljka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
-| Ovaj fajl (`IZMENE.md`) | ~500 linija | Hronologija i odluke — zašto je nešto urađeno tako |
+| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 2291 linija, 35 odeljaka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
+| Ovaj fajl (`IZMENE.md`) | ~580 linija | Hronologija i odluke — zašto je nešto urađeno tako |
 | `docs/ARCHITECTURE-V2.md` | 4 KB | Arhitektonske granice platforme |
 | `docs/CATALOG-MIGRATION-PLAN.md` | 10 KB | Redosled prelaska na generički katalog |
 | `docs/V2-ROLL-OUT.md` | 6 KB | Postupak puštanja V2 u produkciju |
@@ -428,7 +428,8 @@ Sve što je jednom pojelo vreme, na jednom mestu:
 
 **Ne radi / nedostaje:**
 
-- Repo prodavnice na GitHubu → objavljivanje na push čeka samo na to
+- V2 grana postoji na GitHubu, ali Draft PR i produkcijsko objavljivanje još
+  nisu odobreni
 - Fotografije proizvoda — sve prazne, stoje tkane šare
 - Pravi domen i HTTPS (sada samo adresa servera i port)
 - Filteri su nasleđeni iz prodavnice obuće („Vrsta obuće“, „Pol“, brendovi)
@@ -438,8 +439,9 @@ Sve što je jednom pojelo vreme, na jednom mestu:
 - SEO: kategorije nemaju meta polja, preusmerenja ne postoje
 - Engleski prevodi
 
-**Sledeći korak po planu:** faza 1 — atributi tkanja u bazi. Čeka se
-potvrda vlasnika (ili drugačiji redosled).
+**Sledeći korak posle bezbednosnog pregleda:** prvo zatvoriti P1 blokatore V2,
+pa tek onda nastaviti funkcionalne faze kataloga. Prva izdvojena ispravka je
+validacija login `callbackUrl`; vidi odeljak XII.
 
 ---
 
@@ -535,7 +537,31 @@ probe na klonu baze.
 
 ---
 
-## XII. Centralni SMTP TLS sloj — 30. avgust 2026.
+## XII. P1 ispravka login povratne navigacije — 29. avgust 2026.
+
+Bezbednosni pregled je našao da napadački kontrolisan `callbackUrl` sa login
+stranice ide direktno u `router.push`. Next.js klijentska navigacija ne sme
+dobiti neproveren URL jer URL šema poput `javascript:` može postati XSS sink.
+
+Na zasebnoj grani `ispravka/v2-bezbedan-callback-url` dodat je centralni
+`safeLoginCallbackPath` u `lib/security/navigation.ts`. Helper dozvoljava samo
+root-relative, same-origin putanje. URL šeme, protocol-relative forme,
+backslash, kontrolni bajtovi, kodirani separatori, dupli separatori i dot
+segmenti padaju na fiksni `/` fallback. Query i fragment ostaju dozvoljeni jer
+ne mogu promeniti origin; Unicode se kanonizuje kroz standardni `URL` parser.
+
+Login sada validira vrednost pre jedinog `router.push` sinka. Regresioni testovi
+pokrivaju legitimne interne putanje i napadačke `javascript:`, spoljne, `//`,
+backslash, encoded-separator, control-byte i dot-segment varijante.
+
+Lokalno je potvrđeno: 43/43 unit testa, TypeScript, lint bez grešaka i
+produkcijski build sa bezbednim test HTTPS URL-om. Lokalni PostgreSQL nije
+pokrenut; build je zato koristio postojeće safe-default grane za DB sadržaj.
+Nisu menjani Prisma šema, podaci, server, tajne, payment tok ni deployment.
+
+---
+
+## XIII. Centralni SMTP TLS sloj — 30. avgust 2026.
 
 Bezbednosni pregled je pokazao da su reset lozinke, verifikacija naloga,
 porudžbine i wishlist poruke imali sopstvene transportere koji su prihvatali

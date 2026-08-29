@@ -2211,7 +2211,50 @@ Ovaj sprint ne rešava dinamičke `ProductType`/attribute filtere, jedinstven
 inventory ledger, kompletan order timeline, RMA/refund tok, media biblioteku,
 page builder, produkcione secrets niti domen/HTTPS. To ostaju sledeći epici.
 
-## 34. Centralizacija SMTP TLS politike
+## 34. P1 hotfix: validacija login callback putanje
+
+Read-only pregled V2 commita `438dc55` označio je direktno prosleđivanje
+`callbackUrl` vrednosti iz query stringa u `router.push` kao HIGH XSS/open
+navigation nalaz. Naknadni remote commitovi do `5312ab2` menjali su samo
+dokumentaciju, pa je nalaz ostao primenljiv na isti kod.
+
+### 34.1. Granica poverenja
+
+Dodat je browser-safe helper `safeLoginCallbackPath` u
+`lib/security/navigation.ts`. Ulaz je nepoverljiv i helper fail-closed vraća
+fiksni `/` kada vrednost nije prihvatljiva. Dozvoljena destinacija mora:
+
+- početi tačno jednim `/` i ostati na sintetičkom internom originu posle
+  standardnog `URL` parsiranja;
+- imati putanju bez backslash-a, kontrolnih bajtova, kodiranih slash/backslash
+  separatora, duplih separatora i `.`/`..` segmenata;
+- moći da zadrži bezbedan query i fragment, uključujući Unicode i spoljašnji
+  URL kada je on samo kodirana vrednost parametra pretrage.
+
+Apsolutni URL, URL šema, protocol-relative forma ili parserom promenjen origin
+nikada se ne prosleđuju routeru. Nema caller-controlled fallback-a.
+
+### 34.2. Integracija i regresiona zaštita
+
+`app/(auth)/login/page.tsx` sada poziva helper odmah pri čitanju
+`searchParams`, pre uspešne prijave i `router.push`. Novi
+`lib/security/navigation.test.ts` pokriva legitimne nalog/admin/pretraga
+putanje i negativne scheme, absolute, protocol-relative, backslash, encoded
+separator, control-byte i dot-segment ulaze.
+
+Provere na grani `ispravka/v2-bezbedan-callback-url`:
+
+- `npm test`: 43/43 prolazi;
+- `npm run typecheck`: prolazi;
+- `npm run lint`: 0 grešaka, 72 ranije postojeća upozorenja;
+- `npm run build` sa test HTTPS site/auth URL-om: prolazi; lokalna baza nije
+  pokrenuta, pa očekivani Prisma logovi koriste postojeće safe-default grane;
+- `git diff --check`: prolazi.
+
+Ova promena ne uvodi migraciju, ne pristupa produkcionoj bazi i nije
+deployovana. Server, tajne, auth sesije i ostali P1 blokatori nisu menjani.
+
+## 35. Centralizacija SMTP TLS politike
 
 Naknadni bezbednosni pregled pronašao je pet nezavisnih Nodemailer
 konfiguracija. Auth, order i wishlist transporteri su bezuslovno postavljali

@@ -6,12 +6,13 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Eye, EyeOff } from "lucide-react";
 import { useStoreIdentity } from "@/components/StoreIdentityProvider";
+import { safeLoginCallbackPath } from "@/lib/security/navigation";
 
 export default function LoginPage() {
   const { name: storeName } = useStoreIdentity();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") || "/";
+  const callbackUrl = safeLoginCallbackPath(searchParams.get("callbackUrl"));
   const error = searchParams.get("error");
   const registered = searchParams.get("registered");
 
