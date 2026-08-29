@@ -43,7 +43,15 @@ export async function releaseOrderCouponInTransaction(
     );
   }
 
-  for (const [promotionId, count] of usageCountByPromotion) {
+  const orderedPromotionCounts = [...usageCountByPromotion].sort(
+    ([leftPromotionId], [rightPromotionId]) =>
+      leftPromotionId < rightPromotionId
+        ? -1
+        : leftPromotionId > rightPromotionId
+          ? 1
+          : 0,
+  );
+  for (const [promotionId, count] of orderedPromotionCounts) {
     const decremented = await tx.promotion.updateMany({
       where: { id: promotionId, usedCount: { gte: count } },
       data: { usedCount: { decrement: count } },

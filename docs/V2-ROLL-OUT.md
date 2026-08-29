@@ -40,6 +40,11 @@ se generičke varijante ne popune i ne provere.
 ## Environment pre puštanja
 
 - postaviti jak, zaseban `ORDER_ACCESS_SECRET`;
+- postaviti zaseban `ORDER_RESERVATION_CLEANUP_SECRET` od najmanje 32 znaka
+  (`openssl rand -hex 32` daje odgovarajuću vrednost); prazan, slab ili
+  neispravan secret namerno onemogućava cleanup endpoint;
+- opciono postaviti `ORDER_PROCESSING_REVIEW_MINUTES` na ceo broj od 120 do
+  10080 minuta; kada nije postavljen koristi se konzervativnih 1440 minuta;
 - postaviti i proveriti oba reCAPTCHA v3 ključa; production checkout je
   namerno fail-closed bez njih;
 - ostaviti `NEXT_PUBLIC_CARD_PAYMENTS_ENABLED=false` do sertifikacije banke;
@@ -91,12 +96,136 @@ napraviti eksplicitan recovery/resolve plan. Četiri već primenjena
 `migration.sql` fajla su nepromenljiva istorija; svaka buduća promena ide u
 novu migraciju, nikada izmenom njihovog sadržaja ili checksum-a.
 
+## Cleanup rezervacija i VPS scheduler
+
+Cleanup je namerno uži od opšteg „otkaži sve staro“ pravila:
+
+- automatski otkazuje i vraća zalihu/kupon samo kada je stara porudžbina
+  `CARD`, order status je `PENDING`, payment status je `PENDING`,
+  `inventoryAllocated=true` i ne postoji ni `Transaction` ni `PaymentEvent`;
+- stara porudžbina sa bilo kakvom payment aktivnošću i svaki stari
+  `PROCESSING` prelaze u `REVIEW`, bez vraćanja zalihe ili kupona;
+- `CASH` porudžbine se nikada ne menjaju ovim cleanup-om;
+- svaka kandidatska porudžbina se ponovo proverava u sopstvenoj Serializable
+  transakciji, pa concurrent payment start/callback ili greška na jednom redu
+  ne smeju izazvati dvostruki povrat niti prekinuti obradu ostalih redova.
+
+Endpoint je isključivo `POST /api/cron/order-reservations`, nema admin-session
+fallback i zahteva tačno `Authorization: Bearer <secret>` zaglavlje. Secret
+mora imati najmanje 32 znaka. Endpoint podrazumevano radi dry-run; operativni
+pozivi ipak treba eksplicitno da šalju `{"apply":false}` ili
+`{"apply":true}`. Unsafe API zaštita ostaje fail-closed, pa serverski poziv
+mora poslati `Origin` jednak kanonskom `NEXT_PUBLIC_SITE_URL`. Ne dodavati cron
+izuzetak u `proxy.ts`. Ako makar jedan kandidat ostane `failed`, endpoint vraća
+HTTP 500 i `success:false` sa agregatima, tako da `curl --fail-with-body` i
+systemd oneshot prijave operativni kvar.
+
+Pre prvog poziva učitati postojeći server-side `.env` bez `set -x`. Sledeća
+shell funkcija prosleđuje Bearer zaglavlje curl-u kroz standardni ulaz, pa
+secret ne završava u argumentima procesa ili shell istoriji:
+
+```bash
+set -a
+. /var/www/narodnanosnja/.env
+set +a
+
+run_reservation_cleanup() {
+  cleanup_apply="${1:-false}"
+  case "$cleanup_apply" in
+    false|true) ;;
+    *) echo "apply mora biti false ili true" >&2; return 2 ;;
+  esac
+
+  if [ "${#ORDER_RESERVATION_CLEANUP_SECRET}" -lt 32 ]; then
+    echo "ORDER_RESERVATION_CLEANUP_SECRET nije podešen" >&2
+    return 2
+  fi
+
+  cleanup_origin="${NEXT_PUBLIC_SITE_URL%/}"
+  printf 'header = "Authorization: Bearer %s"\n' \
+    "$ORDER_RESERVATION_CLEANUP_SECRET" |
+    /usr/bin/curl --config - \
+      --fail-with-body --silent --show-error \
+      --proto '=https' --tlsv1.2 \
+      --connect-timeout 10 --max-time 120 \
+      --request POST \
+      --header "Origin: ${cleanup_origin}" \
+      --header "Content-Type: application/json" \
+      --data "{\"apply\":${cleanup_apply}}" \
+      "${cleanup_origin}/api/cron/order-reservations"
+}
+```
+
+Redosled prvog operativnog puštanja je:
+
+1. ostaviti `NEXT_PUBLIC_CARD_PAYMENTS_ENABLED=false` i deployovati endpoint;
+2. postaviti secret/prozor u server-side `.env` i restartovati aplikaciju;
+3. pokrenuti `run_reservation_cleanup false` i pregledati samo agregatne
+   brojače; odgovor ne sme sadržati order ID-eve, PII ili payment payload;
+4. tek posle očekivanog dry-run rezultata pokrenuti
+   `run_reservation_cleanup true`;
+5. ponoviti dry-run, proveriti logove i ručno obraditi svaki `REVIEW` nalaz;
+6. tek tada, uz posebno serversko odobrenje, instalirati i uključiti timer.
+
+Za VPS je dovoljan root-owned wrapper
+`/usr/local/sbin/narodnanosnja-order-reservations` koji koristi gornji poziv,
+bez argumenta podrazumeva dry-run, a samo za tačan argument `true` šalje apply.
+Primer oneshot jedinice (stvarni ograničeni deploy korisnik menja
+`<DEPLOY_USER>`):
+
+```ini
+# /etc/systemd/system/narodnanosnja-order-reservations.service
+[Unit]
+Description=Narodna nosnja - cleanup karticnih rezervacija
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=<DEPLOY_USER>
+EnvironmentFile=/var/www/narodnanosnja/.env
+ExecStart=/usr/local/sbin/narodnanosnja-order-reservations true
+TimeoutStartSec=150
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+```
+
+```ini
+# /etc/systemd/system/narodnanosnja-order-reservations.timer
+[Unit]
+Description=Narodna nosnja - periodican cleanup karticnih rezervacija
+
+[Timer]
+OnCalendar=*-*-* *:00/15:00
+RandomizedDelaySec=60
+Persistent=true
+Unit=narodnanosnja-order-reservations.service
+
+[Install]
+WantedBy=timers.target
+```
+
+Pre uključivanja operator treba da pokrene `systemd-analyze verify`, a zatim
+posle eksplicitnog odobrenja `daemon-reload` i `enable --now` nad timerom.
+Proveriti `systemctl list-timers` i journal oneshot jedinice. HTTP `401`
+označava pogrešan Bearer, `403` nedostajući/neusklađen Origin, a `503`
+nedostajući ili slab server secret; svaki takav rezultat mora oboriti oneshot
+i aktivirati operativni alarm. GitHub workflow ne instalira ovaj wrapper,
+service ili timer. Ovaj dokument opisuje postupak; VPS ovom izmenom nije
+menjan.
+
 ## Dodatni uslovi pre uključivanja kartica
 
 - banka mora potvrditi stvarna imena/pokrivenost potpisanih callback polja;
 - admin mora dobiti operativni inbox za `REVIEW` i reconciliation sa bankom;
-- mora postojati cleanup za napuštene PENDING/PROCESSING rezervacije koji u
-  jednoj transakciji vraća zalihu i kupon;
+- cleanup endpoint mora biti deployovan, a Bearer/Origin zaštita, dry-run,
+  prvi apply smoke i periodični VPS timer dokazano operativni; auto-release
+  ostaje ograničen na stari `CARD + PENDING/PENDING` bez payment traga, dok
+  `PROCESSING`/payment aktivnost idu u `REVIEW` sa zadržanom rezervacijom;
+- REVIEW reconciliation, refund i bankarski staging tokovi moraju biti
+  završeni i uvežbani;
 - email potvrde i ostali sporedni efekti treba da pređu na idempotentni outbox;
 - staging mora dokazati preflight → kratkotrajni handoff → provider → callback
   tok, uključujući više tabova, refresh, 429/5xx i izgubljen odgovor.
@@ -110,4 +239,7 @@ Expand migracija ne briše legacy podatke. Ako aplikacioni smoke test ne prođe,
 vratiti prethodni build i ostaviti nove, neiskorišćene tabele/kolone na mestu;
 njihovo hitno brisanje nije potrebno. Ako sama migracija ne prođe, ne podizati
 novi build i vratiti staging/produkciju iz proverenog backupa prema unapred
-uvežbanoj restore proceduri.
+uvežbanoj restore proceduri. Pre vraćanja na release koji nema kompatibilan
+`POST /api/cron/order-reservations` zaustaviti i onemogućiti odgovarajući timer;
+ne ostavljati periodičan poziv ka nepostojećem ili semantički drugačijem
+endpointu.

@@ -11,8 +11,8 @@ Zapisa ima više i lako je otvoriti pogrešan. Poređano po dubini:
 
 | Dokument | Obim | Šta pokriva |
 | --- | --- | --- |
-| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 2209 linija, 33 odeljka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
-| Ovaj fajl (`IZMENE.md`) | ~500 linija | Hronologija i odluke — zašto je nešto urađeno tako |
+| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 34 odeljka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
+| Ovaj fajl (`IZMENE.md`) | sažeti dnevnik | Hronologija i odluke — zašto je nešto urađeno tako |
 | `docs/ARCHITECTURE-V2.md` | 4 KB | Arhitektonske granice platforme |
 | `docs/CATALOG-MIGRATION-PLAN.md` | 10 KB | Redosled prelaska na generički katalog |
 | `docs/V2-ROLL-OUT.md` | 6 KB | Postupak puštanja V2 u produkciju |
@@ -420,15 +420,15 @@ Sve što je jednom pojelo vreme, na jednom mestu:
 - Admin panel na `/admin` sa 14 strana
 - Redizajn u duhu radionice, PT tipografija, tkani ornamenti — **spojeno u
   `main`**
-- Korpa, checkout, nalozi kupaca, kuponi i pouzeće; kartični kod postoji, ali
-  je capability isključen do bankarske sertifikacije i operativnog cleanup-a
+- Korpa, checkout, nalozi kupaca, kuponi i pouzeće; kartični i reservation
+  cleanup kod postoje na radnoj grani, ali je card capability i dalje
+  isključen
 - 13 pravnih stranica propisanih za prodaju na daljinu
 - Zaseban ključ za objavljivanje, napravljen i proveren na serveru
 - Prezentacioni sajt na GitHub Pages, sa objavljivanjem na push
 
 **Ne radi / nedostaje:**
 
-- Repo prodavnice na GitHubu → objavljivanje na push čeka samo na to
 - Fotografije proizvoda — sve prazne, stoje tkane šare
 - Pravi domen i HTTPS (sada samo adresa servera i port)
 - Filteri su nasleđeni iz prodavnice obuće („Vrsta obuće“, „Pol“, brendovi)
@@ -437,9 +437,14 @@ Sve što je jednom pojelo vreme, na jednom mestu:
 - Početna strana se ne slaže iz panela
 - SEO: kategorije nemaju meta polja, preusmerenja ne postoje
 - Engleski prevodi
+- Reservation cleanup je na zasebnoj ispravka grani i nije deployovan; VPS
+  timer, prvi dry-run/apply smoke i operativni monitoring nisu instalirani
+- REVIEW inbox, reconciliation, refund i bankarski staging tok još nisu gotovi
 
-**Sledeći korak po planu:** faza 1 — atributi tkanja u bazi. Čeka se
-potvrda vlasnika (ili drugačiji redosled).
+**Sledeći P1 korak:** obavezni PostgreSQL race/prefilter test u CI-ju i pregled
+ispravka grane pre uklapanja u V2. Produkcijski dry-run, kontrolisani apply i
+VPS timer ostaju zasebno odobren serverski postupak. Kartice do tada ostaju
+isključene.
 
 ---
 
@@ -528,7 +533,95 @@ probe na klonu baze.
   retry; `PENDING`/`PROCESSING`/`REVIEW` su neutralni i ne tvrde da kartica nije
   zadužena.
 - Decline i admin cancel exactly-once vraćaju rezervisanu zalihu i kupon.
+- Jedan centralni dvočasovni rok sada dele checkout idempotency, pending-card
+  recovery i netaknuta kartična rezervacija. Stari payment pokušaj koristi
+  zaseban konzervativni REVIEW rok od 24 sata, ograničeno podesiv kroz
+  `ORDER_PROCESSING_REVIEW_MINUTES`.
+- Cleanup automatski oslobađa zalihu/kupon samo za stari `CARD` sa order
+  `PENDING`, payment `PENDING`, aktivnom rezervacijom i bez
+  `Transaction`/`PaymentEvent` traga. Payment aktivnost ili `PROCESSING` idu u
+  `REVIEW` bez oslobađanja; `CASH` se nikad ne menja ovim tokom.
+- Payment start odbija isteklu netaknutu rezervaciju, ne može ponovo pokrenuti
+  order kome je zaliha već oslobođena i sumnjivo staro payment stanje
+  atomarno prebacuje u `REVIEW`.
 - Druga adresa sada ima sopstveni poštanski broj/državu, pa se billing ZIP ne
   upisuje kao shipping ZIP.
 - Javne forme proveravaju reCAPTCHA token, honeypot, rate limit i veličinu
   sadržaja na serveru; SMTP TLS validacija je podrazumevano uključena.
+
+---
+
+## XII. Istek napuštenih kartičnih rezervacija — 29. avgust 2026.
+
+Na grani `ispravka/v2-istek-rezervacija` dodat je bezbedan cleanup napuštenih
+kartičnih rezervacija bez nove Prisma migracije. Cilj je da netaknut payment
+pokušaj ne drži zalihu i kupon zauvek, ali da sistem nikada automatski ne
+oslobodi robu posle moguće komunikacije sa bankom.
+
+### Politika isteka i REVIEW granica
+
+- Netaknuta rezervacija može da istekne tek posle dva sata i samo ako je
+  `CARD + Order.PENDING + PaymentStatus.PENDING + inventoryAllocated=true`, bez
+  `Transaction` i bez `PaymentEvent` reda.
+- Takav order se u istoj transakciji menja u `CANCELLED/FAILED`, a postojeći
+  exactly-once helperi vraćaju tačan stock snapshot i rezervisani kupon.
+- Svaka payment aktivnost, stari `PROCESSING`, `PROCESSING` bez transaction-a
+  ili aktivan order sa terminalnom transaction projekcijom ide u `REVIEW`.
+  Zaliha i kupon ostaju rezervisani za ručni reconciliation.
+- `CASH`, zatvorene/terminalne porudžbine, neaktivna rezervacija i sveži
+  pokušaji ostaju netaknuti.
+
+Pending rok je centralizovan i isti je za idempotency replay, checkout
+recovery i cleanup: dva sata. Processing/payment-activity REVIEW rok je
+podrazumevano 1440 minuta, a `ORDER_PROCESSING_REVIEW_MINUTES` prihvata samo
+ceo broj 120–10080; nevalidna eksplicitna vrednost radi fail-closed.
+
+### Transakcije, concurrency i poison redovi
+
+Batch upit samo pronalazi ograničenu listu kandidata. Svaki ID se zatim
+ponovo učitava, procenjuje i menja u sopstvenoj Serializable transakciji, sa
+ograničenim retry-em za PostgreSQL serialization/CAS konflikt. Tako cleanup,
+payment start i callback ne mogu svi „pobediti“ nad istom zastarelom slikom.
+
+Promena order stanja, vraćanje zalihe i vraćanje kupona čine jednu transakciju.
+Ako inventory ili coupon snapshot nije bezbedno oslobodiv, ceo pokušaj se
+rollback-uje, a zaseban svež CAS pokušava da stavi order u `REVIEW` bez
+oslobađanja rezervacije. Ako ni fallback ne uspe, red se broji kao greška, ali
+obrada sledećih kandidata se nastavlja. Rezultat iznosi samo agregate
+`scanned/expired/reviewed/skipped/failed`, bez order ID-eva i ličnih podataka.
+Ako ijedan kandidat ostane `failed`, endpoint vraća HTTP 500 i `success:false`
+sa istim agregatima, pa systemd/curl nadzor ne može prijaviti lažan uspeh.
+
+### Endpoint i payment-start zaštita
+
+Novi maintenance endpoint je samo `POST /api/cron/order-reservations`. Zahteva
+tačan Bearer secret `ORDER_RESERVATION_CLEANUP_SECRET` od najmanje 32 znaka,
+nema admin-cookie fallback i ostaje iza same-origin zaštite, pa VPS poziv mora
+poslati `Origin` jednak `NEXT_PUBLIC_SITE_URL`. Prazno telo ili izostavljen
+`apply` su dry-run; eksplicitni JSON oblici su `{"apply":false}` i
+`{"apply":true}`. Telo je malo i strogo validirano, a odgovor je `no-store`.
+
+`beginCardPayment` koristi istu reservation politiku pre payment state
+machine-a. Istekla netaknuta rezervacija vraća
+`PAYMENT_RESERVATION_EXPIRED`, oslobođena zaliha
+`PAYMENT_INVENTORY_NOT_RESERVED`, a sumnjivo star payment pokušaj atomarno
+prelazi u `REVIEW` umesto da dobije nov ili replayovan bankarski payload.
+
+### Provere i operativno stanje
+
+Završna lokalna provera 30. avgusta nalazi 82 testa: 81 prolazi, a jedini
+PostgreSQL integration test je očekivano preskočen bez bezbedne test baze.
+`lint --quiet` završava sa 0 grešaka, TypeScript, produkcijski build sa lažnim
+test podešavanjima i `git diff --check` prolaze. Opt-in PostgreSQL test sa
+`RUN_RESERVATION_CLEANUP_DB_TESTS=true` pokreće dva cleanup radnika nad istim
+orderom i mora dokazati jedan `EXPIRED`, jedan `SKIPPED` i tačno jedan povrat
+zalihe/kupona, uz realnu pozitivnu i negativnu proveru kandidatskog prefiltera.
+CI ga obavezno uključuje nad izolovanim PostgreSQL servisom.
+
+Kôd nije deployovan. Produkcioni `.env` nije dobio cleanup secret, VPS nije
+menjan i timer nije instaliran. Prvi secret-safe dry-run,
+kontrolisani apply, praćenje agregata i systemd oneshot/timer ostaju zasebno
+odobrena operativna radnja. Kartice ostaju isključene dok timer i smoke nisu
+dokazani i dok REVIEW inbox, reconciliation, refund i bankarski staging nisu
+završeni. Postojeći DB race test pokriva dva cleanup radnika; posebna real-DB
+trka cleanup-a sa payment start/callback putem ostaje dodatni uslov pre kartica.

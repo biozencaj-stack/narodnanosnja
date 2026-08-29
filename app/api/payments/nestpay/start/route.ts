@@ -15,15 +15,16 @@ import {
 import { beginCardPayment, PaymentStateError } from '@/lib/orders/payment';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { storeCapabilities } from '@/lib/config/capabilities';
+import { ORDER_PENDING_RECOVERY_WINDOW_MS } from '@/lib/config/order-reservations';
 import { prisma } from '@/lib/db';
-
-const CHECKOUT_RECOVERY_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 const CLEARABLE_PAYMENT_ERRORS = new Set([
   'ORDER_NOT_FOUND',
   'NON_CARD_ORDER',
   'ORDER_NOT_PENDING',
   'PAYMENT_ALREADY_TERMINAL',
+  'PAYMENT_INVENTORY_NOT_RESERVED',
+  'PAYMENT_RESERVATION_EXPIRED',
 ]);
 
 function createStartPayload(order: {
@@ -129,7 +130,7 @@ export async function POST(req: NextRequest) {
           recoveryOrder?.paymentMethod === 'CARD' &&
           ['PENDING', 'PROCESSING'].includes(recoveryOrder.paymentStatus) &&
           recoveryAge >= 0 &&
-          recoveryAge <= CHECKOUT_RECOVERY_WINDOW_MS &&
+          recoveryAge <= ORDER_PENDING_RECOVERY_WINDOW_MS &&
           verifyCheckoutIdempotencyKey(
             recoveryOrder.checkoutIdempotencyKey,
             req.headers.get('idempotency-key'),

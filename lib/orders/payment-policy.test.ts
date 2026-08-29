@@ -67,6 +67,23 @@ test("late success after a decline and inventory release goes to REVIEW", () => 
   );
 });
 
+test("late approval after reservation cleanup never resurrects the order", () => {
+  assert.deepEqual(
+    decidePaymentCallback(
+      {
+        ...baseState,
+        paymentStatus: "FAILED",
+        orderStatus: "CANCELLED",
+        inventoryAllocated: false,
+        transactionStatus: null,
+        transactionId: null,
+      },
+      { outcome: "APPROVED", transactionId: "bank-late" },
+    ),
+    { action: "REVIEW", reason: "APPROVAL_AFTER_TERMINAL_PAYMENT" },
+  );
+});
+
 test("same terminal callback is replay-safe but another transaction is not", () => {
   const approved: PaymentCallbackState = {
     ...baseState,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { ORDER_PENDING_RECOVERY_WINDOW_MS } from "@/lib/config/order-reservations";
 import { getOrderById } from "@/lib/orders";
 import {
   getOrderAccessTokenFromCookie,
@@ -9,8 +10,6 @@ import {
   verifyCheckoutIdempotencyKey,
   verifyOrderAccessToken,
 } from "@/lib/orders/access";
-
-const CHECKOUT_RECOVERY_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 export async function GET(
   request: NextRequest,
@@ -53,7 +52,7 @@ export async function GET(
       order.paymentMethod === "CARD" &&
       ["PENDING", "PROCESSING"].includes(order.paymentStatus) &&
       recoveryAge >= 0 &&
-      recoveryAge <= CHECKOUT_RECOVERY_WINDOW_MS &&
+      recoveryAge <= ORDER_PENDING_RECOVERY_WINDOW_MS &&
       verifyCheckoutIdempotencyKey(
         order.checkoutIdempotencyKey,
         request.headers.get("idempotency-key"),
