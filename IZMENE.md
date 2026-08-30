@@ -788,8 +788,8 @@ Ova etapa nema Prisma migraciju i ne menja produkcione podatke, server, tajne,
 GitHub Environment, release tag ili live sajt. Takođe još ne uključuje globalni
 `emailVerified` login uslov, jer bi bez audita/backfill-a i resend toka mogao da
 zaključa postojeće legitimne naloge. Reset privacy je zatvoren narednom etapom
-iz odeljka XVIII, a prefetch-safe POST potvrda lokalno je završena u odeljku
-XIX. Slede hashovani jednokratni tokeni, atomska registracija i resend,
+iz odeljka XVIII, a prefetch-safe POST potvrda iz odeljka XIX integrisana je u
+V2 kroz PR #14. Slede hashovani jednokratni tokeni, atomska registracija i resend,
 kontrolisani verified-login rollout, session revocation/sveža role provera i
 shared login limiter. Live puštanje ostaje poslednja faza.
 
@@ -866,20 +866,24 @@ Nema Prisma migracije, produkcionih podataka, servera, tajni, GitHub
 Environment promene, release taga ili live deploya. Sledeći auth koraci su
 hashovani jednokratni tokeni, exactly-once reset confirm, atomska
 registracija/resend, session revocation i shared limiter. Prefetch-safe POST
-potvrda u međuvremenu je završena lokalno u odeljku XIX i još čeka PR/CI dokaz.
-Live puštanje ostaje poslednja, posebno odobrena faza.
+potvrda u međuvremenu je integrisana u kanonski V2 kroz PR #14 sa zelenim
+exact-head i post-merge CI dokazom. Live puštanje ostaje poslednja, posebno
+odobrena faza.
 
 ---
 
 ## XIX. P1 prefetch-safe potvrda emaila — 30. avgust 2026.
 
-Treća P1 auth etapa završena je lokalno na radnoj grani
-`ispravka/v2-prefetch-safe-verifikacija`, izvedenoj iz kanonskog V2 commita
-`8d221165`. Prethodni atomski verification servis iz etape XVII ostao je
-osnova, ali je uklonjena poslednja opasna browser granica: samo otvaranje email
-linka više ne verifikuje nalog, ne troši token i ne izdaje magic-login sesiju.
-Ovo je funkcionalni presek; njegov PR, exact-head CI i post-merge dokaz još nisu
-napravljeni niti se lokalna provera predstavlja kao zamena za njih.
+Treća P1 auth etapa urađena je na grani
+`ispravka/v2-prefetch-safe-verifikacija`, izvedenoj iz tadašnjeg kanonskog V2
+commita `8d22116543c3bf2f2e76080758d9814b0e61c2fe`. Feature commit
+`6ffd173b3eda59815894ea43181543791dba58a0` potom je kroz
+[PR #14](https://github.com/biozencaj-stack/narodnanosnja/pull/14) spojen
+isključivo u `verzija/v2.0-univerzalna-platforma` kao merge
+`c96473c22fb56f8b6c1b5b34570936d526577c10`. Prethodni atomski verification
+servis iz etape XVII ostao je osnova, ali je uklonjena poslednja opasna browser
+granica: samo otvaranje email linka više ne verifikuje nalog, ne troši token i
+ne izdaje magic-login sesiju.
 
 ### XIX.1. GET je potvrda za čitanje, POST je jedina mutacija
 
@@ -1060,7 +1064,25 @@ abuse/credential zaštitni sloj nije dovršen.
 
 Nisu menjani produkcioni podaci, server/VPS, `.env`, tajne, DNS/TLS/proxy, PM2,
 GitHub `production` Environment, reviewer, secrets/variables ili release
-workflow. Nije napravljen release tag i ništa nije pušteno live. Ova
-funkcionalna grana još nema sopstveni PR broj, feature commit dokaz,
-exact-head GitHub Actions run, V2 merge ili post-merge CI dokaz; te stavke se u
-dokumentaciju dodaju tek posle stvarnog PR-a i proverenih GitHub rezultata.
+workflow. Nije napravljen release tag i ništa nije pušteno live.
+
+### XIX.7. PR #14, exact-head i post-merge CI dokaz
+
+| Dokaz | Rezultat |
+| --- | --- |
+| Feature commit | `6ffd173b3eda59815894ea43181543791dba58a0` |
+| PR | [#14](https://github.com/biozencaj-stack/narodnanosnja/pull/14), base isključivo `verzija/v2.0-univerzalna-platforma` |
+| Exact-head run | [`33309850609`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33309850609), `pull_request`, SUCCESS za oko 2 min 39 s |
+| Exact-head poslovi | `Provera verzije` SUCCESS; `Potvrdi V2 release` SKIPPED; `Objavi na produkciju` SKIPPED |
+| V2 merge | `c96473c22fb56f8b6c1b5b34570936d526577c10` |
+| Post-merge run | [`33309984025`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33309984025), `push`, SUCCESS za oko 2 min 50 s |
+| Post-merge poslovi | `Provera verzije` SUCCESS; `Potvrdi V2 release` SKIPPED; `Objavi na produkciju` SKIPPED |
+| Remote V2 head | `c96473c22fb56f8b6c1b5b34570936d526577c10` |
+| Deployment/tag provera | 0 deployment zapisa za merge SHA; 0 tagova pokazuje na merge |
+
+Oba `Provera verzije` posla prošla su PostgreSQL 16, migracije i DB provere,
+kompletan test paket sa uključenim opt-in PostgreSQL scenarijima, Chromium
+smoke, lint, TypeScript i produkcijski build. Read-only GitHub provera potvrdila
+je tačan feature head, V2 base, merge SHA i remote V2 head. Presentation
+`main`, live sajt i GitHub `production` Environment ostali su netaknuti; oba
+release posla bila su preskočena i nijedan tag nije otvorio produkcijski put.
