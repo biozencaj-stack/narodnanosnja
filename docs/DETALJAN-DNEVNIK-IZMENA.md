@@ -912,7 +912,7 @@ Reklamacija ograničava prilog i priprema ga za bezbednije slanje kao attachment
 Prvobitna zaštita je uključila proveru TLS sertifikata u opštem maileru i
 prijavi za posao, ali su auth, order i wishlist moduli zadržali zasebne
 fail-open transportere. Naknadni P1 pregled i potpuna centralizacija opisani su
-u odeljku 34.
+u odeljku 35.
 
 ## 19. Prisma schema promene
 
