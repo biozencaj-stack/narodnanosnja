@@ -75,8 +75,8 @@ npx prisma migrate dev --name init
 # Seed the database with sample data
 npx prisma db seed
 
-# Create admin user
-npx tsx scripts/create-admin.ts --email admin@example.com --password YourPassword123! --role ADMIN
+# Create admin user; password is entered in a masked TTY prompt
+npx tsx scripts/create-admin.ts --email admin@example.com --role ADMIN
 
 # Start development server
 npm run dev

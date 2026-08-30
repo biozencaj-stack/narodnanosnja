@@ -1,12 +1,34 @@
 import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { prisma } from "@/lib/db";
-import { verifyPassword } from "./password";
+import {
+  authorizeCredentialsLogin,
+  type CredentialsLoginReport,
+} from "./credentials-login";
+import { createPrismaCredentialsLoginDatabase } from "./credentials-login-database";
 import {
   AUTH_SESSION_MAX_AGE_SECONDS,
   resolveAuthSecret,
+  resolveVerifiedLoginGraceDeadline,
+  resolveVerifiedLoginPolicy,
   shouldUseSecureAuthCookies,
 } from "./config";
+
+const verifiedLoginPolicy = resolveVerifiedLoginPolicy();
+const verifiedLoginGraceDeadline = resolveVerifiedLoginGraceDeadline(
+  verifiedLoginPolicy,
+);
+const credentialsLoginDatabase = createPrismaCredentialsLoginDatabase(prisma);
+
+function reportCredentialsLogin(event: CredentialsLoginReport): void {
+  // This event type deliberately cannot carry user identifiers, submitted
+  // credentials, hashes or raw exceptions.
+  if (event.reason === "AUDIT_WOULD_DENY") {
+    console.warn("Verified-login audit decision", event);
+    return;
+  }
+  console.error("Credentials login internal failure", event);
+}
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -17,35 +39,14 @@ export const authOptions: NextAuthOptions = {
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) {
-          throw new Error("Email i lozinka su obavezni");
-        }
-
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email.toLowerCase() },
+        // Every expected denial returns null so NextAuth emits the same public
+        // CredentialsSignin outcome without reflecting internal error text.
+        return authorizeCredentialsLogin(credentials, {
+          policy: verifiedLoginPolicy,
+          stagedGraceDeadline: verifiedLoginGraceDeadline,
+          ...credentialsLoginDatabase,
+          report: reportCredentialsLogin,
         });
-
-        if (!user) {
-          throw new Error("Neispravan email ili lozinka");
-        }
-
-        const isValid = await verifyPassword(
-          credentials.password,
-          user.passwordHash
-        );
-
-        if (!isValid) {
-          throw new Error("Neispravan email ili lozinka");
-        }
-
-        return {
-          id: user.id,
-          email: user.email,
-          name: `${user.firstName} ${user.lastName}`,
-          role: user.role,
-          firstName: user.firstName,
-          lastName: user.lastName,
-        };
       },
     }),
   ],
@@ -56,6 +57,7 @@ export const authOptions: NextAuthOptions = {
         token.role = user.role;
         token.firstName = user.firstName;
         token.lastName = user.lastName;
+        token.requiresEmailVerification = user.requiresEmailVerification;
       }
       return token;
     },
@@ -65,6 +67,8 @@ export const authOptions: NextAuthOptions = {
         session.user.role = token.role as string;
         session.user.firstName = token.firstName as string;
         session.user.lastName = token.lastName as string;
+        session.user.requiresEmailVerification =
+          token.requiresEmailVerification === true;
       }
       return session;
     },
@@ -91,6 +95,7 @@ declare module "next-auth" {
     role: string;
     firstName: string;
     lastName: string;
+    requiresEmailVerification: boolean;
   }
 
   interface Session {
@@ -101,6 +106,7 @@ declare module "next-auth" {
       role: string;
       firstName: string;
       lastName: string;
+      requiresEmailVerification: boolean;
     };
   }
 }
@@ -111,5 +117,6 @@ declare module "next-auth/jwt" {
     role: string;
     firstName: string;
     lastName: string;
+    requiresEmailVerification?: boolean;
   }
 }

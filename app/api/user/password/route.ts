@@ -1,8 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import {
+  PasswordChangeError,
+  changeAuthenticatedPassword,
+  createPrismaPasswordChangeDatabase,
+} from "@/lib/auth/password-change";
 import { prisma } from "@/lib/db";
-import { hashPassword, verifyPassword, validatePassword } from "@/lib/auth/password";
+import { validatePassword } from "@/lib/auth/password";
+
+const passwordChangeDatabase = createPrismaPasswordChangeDatabase(prisma);
+const INVALID_CURRENT_PASSWORD_MESSAGE =
+  "Trenutna lozinka nije ispravna";
 
 export async function PUT(request: NextRequest) {
   try {
@@ -15,10 +24,15 @@ export async function PUT(request: NextRequest) {
     const body = await request.json();
     const { currentPassword, newPassword } = body;
 
-    if (!currentPassword || !newPassword) {
+    if (
+      typeof currentPassword !== "string" ||
+      currentPassword.length === 0 ||
+      typeof newPassword !== "string" ||
+      newPassword.length === 0
+    ) {
       return NextResponse.json(
         { error: "Sva polja su obavezna" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -27,43 +41,35 @@ export async function PUT(request: NextRequest) {
     if (!validation.valid) {
       return NextResponse.json(
         { error: validation.errors[0] },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    // Get user with password hash
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-    });
+    const result = await changeAuthenticatedPassword(
+      {
+        userId: session.user.id,
+        currentPassword,
+        newPassword,
+      },
+      passwordChangeDatabase,
+    );
 
-    if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
-
-    // Verify current password
-    const isValid = await verifyPassword(currentPassword, user.passwordHash);
-    if (!isValid) {
+    if (result.kind === "invalid-current-password") {
       return NextResponse.json(
-        { error: "Trenutna lozinka nije ispravna" },
-        { status: 400 }
+        { error: INVALID_CURRENT_PASSWORD_MESSAGE },
+        { status: 400 },
       );
     }
-
-    // Hash new password
-    const newPasswordHash = await hashPassword(newPassword);
-
-    // Update password
-    await prisma.user.update({
-      where: { id: session.user.id },
-      data: { passwordHash: newPasswordHash },
-    });
 
     return NextResponse.json({ message: "Lozinka uspešno promenjena" });
   } catch (error) {
-    console.error("Password update error:", error);
+    const stage =
+      error instanceof PasswordChangeError ? error.stage : "REQUEST";
+    // Never log a user id, password/hash, request body or raw DB error.
+    console.error("Password update internal failure", { stage });
     return NextResponse.json(
       { error: "Greška pri promeni lozinke" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

@@ -5,6 +5,8 @@ import {
   AuthConfigurationError,
   authSessionCookieName,
   resolveAuthSecret,
+  resolveVerifiedLoginGraceDeadline,
+  resolveVerifiedLoginPolicy,
   shouldUseSecureAuthCookies,
 } from "./config";
 
@@ -54,6 +56,100 @@ test("auth secret rejects known example placeholders", () => {
 
 test("auth session lifetime is exactly one day", () => {
   assert.equal(AUTH_SESSION_MAX_AGE_SECONDS, 86_400);
+});
+
+test("verified-login policy defaults to audit only outside production", () => {
+  assert.equal(resolveVerifiedLoginPolicy({}), "audit");
+  assert.equal(
+    resolveVerifiedLoginPolicy({ NODE_ENV: "development" }),
+    "audit",
+  );
+  assert.equal(resolveVerifiedLoginPolicy({ NODE_ENV: "test" }), "audit");
+
+  assert.throws(
+    () => resolveVerifiedLoginPolicy({ NODE_ENV: "production" }),
+    AuthConfigurationError,
+  );
+});
+
+test("verified-login policy accepts only the three exact values", () => {
+  for (const policy of ["audit", "staged", "strict"] as const) {
+    assert.equal(
+      resolveVerifiedLoginPolicy({
+        NODE_ENV: "production",
+        AUTH_VERIFIED_LOGIN_POLICY: policy,
+      }),
+      policy,
+    );
+  }
+});
+
+test("verified-login policy rejects blank, padded, mixed-case and unknown values", () => {
+  for (const configuredPolicy of [
+    "",
+    " ",
+    " audit",
+    "audit ",
+    "AUDIT",
+    "Staged",
+    "disabled",
+  ]) {
+    assert.throws(
+      () =>
+        resolveVerifiedLoginPolicy({
+          NODE_ENV: "production",
+          AUTH_VERIFIED_LOGIN_POLICY: configuredPolicy,
+        }),
+      AuthConfigurationError,
+      configuredPolicy,
+    );
+  }
+
+  assert.throws(
+    () =>
+      resolveVerifiedLoginPolicy({
+        NODE_ENV: "development",
+        AUTH_VERIFIED_LOGIN_POLICY: "",
+      }),
+    AuthConfigurationError,
+  );
+});
+
+test("staged verified-login requires one canonical UTC grace deadline", () => {
+  const deadline = "2026-09-29T16:00:00.000Z";
+  assert.equal(
+    resolveVerifiedLoginGraceDeadline("staged", {
+      AUTH_VERIFIED_LOGIN_GRACE_DEADLINE: deadline,
+    })?.toISOString(),
+    deadline,
+  );
+  assert.equal(resolveVerifiedLoginGraceDeadline("audit", {}), null);
+  assert.equal(resolveVerifiedLoginGraceDeadline("strict", {}), null);
+  assert.throws(
+    () => resolveVerifiedLoginGraceDeadline("staged", {}),
+    AuthConfigurationError,
+  );
+});
+
+test("verified-login grace deadline rejects noncanonical or rounded input", () => {
+  for (const value of [
+    "2026-09-29",
+    "2026-09-29T16:00:00Z",
+    "2026-09-29 16:00:00.000Z",
+    "2026-09-29T16:00:00.000+00:00",
+    "2026-09-29T16:00:00.0000Z",
+    "2026-02-30T16:00:00.000Z",
+    " 2026-09-29T16:00:00.000Z",
+  ]) {
+    assert.throws(
+      () =>
+        resolveVerifiedLoginGraceDeadline("staged", {
+          AUTH_VERIFIED_LOGIN_GRACE_DEADLINE: value,
+        }),
+      AuthConfigurationError,
+      value,
+    );
+  }
 });
 
 test("auth cookie security follows the canonical NextAuth URL", () => {

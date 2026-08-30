@@ -4,6 +4,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { User, Package, MapPin, Settings, LogOut, ArrowLeft, Heart, Shield } from "lucide-react";
 import { storeCapabilities } from "@/lib/config/capabilities";
+import { UnverifiedEmailNotice } from "./moj-nalog/UnverifiedEmailNotice";
 
 const navItems = [
   { href: "/moj-nalog", label: "Pregled", icon: User },
@@ -138,7 +139,12 @@ export default async function UserLayout({
             </div>
           </aside>
 
-          <main id="glavni-sadrzaj" tabIndex={-1} className="flex-1 min-w-0">{children}</main>
+          <main id="glavni-sadrzaj" tabIndex={-1} className="flex-1 min-w-0">
+            <UnverifiedEmailNotice
+              show={session.user.requiresEmailVerification === true}
+            />
+            {children}
+          </main>
         </div>
       </div>
     </div>

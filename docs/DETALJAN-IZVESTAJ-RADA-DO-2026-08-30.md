@@ -50,6 +50,7 @@
 33. [P1 prefetch-safe potvrda emaila](#33-p1-prefetch-safe-potvrda-emaila)
 34. [P1 auth credential storage i atomska reset potvrda](#34-p1-auth-credential-storage-i-atomska-reset-potvrda)
 35. [P1 atomska registracija i verification resend](#35-p1-atomska-registracija-i-verification-resend)
+36. [P1 verified-login audit, grace i auth security boundary](#36-p1-verified-login-audit-grace-i-auth-security-boundary)
 
 ---
 
@@ -3806,6 +3807,476 @@ production deploy.
 
 ---
 
+## 36. P1 verified-login audit, grace i auth security boundary
+
+Ovaj presek rešava repository/runtime pripremu za budući zahtev da password
+login bude dozvoljen samo nalogu sa potvrđenim emailom. Ne tvrdi da je istorijski
+`emailVerified` skup već čist, da je produkcijski audit izvršen ili da staged/
+strict enforcement sme da se uključi. Naprotiv: staged preflight u ovoj verziji
+ima namerni hard blocker za nepostojeću JWT session revalidaciju, pa je tačan
+operativni status **audit-only**.
+
+Radna grana je `ispravka/v2-verified-login-audit-grace`. Feature još nije dobio
+konačan commit/PR/merge/run dokaz u trenutku ovog dokumentacionog preseka.
+Zbog toga §36.12 koristi literal `PENDING_FINAL_EVIDENCE`, bez pretpostavljanja
+broja testa, PR-a ili GitHub Actions run-a.
+
+### 36.1. Problem koji se rešava i granica poverenja
+
+Raniji Credentials login je mogao da izda sesiju password-valid nalogu bez
+obzira na `emailVerified`. Direktno prebacivanje na strict bi moglo da zaključa
+legitimne istorijske kupce, operatere ili administratore, dok bi automatsko
+postavljanje `emailVerified` na osnovu porudžbine/adrese/wishlist aktivnosti
+lažno proglasilo mailbox vlasništvo.
+
+Izabrana granica je zato:
+
+1. prvo aggregate-only auditirati istorijsko stanje;
+2. expand migracijom dodati nullable/no-default grace signal bez promene
+   ponašanja;
+3. novu registraciju ostaviti bez grace-a;
+4. eventualni legacy grace dodeliti samo kontrolisanim backfill-om, uz jedan
+   pregledan deadline;
+5. u `audit` modu pustiti password-valid nalog, ali meriti coarse would-deny;
+6. tek posle svih preflight gate-ova preći na `staged`;
+7. posle isteka grace/recovery perioda koristiti poseban strict gate;
+8. nikada ne tretirati aktivnost naloga kao kriptografski dokaz mailbox-a.
+
+Ovaj kod implementira tačke 1–5 i runtime odluku potrebnu za 6–7, ali ne
+izvršava produkcijski audit/backfill niti autorizuje staged/strict rollout.
+
+### 36.2. Legacy i current aggregate SQL audit
+
+Postoje dva eksplicitna skripta:
+
+| Skript | Dozvoljena šema | Namena |
+| --- | --- | --- |
+| `scripts/auth-email-verification-audit-legacy.sql` | baseline pre auth expand kolona | prvi produkcijski read-only presek bez referenci na nepostojeće kolone |
+| `scripts/auth-email-verification-audit-current.sql` | kompletno expanded auth stanje | audit posle kontrolisanih expand migracija i tokom grace rada |
+
+Oba koriste `REPEATABLE READ READ ONLY`, `ACCESS SHARE` lockove, UTC,
+`search_path=pg_catalog,public`, `lock_timeout=5s`, `statement_timeout=60s` i
+`idle_in_transaction_session_timeout=90s`. Schema contract se proverava pre
+izveštaja: UTF-8 encoding, očekivana tabela/kolona, tačan PostgreSQL/UDT tip,
+nullability i `TIMESTAMP(3)` preciznost. PostgreSQL clock se čita jednom tek
+posle lock i schema faze; transakcija se završava `ROLLBACK`-om.
+
+Legacy skript namerno prekida rad ako vidi bilo koju expanded auth kolonu:
+login grace, resend throttle ili verification/reset `tokenHash`. Current skript
+namerno prekida rad ako expanded ugovor nije kompletan. Time audit ne može
+prećutno preskočiti hash-only credential ili novu policy kolonu i vratiti
+uverljiv, ali nepotpun rezultat.
+
+Izlaz oba skripta je strogo niz `category|count` redova. Nema User reda,
+emaila, ID-a, imena, adrese, credentiala, tokena, hasha ili konkretnog
+timestampa. Kategorije daju dovoljno podataka za rollout odluku:
+
+- canonical-valid, trim/lower-repairable i irreparable emailovi;
+- normalized duplicate grupe i broj pogođenih redova;
+- verified/unverified broj po CUSTOMER/OPERATOR/ADMIN ulozi i unexpected role;
+- non-finite/future account vreme, verification pre kreiranja ili u budućnosti;
+- unverified bez tokena, sa validnim aktivnim tokenom ili samo isteklim;
+- legacy/current/malformed credential, non-finite/future token timestamp i
+  životni vek van očekivanih 60 minuta + maksimalnih pet minuta istorijskog
+  clock-skew tolerisanja;
+- verified nalog sa zaostalim verification tokenom;
+- order, address, wishlist, review, coupon usage i aktivan password-reset kod
+  neverifikovanih naloga;
+- aktivan `Session` red samo kao telemetrija, uz eksplicitnu zabranu da se
+  predstavi kao dokaz revalidiranog JWT-a;
+- bcrypt format i zaseban non-cost-12 broj.
+
+Current audit dodaje resend throttle klasifikaciju (`all_null`, `all_valid`,
+partial/invalid, future/skew, verified-nonnull) i grace klasifikaciju (null,
+active, expired, non-finite, dalje od 30 dana, pre `createdAt`, verified-
+nonnull). Skripti nemaju DML ili DDL. Produkcijski rezultat još nije prikupljen.
+
+### 36.3. Enforcement preflight i tačna rollout pravila
+
+`scripts/auth-email-verification-enforcement-preflight.sql` je read-only,
+aggregate-only, fail-closed gate namenjen isključivo staged kandidatu. Primer
+ugovora je:
+
+```text
+psql ... \
+  --set=target_policy=staged \
+  --set=legacy_cutoff=2026-08-30T16:00:00.000Z \
+  --set=grace_deadline=2026-09-13T16:00:00.000Z \
+  --file=scripts/auth-email-verification-enforcement-preflight.sql
+```
+
+Datumi u primeru su samo format, ne odobrene produkcijske vrednosti. Stvarne
+vrednosti moraju proći review i biti zabeležene uz audit dokaz.
+
+Ako bilo koja od tri promenljive nedostaje, sanitizovani SQL
+`RAISE EXCEPTION` pod `ON_ERROR_STOP` prekida skriptu dokumentovanim psql
+script-error statusom `3`, pre transakcije i bez DML-a. Isto pravilo važi za
+nedostajuće obavezne promenljive izolovanih fixture-a. Raniji oblik
+`\quit 2`/`\quit 3` uklonjen je nakon što je exact-head PostgreSQL 16 CI dokazao
+da broj uz `\quit` nije procesni exit code i da takav izlaz vraća `0`. Oba
+timestampa moraju biti tačan ASCII `YYYY-MM-DDTHH:MM:SS.mmmZ`, proći PostgreSQL
+parse i UTC round-trip bez normalizacije. Cutoff mora biti finite i ne sme biti
+posle jednokratno uzorkovanog DB vremena. Deadline mora biti finite i između
+`audit_at + 7 dana` i `audit_at + 30 dana`.
+
+Cutoff ugovor je namerno precizan:
+
+- `createdAt < legacy_cutoff`: legacy kandidat koji može imati odobren grace;
+- `createdAt >= legacy_cutoff`: novi/post-cutoff nalog; non-null grace je
+  blocker;
+- svaki finite non-null grace mora biti tačno jednak jednom
+  `grace_deadline`-u;
+- verified nalog mora imati `grace=NULL`;
+- legacy unverified i unverified nalog sa poslovnom/recovery aktivnošću mora
+  imati validan, još aktivan grace da bi staged bio kandidat.
+
+Blocking nalazi uključuju canonical email/duplicate probleme, neverifikovane
+privilegovane role, unexpected role, nevalidne account/token timestampove,
+malformed tokene, leftover verification tokene, nevalidan throttle/grace,
+unsupported/non-cost-12 bcrypt i aktivne legacy korisnike bez grace-a. Neke
+kategorije, kao broj duplikat redova, throttle future/skew i session telemetry,
+ostaju informativne zato što ih zaseban blocking agregat već obuhvata ili nisu
+dokaz revalidirane sesije.
+
+`target_policy=strict` je uvek blocker; strict dobija zaseban gate tek posle
+staged perioda. U ovoj verziji je i
+`preflight.jwt_session_revalidation.unavailable=1` namerno hardkodovan kao
+blocking nalaz. Čak i savršeno čist expanded fixture zato vraća
+`preflight.ready=0` i exit 3. Ovo nije neuspeh fixture-a, već security interlock
+koji sprečava da runtime capability bude zamenjena za kompletan rollout.
+
+### 36.4. Grace šema i expand migracija
+
+`User.emailVerificationLoginGraceUntil DateTime?` je dodata kao nullable Prisma
+kolona. Migracija `20260830020000_expand_verified_login_grace` radi samo:
+
+```sql
+ALTER TABLE "User"
+  ADD COLUMN "emailVerificationLoginGraceUntil" TIMESTAMP(3);
+```
+
+Nema defaulta, dedicated indeksa, `UPDATE`-a, backfill-a ili promene
+`emailVerified`. Migracija je u transakciji, sa hardened search path-om,
+`lock_timeout=10s` i `statement_timeout=2min`. Iako je nullable/no-default add
+metadata-only, PostgreSQL mora kratko da dobije `ACCESS EXCLUSIVE` lock; zato
+kod u repozitorijumu nije dozvola za nenađgledanu produkcijsku primenu.
+
+DB invariant smoke zahteva tačan `timestamp without time zone`, precision 3,
+nullable/no-default stanje i odsustvo jednokolonskog grace indeksa. Pre
+produkcije ostaju fresh read-only audit, backup/restore dokaz, restore clone,
+staging migration, lock monitoring i migration status/drift review.
+
+Granice write puteva su jasne:
+
+- novi registration `CUSTOMER` uvek dobija grace `NULL`;
+- verification success briše grace;
+- privileged create/update briše grace;
+- demo seed upisuje samo verified demo naloge sa grace `NULL`;
+- ne postoji automatski runtime backfill;
+- eventualni produkcijski grace backfill mora biti odvojen, pregledan i
+  ograničen na odabrane legacy `CUSTOMER` redove sa jednim deadline-om.
+
+### 36.5. Runtime policy i privacy-preserving credentials login
+
+`AUTH_VERIFIED_LOGIN_POLICY` prihvata samo `audit`, `staged` ili `strict` bez
+okolnih razmaka. U produkciji je obavezan; development/test bez vrednosti
+koristi audit radi compatibility-ja. `AUTH_VERIFIED_LOGIN_GRACE_DEADLINE` je
+obavezan za staged i mora imati tačan UTC-millisecond oblik. Maksimum od 30
+dana proverava se prema istom svežem DB vremenu koje se koristi za account
+odluku, ne prema Node satu.
+
+Policy state proverava poznatu role, finite `createdAt/evaluatedAt`,
+`createdAt <= evaluatedAt`, validan verification timestamp u tom intervalu i
+finite grace/deadline. Staged zahteva tačan account grace/deployment deadline
+match. Odluke su:
+
+| Stanje | `audit` | `staged` | `strict` |
+| --- | --- | --- | --- |
+| Verified | allow | allow | allow |
+| Unverified CUSTOMER sa tačnim aktivnim grace-om | allow + notice/audit marker | allow + notice | deny |
+| Unverified bez aktivnog grace-a | allow + notice/audit marker | deny | deny |
+| Unverified ADMIN/OPERATOR | allow samo dok je eksplicitno audit | deny | deny |
+
+Credentials put sada prvo strogo normalizuje email i čita samo `id` i
+`passwordHash`. Svaki pokušaj sa sintaksno validnim kanonizovanim emailom radi
+tačno jedan bcrypt compare. Unknown user, missing/overlong password,
+malformed/unsupported stored hash ili lookup failure koriste fiksni javni dummy
+password/hash par sa cost 12. Rezultat dummy para nikada ne može autentifikovati
+nalog.
+
+Runtime prihvata samo `$2a$` ili `$2b$` bcrypt sa cost 12 i 53 karaktera body-
+ja. To usklađuje realni i dummy work factor i odbija korumpirani high-cost hash
+pre nego što postane CPU amplifikator. Audit pre rollout-a posebno broji sve
+nepodržane/non-cost-12 vrednosti.
+
+Policy se uopšte ne čita pre uspešnog bcrypt-a. Posle uspeha adapter otvara
+transakciju, zaključava User `FOR SHARE`, učitava exact email/hash/profile/
+role/verification/grace snapshot i tek posle lock wait-a uzorkuje
+`clock_timestamp()::timestamptz(3)`. ID, email i password hash moraju ostati
+isti kao pri compare-u. Password/email mutacija ili brisanje između čitanja
+odbijaju login bez session issue-a.
+
+Sva očekivana odbijanja vraćaju NextAuth-u `null`, bez razlikovanja passworda,
+naloga, verification statusa ili policy razloga. Audit observability može da
+prijavi samo fazu i coarse `AUDIT_WOULD_DENY`/`INTERNAL_FAILURE`; tip nema polje
+za PII, credential ili raw exception. Dozvoljeni audit/grace nalog nosi
+`requiresEmailVerification=true`, a account layout prikazuje trajan recovery
+notice sa linkom ka resend formi.
+
+### 36.6. Verification commit: DB expiry i profile/session vezivanje
+
+Verification route i dalje priprema JWT, cookie i ceo success response pre
+bilo kakve DB mutacije, ali claim sada vezuje session profil za exact email,
+password hash, role, ime i prezime pročitane uz token. Production code kopira
+samo ta očekivana polja, ne ceo User objekat.
+
+Transakcija radi:
+
+1. `User FOR UPDATE` i exact expected-user proveru;
+2. exact `EmailVerification FOR UPDATE`;
+3. `clock_timestamp()::timestamptz(3)` tek posle oba lock wait-a;
+4. finite i strogu `expires > verifiedAt` proveru;
+5. exact current-hash ili `tokenHash IS NULL + exact legacy token` claim;
+6. `emailVerified=verifiedAt` i cleanup grace/resend throttle polja;
+7. brisanje svih sibling verification tokena.
+
+User je prvi lock, usklađeno sa resend/reset/privileged operacijama. Ako token
+istekne dok radnik čeka njegov lock, pripremljeni cookie se odbacuje i nema
+mutacije. Ako se posle session pripreme promeni role, password hash, email ili
+ime, expected snapshot konflikt sprečava izdavanje stale privilegovanog JWT-a.
+Token ostaje retryable kada commit ne može bezbedno da ga claim-uje. Node clock
+više nije autoritet za commit expiry.
+
+### 36.7. Reset request i reset confirmation
+
+Password-reset request zadržava immediate enumeration-safe 202 i background
+account-dependent rad, ali prvi lookup više nije dovoljan za write. Raw query
+vraća samo `id`, canonical email, role i PostgreSQL `xmin` kao opaque row
+revision. Write transakcija zaključava User, ponovo zahteva isti email/role/
+xmin, a zatim uzima DB vreme i zamenjuje PasswordReset credential. Recipient
+email i ime dolaze sa sveže zaključanog reda.
+
+Request i confirm imaju sopstveni trusted same-origin guard pre limitera zato
+što je `/api/auth` izuzet zbog NextAuth callbackova. Posle limitera koriste
+bounded UTF-8 JSON parser sa maksimalno 1024 deklarisana i stvarna streaming
+bajta. Request prihvata samo exact `{ email }`, a confirm samo exact
+`{ token, password }` plain-object oblik. Unsupported media/encoding, malformed
+UTF-8/JSON, dodatni ključevi i oversize zahtev završavaju pre privatnog/DB rada;
+tačno 1024 bajta je dozvoljeno. Reset-request limiter exception daje
+stage-only, reporter-safe, private/no-store 503 bez čitanja body-ja.
+
+Ovo zatvara stale-request trku u kojoj je reset zahtev pročitao CUSTOMER, dok
+je privileged CLI u međuvremenu promenio role/password i očistio credentiale:
+pošto se `xmin` promenio, stari request više ne može posle promocije ponovo
+upisati reset token. Public response ostaje isti, a failure je stage-only.
+
+Reset-confirm lock redosled je `User FOR UPDATE`, zatim exact
+`PasswordReset FOR UPDATE`, pa DB clock. Stored credential, finite expiry i
+strogo `expires > resetAt` proveravaju se pod lockom. Password update, exact
+claim, reset sibling cleanup i brisanje svih EmailVerification credentiala su
+atomski. Verification link mora biti opozvan jer je passwordless
+session-issuing credential. Namerni failure posle stvarnog User update-a u
+integration testu izvršava i stvarni exact reset-token delete, pa tek zatim pada
+na sibling cleanup-u; PostgreSQL rollback vraća i hash i token, a retry zatim
+uspeva. Drugi test drži pravi PasswordReset row lock preko expiry granice i
+dokazuje da se pripremljeni success/cookie odbacuje bez mutacije.
+
+### 36.8. Authenticated password change, privileged CLI i seed
+
+Authenticated password route je prebačen na servis sa sledećom granicom:
+
+- minimalni `id/passwordHash` pre-read;
+- jedna constant-work provera trenutne lozinke;
+- cost-12 hash nove lozinke izvan transakcije;
+- User-first lock i exact old-hash compare-and-swap;
+- PasswordReset i EmailVerification cleanup u istoj transakciji.
+
+Pogrešna lozinka, nalog obrisan posle compare-a ili stale hash daju isti
+generičan ishod. Cleanup failure rollback-uje password write. Ovaj servis još
+ne opoziva ranije izdate JWT sesije, što ostaje blokator.
+
+Privileged CLI je zasebno ojačan:
+
+- `--password` i `--password=...` se eksplicitno odbijaju čak i uz `--help`;
+- secret dolazi kroz bounded redirected `--password-stdin` ili maskirani TTY;
+- email i role se kanonizuju, password prolazi centralnu policy/72-byte granicu
+  i cost-12 hashing;
+- existing nalog je no-op bez eksplicitnog `--update-existing`;
+- User lock je prvi; missing-row create se serializuje transaction-level
+  advisory lockom nad kanonskim emailom, pa ponovnim lookup-om;
+- DB vreme se čita posle svih lock wait-ova;
+- create/update postavlja verified DB timestamp, briše grace/throttle i sve
+  verification/reset credentiale u jednoj transakciji;
+- rezultat/log nema email, ID, hash ili raw DB exception;
+- CLI upozorava da postojeći JWT-ovi nisu opozvani.
+
+Demo seed je usklađen sa istom boundary logikom: jedan centralni password hash,
+verifiedAt/grace-null demo User upis i transakcioni cleanup oba auth credential
+toka. Pre prvog DML-a zahteva tačno `DEMO_DATABASE_SEED=true`, PostgreSQL URL
+čiji naziv ima odvojeni `demo|e2e|test|provera` marker, odbija svaki `prod`,
+`production` ili `live` substring i poredi stvarni `current_database()` sa URL
+ciljem. Seed nije produkcijski recovery/backfill alat.
+
+### 36.9. DB clock i globalni lock ugovor
+
+Svi auth putevi iz ovog preseka koriste PostgreSQL
+`clock_timestamp()::timestamptz(3)` kada vreme utiče na credential/policy
+odluku. Millisecond cast odgovara Prisma/PostgreSQL `TIMESTAMP(3)` kolonama i
+sprečava JS/DB sub-millisecond boundary razliku.
+
+Ugovor je: prvo dobiti User lock, zatim po potrebi exact credential lock, tek
+onda uzorkovati DB sat. To važi za credentials snapshot, registraciju/resend,
+verification, reset request/confirm i privileged provisioning. Password
+hashing ostaje izvan dugih transakcija; exact stari hash se proverava ponovo
+pod User lockom.
+
+Ovaj redosled istovremeno smanjuje deadlock rizik i sprečava da token koji je
+istekao tokom lock čekanja prođe na ranije uzorkovanom Node/DB vremenu.
+
+### 36.10. Test matrica i CI wiring
+
+Repository sadrži sledeće nove/proširene dokazne slojeve:
+
+1. **Audit fixture runner** — radi samo uz `CI=true`, loopback PostgreSQL i
+   namensku bazu `provera`; kreira samo allow-list legacy/blocked/clean baze,
+   izvršava fixture/migration skripte, validira exact aggregate mape i na kraju
+   uklanja fixture baze.
+2. **Schema mismatch** — legacy audit mora odbiti expanded šemu, a current audit
+   baseline; izlaz pri schema failure-u ne sme izgledati kao aggregate report.
+3. **Preflight parametri** — missing cutoff/deadline/policy, noncanonical,
+   impossible/future cutoff, deadline kraći od 7 ili duži od 30 dana, strict
+   policy i namerni JWT blocker.
+4. **Credentials unit** — exact one-compare, dummy pair, malformed/cost hash,
+   wrong/empty/overlong password, stale password/email/deletion, audit event,
+   staged/strict i invalid timestamp state.
+5. **Credentials PostgreSQL** — `FOR SHARE` snapshot, DB clock posle čekanja,
+   password/policy race i završetak bez session issue-a iz stale snapshot-a.
+6. **Email verification** — User→token lock, DB expiry tokom token-row čekanja,
+   role/password/profile mutation posle prepared cookie-ja, no-cookie/no-partial
+   mutation i rollback/retry behavior.
+7. **Reset request** — User lock + `xmin`, stale privileged mutation,
+   clock-after-lock i token/recipient svežina.
+8. **Reset confirm** — exact claim/expiry pod lockom, two-worker exactly-once,
+   legacy downgrade guard, rollback posle stvarnog password update-a i
+   verification credential cleanup.
+9. **Password change** — wrong/missing/stale/deleted user, exact-hash CAS,
+   password/reset/verification atomicity i coarse failure stages.
+10. **Privileged account** — concurrent missing-email create daje tačno jedan
+    `created` i drugi `exists`, DB clock posle User lock wait-a i rollback/
+    uspešan retry kada PasswordReset cleanup zakaže posle stvarnih mutacija.
+
+Realni PostgreSQL 16 izvršaj je dodatno ojačao same dokaze. Test email fixture-i
+sada eksplicitno prolaze produkcijski 64-character local-part ugovor. DB-clock
+race assertion-i koriste measured PostgreSQL lower/upper granice, a ne jednakost
+sa ranije ubrizganim resend vremenom. Svi bound backend PID parametri kastuju se
+na `integer`, što odgovara potpisu `pg_blocking_pids(integer)` umesto Prisma
+podrazumevanog `bigint` bind-a.
+
+Privileged missing-row create zadržava blocking transaction-level advisory
+lock. Njegov PostgreSQL `void` rezultat više se ne projektuje direktno prema
+Prismi: `MATERIALIZED` CTE izvršava i drži lock, a spoljašnji SELECT vraća samo
+jedan proverljiv boolean red. Time realni adapter dokazuje serialization bez
+unsupported pseudo-type deserijalizacije i pada fail-closed ako rezultat nije
+tačno jedan `true`.
+
+GitHub Actions `Provera verzije` na PostgreSQL 16 servisu sada ima poseban
+korak za izolovane audit fixture-e. Glavni test korak uključuje
+`RUN_VERIFIED_LOGIN_DB_TESTS=true` uz ranije opt-in registration,
+verification-resend, email-verification i password-reset scenarije. CI policy
+ostaje eksplicitno `audit`. Workflow trigger/release granica nije proširena i
+ovo nije deploy korak.
+
+Finalni zbir, lint/typecheck/Prisma/diff/build i exact-head/post-merge dokaz
+biće uneti tek posle stabilnog stabla i stvarnih GitHub rezultata.
+
+### 36.11. Zašto je status i dalje audit-only
+
+NextAuth koristi rolling JWT session strategy. `jwt` callback pri početnom
+izdavanju kopira role, identitet i `requiresEmailVerification`, dok naredni
+zahtevi ne rade DB-authoritative proveru trenutnog password/session/policy
+version-a. Zbog toga postojeća sesija može nadživeti:
+
+- policy promenu sa audit na staged/strict;
+- istek `emailVerificationLoginGraceUntil`;
+- password change ili reset na drugom uređaju;
+- privileged role promenu;
+- cross-device email verification i promenu notice stanja.
+
+`Session` tabela ne rešava problem jer aktivna JWT strategija ne dokazuje da je
+taj red konsultovan. Potreban je sledeći zaseban paket: per-user auth/session
+version ili DB session registry, atomsko povećanje/opoziv na svim security
+mutacijama, revalidacija na svakoj zaštićenoj granici ili strogo ograničenom
+cache prozoru, role freshness i race testovi. Tek zatim se menja SQL interlock.
+
+Drugi blocker je abuse granica. Constant cost-12 compare izjednačava unknown i
+existing timing za validan email, ali napadaču daje predvidiv skup CPU posao.
+Procesni LRU ne deli stanje između instanci, a prvi sirovi `X-Forwarded-For`
+nije dovoljan client identity. Pre live-a su obavezni shared Redis/DB limiter
+koji obuhvata i NextAuth credentials callback, trusted proxy hop lista,
+kanonski client IP i reverse-proxy request/connection/timeout limiti.
+
+Treći blocker je durable side-effect granica. Reset/registration/resend koriste
+Next.js `after()` radi privatnog immediate odgovora, ali restart/redeploy može
+izgubiti task. Potreban je transactional auth-email outbox, worker, retry,
+dedupe/idempotency, monitoring, dead-letter/recovery i shutdown dokaz.
+
+Četvrti blocker je credential-at-rest završetak. Verification/reset još imaju
+rollback-compatible plaintext dual-write. Potreban je produkcijski duplicate
+audit i backup, hash-only write, čekanje najdužeg token TTL-a plus grace,
+metrika nula legacy fallbacka i tek onda contract uklanjanje plaintext
+kolona/indeksa.
+
+### 36.12. Neizvršene radnje, sledeći redosled i finalni dokaz
+
+Ovaj feature nije:
+
+- čitao produkcionu bazu ili stvarni `.env`/secret;
+- izvršio legacy/current audit na produkciji;
+- primenio grace/auth migraciju ili backfill;
+- postavio `emailVerified` bilo kom realnom nalogu;
+- aktivirao staged/strict policy;
+- opozvao postojeće rolling JWT sesije;
+- uveo shared limiter/trusted-proxy ili durable outbox;
+- prešao na hash-only writes/contract;
+- slao produkcijski email;
+- menjao GitHub `production` Environment, required reviewer, secrets ili
+  variables;
+- pravio release tag, deployment ili live verziju;
+- spajao V2 u presentation `main`.
+
+Sledeći bezbedan redosled je:
+
+1. finalizovati i integrisati ovaj audit-only feature uz zelene tačne CI dokaze;
+2. implementirati JWT session revalidaciju/opoziv i role freshness;
+3. uvesti shared limiter/trusted-proxy/reverse-proxy abuse granicu;
+4. uvesti transactional outbox i hash-only credential faze;
+5. tek zatim read-only produkcijski audit, backup/restore i staging migraciju;
+6. pregledati aggregate rezultate bez PII, definisati cutoff/deadline i
+   kontrolisan grace-only backfill;
+7. pokrenuti staged preflight koji više nema JWT blocker, pa staged recovery;
+8. posle grace perioda napraviti zaseban strict audit/preflight;
+9. završiti sve druge produkcione gate-ove;
+10. main-push workflow/live objavljivanje uraditi isključivo kao poslednju
+    sekciju.
+
+| Stavka | Konačan dokaz/status |
+| --- | --- |
+| Feature grana | `ispravka/v2-verified-login-audit-grace` |
+| Feature commit | `PENDING_FINAL_EVIDENCE` |
+| PR sa base granom samo `verzija/v2.0-univerzalna-platforma` | `PENDING_FINAL_EVIDENCE` |
+| Exact-head PR run, attempt i tačan SHA | `PENDING_FINAL_EVIDENCE` |
+| V2 merge SHA/vreme | `PENDING_FINAL_EVIDENCE` |
+| Post-merge V2 run, attempt i tačan SHA | `PENDING_FINAL_EVIDENCE` |
+| Konačan lokalni test zbir/pass/skip/fail | `PENDING_FINAL_EVIDENCE` |
+| Final lint/typecheck/Prisma validate/diff-check/build | `PENDING_FINAL_EVIDENCE` |
+| SQL fixture i real-PostgreSQL auth testovi u CI-ju | `PENDING_FINAL_EVIDENCE` |
+| Release confirmation/deploy job u oba run-a | `PENDING_FINAL_EVIDENCE` — mora biti `SKIPPED` |
+| V2 release tagovi/deployment evidencija | `PENDING_FINAL_EVIDENCE` — očekivano bez novih zapisa |
+| Produkcijska baza, audit, migracija i backfill | **NIJE RAĐENO** |
+| Produkcijski policy/server/live | **NIJE RAĐENO**; audit-only |
+
+---
+
 ## Završna napomena
 
 Najveći deo tehničke osnove je urađen: postoji ozbiljan V2 commerce sloj,
@@ -3819,6 +4290,10 @@ exact-head i post-merge real-DB CI; njegova dual-write faza ipak nije završni
 hash-only contract niti produkcijska migracija.
 Peti atomska-registracija/resend presek spojen je kroz PR #18 i ima zeleni
 exact-head/post-merge CI; ni on nije produkcijska migracija ili live aktivacija.
+Šesti verified-login audit/grace presek je u radnom stanju sa finalnim dokazima
+označenim `PENDING_FINAL_EVIDENCE`; njegova staged/strict capability ne menja
+audit-only status dok nema JWT session revalidacije, shared abuse zaštite,
+durable outbox/hash-only završetka i kontrolisanog produkcionog audita.
 Spoljašnja GitHub/live zaštita namerno još nije aktivirana. Najveći preostali
 rizik nije jedna izolovana funkcija, već poslednji kilometar: critical/high
 dependency i auth hardening, abuse/consent/email zaštita, pravni podaci i

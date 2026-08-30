@@ -23,7 +23,7 @@ function reportFailure({ stage }: RegistrationFailure): void {
 
 async function readRegistrationDatabaseTime(): Promise<Date> {
   const rows = await prisma.$queryRaw<Array<{ currentTimestamp: Date }>>`
-    SELECT clock_timestamp() AS "currentTimestamp"
+    SELECT clock_timestamp()::timestamptz(3) AS "currentTimestamp"
   `;
   const currentTimestamp = rows[0]?.currentTimestamp;
   if (rows.length !== 1 || !(currentTimestamp instanceof Date)) {
@@ -54,6 +54,8 @@ export const POST = createRegistrationHandler({
                   lastName: user.lastName,
                   phone: user.phone,
                   role: "CUSTOMER",
+                  emailVerificationLoginGraceUntil:
+                    user.emailVerificationLoginGraceUntil,
                   verificationEmailNextAllowedAt:
                     user.verificationEmailNextAllowedAt,
                   verificationEmailResendWindowStartedAt:

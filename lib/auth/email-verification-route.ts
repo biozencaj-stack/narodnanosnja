@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   EmailVerificationConflictError,
+  EmailVerificationExpiredError,
   prepareVerificationSuccessBeforeCommit,
 } from "./email-verification";
 import { normalizeRawCredentialToken } from "./credential-token";
@@ -87,7 +88,6 @@ export interface EmailVerificationRouteDependencies<
     request: NextRequest,
   ) => Awaitable<NextResponse>;
   commitVerification: (
-    verifiedAt: Date,
     verification: TVerification,
   ) => Promise<void>;
   untrustedWriteResponse: RequestResponseFactory;
@@ -96,7 +96,6 @@ export interface EmailVerificationRouteDependencies<
   sessionMismatchResponse: RequestResponseFactory;
   retryResponse: RequestResponseFactory;
   reportFailure: (failure: EmailVerificationRouteFailure) => void;
-  now?: () => Date;
 }
 
 /** Applies the non-cacheable, non-indexable policy to every public outcome. */
@@ -154,13 +153,6 @@ function safelyReportFailure(
   }
 }
 
-class EmailVerificationExpiredBeforeCommitError extends Error {
-  constructor() {
-    super("Email verification credential expired before commit");
-    this.name = "EmailVerificationExpiredBeforeCommitError";
-  }
-}
-
 export function createEmailVerificationRouteHandlers<
   TVerification extends EmailVerificationRouteRecord,
 >(dependencies: EmailVerificationRouteDependencies<TVerification>) {
@@ -214,19 +206,9 @@ export function createEmailVerificationRouteHandlers<
       }
 
       stage = "EXPIRY_CHECK";
-      const lookupAt = dependencies.now?.() ?? new Date();
       const expiresAt = verification.expires.getTime();
-      const lookupTime = lookupAt.getTime();
-      if (!Number.isFinite(expiresAt) || !Number.isFinite(lookupTime)) {
+      if (!Number.isFinite(expiresAt)) {
         throw new Error("Invalid verification clock");
-      }
-      if (expiresAt <= lookupTime) {
-        // Expiry is read-only here. A retry, maintenance job or future resend
-        // flow remains responsible for any token cleanup.
-        return await prepareFailureResponse(
-          dependencies.expiredTokenResponse,
-          request,
-        );
       }
 
       stage = "CURRENT_SESSION";
@@ -257,30 +239,12 @@ export function createEmailVerificationRouteHandlers<
           return applyEmailVerificationPrivateHeaders(response);
         },
         async () => {
-          // Session encoding and response preparation can cross the expiry
-          // boundary. Measure again immediately before the atomic claim and
-          // never allow a clock anomaly to move the claim time backwards.
-          stage = "EXPIRY_CHECK";
-          const beforeCommit = dependencies.now?.() ?? new Date();
-          const beforeCommitTime = beforeCommit.getTime();
-          if (!Number.isFinite(beforeCommitTime)) {
-            throw new Error("Invalid verification clock");
-          }
-          const verifiedAt =
-            beforeCommitTime >= lookupTime ? beforeCommit : lookupAt;
-          if (expiresAt <= verifiedAt.getTime()) {
-            throw new EmailVerificationExpiredBeforeCommitError();
-          }
-
           stage = "COMMIT";
-          await dependencies.commitVerification(
-            verifiedAt,
-            verification,
-          );
+          await dependencies.commitVerification(verification);
         },
       );
     } catch (error) {
-      if (error instanceof EmailVerificationExpiredBeforeCommitError) {
+      if (error instanceof EmailVerificationExpiredError) {
         return await prepareFailureResponse(
           dependencies.expiredTokenResponse,
           request,

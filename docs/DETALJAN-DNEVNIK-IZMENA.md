@@ -4641,3 +4641,651 @@ sa svih 8 PostgreSQL scenarija, mobile Chromium E2E i build. U post-merge run-u
 `main`/GitHub Pages deploymenta nije povezano sa ovim V2 presekom. Produkciona
 baza, server, secrets, presentation `main` i live ostali su netaknuti; main-push
 aktivacija nije deo ovog preseka.
+
+## 44. P1 verified-login audit/grace i auth security hardening
+
+Datum preseka: **30. avgust 2026.**
+
+Status ovog poglavlja je namerno ograničen na **audit-only**. Kod poznaje
+`audit`, `staged` i `strict` politiku, ali ovaj presek ne daje odobrenje da se
+`staged` ili `strict` uključe. Produkcijska vrednost ostaje eksplicitno
+`AUTH_VERIFIED_LOGIN_POLICY=audit` dok se ne završe JWT session
+revalidation/revocation, shared limiter i trusted-proxy paket. Produkcijska
+baza, server i live sajt nisu korišćeni kao dokaz ovog rada.
+
+Ovaj §44 je noviji operativni ugovor i ima prednost nad istorijskim delovima
+dnevnika koji generički pominju `emailVerified` „backfill”. Aktivnost naloga ne
+sme automatski da postavi `emailVerified`; eventualni data korak može upisati
+samo pregledani, vremenski ograničeni grace odgovarajućim legacy CUSTOMER
+redovima.
+
+### 44.1. Cilj, granica i početni rizici
+
+Pre ovog preseka registracija i resend jesu pravili verification tokene, ali
+credentials login nije imao kontrolisanu politiku koja može da se uvede bez
+nasilnog zaključavanja postojećih naloga. Istovremeno nije postojao
+aggregate-only pregled legacy podataka kojim bi se odgovorilo na sledeća
+pitanja bez iznošenja ličnih podataka:
+
+- koliko naloga nema `emailVerified`;
+- da li neverifikovani nalozi imaju stvarnu poslovnu aktivnost;
+- da li postoje nekanonski ili duplirani emailovi;
+- da li su bcrypt hash-evi kompatibilni sa jedinstvenim runtime work factorom;
+- da li su verification/reset tokeni, throttle i timestampovi validni;
+- da li staff nalozi imaju verifikovan email;
+- koji legacy korisnici bi zahtevali privremeni, pregledani grace period.
+
+Bez tog pregleda direktan prelaz na verified-only login mogao bi da zaključa
+legitimne kupce ili osoblje. Suprotan rizik bio je trajno ostavljanje
+neverifikovanih naloga bez vidljivog rollout plana. Zato je uveden trofazni
+model: prvo read-only audit, zatim zaseban reviewed grace postupak i tek kasnije
+enforcement. Nikakav SQL u ovom paketu automatski ne postavlja
+`emailVerified`, ne upisuje grace i ne briše naloge ili tokene.
+
+Bezbednosni pregled je dodatno identifikovao stale-state granice u verify,
+password-reset request/confirm, authenticated password change i privileged
+provisioning tokovima. Node vreme pročitano pre DB lock wait-a ne sme biti
+autoritet za expiry; pripremljena session cookie vrednost ne sme biti vraćena
+ako se relevantan User/token promeni pre commita; reset i password change
+moraju opozvati starije passwordless verification linkove u istoj transakciji.
+
+### 44.2. Dva aggregate-only audita
+
+Dodata su dva strogo odvojena SQL pregleda:
+
+- `scripts/auth-email-verification-audit-legacy.sql` radi samo nad starom,
+  neproširenom auth šemom;
+- `scripts/auth-email-verification-audit-current.sql` radi samo nakon sva tri
+  compat/expand auth koraka, uključujući novu grace kolonu.
+
+Oba audita:
+
+- otvaraju `REPEATABLE READ READ ONLY` transakciju;
+- postavljaju hardened `search_path`, UTC zonu i ograničene lock/statement/
+  idle timeout vrednosti;
+- zaključavaju samo potrebne tabele u `ACCESS SHARE` režimu;
+- proveravaju tačan schema ugovor pre klasifikacije;
+- uzorkuju jedan PostgreSQL `clock_timestamp()` tek posle lock/schema faze;
+- emituju isključivo `category|count` redove;
+- ne emituju email, User ID, ime, token, hash, IP ili pojedinačni timestamp;
+- završavaju `ROLLBACK`, iako su već read-only.
+
+Legacy audit namerno odbija expanded auth šemu. Time se sprečava da nullable
+compat kolone sakriju hash-only ili drugi noviji credential oblik i daju lažan
+legacy rezultat. Current audit, obrnuto, zahteva pun expanded schema ugovor.
+
+Komande su:
+
+```bash
+psql "$DATABASE_URL" -X \
+  --set=ON_ERROR_STOP=1 \
+  --file=scripts/auth-email-verification-audit-legacy.sql
+```
+
+```bash
+psql "$DATABASE_URL" -X \
+  --set=ON_ERROR_STOP=1 \
+  --file=scripts/auth-email-verification-audit-current.sql
+```
+
+Kategorije obuhvataju canonical/trim-lower/invalid email, normalized duplicate
+grupe i redove, role × verified matricu, future/nonfinite/chronology timestamp
+nalaze, current/legacy/malformed verification credential, token lifetime,
+verified naloge sa leftover tokenima, throttle matricu, grace matricu,
+neverifikovanu poslovnu aktivnost i bcrypt format/cost. Aktivnost uključuje
+porudžbine, adrese, wishlist, recenzije, kuponsku upotrebu i samo vremenski
+validan aktivni password-reset tok.
+
+Tabela `Session` ostaje samo aggregate telemetry. Runtime koristi JWT sesije,
+pa red u Prisma `Session` tabeli nije dokaz da je browser JWT postojao ili da
+je revalidiran. Zato je kategorija eksplicitno nazvana
+`with_active_db_session_telemetry_only` i nije deo autoritativnog
+`with_any_activity` signala.
+
+### 44.3. Fail-closed staged preflight
+
+`scripts/auth-email-verification-enforcement-preflight.sql` je zaseban gate,
+ne DML skripta. Zahteva sva tri psql parametra:
+
+```bash
+psql "$DATABASE_URL" -X \
+  --set=ON_ERROR_STOP=1 \
+  --set=target_policy=staged \
+  --set=legacy_cutoff='<ODOBRENI-YYYY-MM-DDTHH:MM:SS.mmmZ>' \
+  --set=grace_deadline='<ODOBRENI-YYYY-MM-DDTHH:MM:SS.mmmZ>' \
+  --file=scripts/auth-email-verification-enforcement-preflight.sql
+```
+
+Ugovor preflight-a je:
+
+- nedostajuća obavezna promenljiva završava statusom `2`;
+- blocking kategorija završava statusom `3`;
+- izlaz preflight izveštaja ostaje `category|count`;
+- prihvata se samo `target_policy=staged`;
+- `strict` je namerno odbijen i mora dobiti zaseban reviewed gate tek posle
+  grace perioda;
+- cutoff i deadline moraju imati tačan
+  `YYYY-MM-DDTHH:MM:SS.mmmZ` UTC oblik;
+- grace deadline mora biti najmanje 7 i najviše 30 dana od DB audit vremena;
+- `createdAt < legacy_cutoff` znači legacy;
+- `createdAt == legacy_cutoff` je post-cutoff i ne dobija grace;
+- svaki non-null finite grace mora biti tačno jednak jednom odobrenom
+  `grace_deadline` parametru;
+- post-cutoff nalozi i verified nalozi ne smeju imati grace;
+- `ADMIN` i `OPERATOR` ne mogu koristiti customer grace;
+- legacy neverifikovan CUSTOMER mora imati aktivan pregledani grace ili gate
+  ostaje zatvoren.
+
+Ova revizija preflight-a **namerno nikada nije ready**. Kategorija
+`preflight.jwt_session_revalidation.unavailable` uvek ima vrednost `1`, pa čak
+i clean fixture dobija `preflight.ready|0` i exit `3`. To nije testni workaround
+ili privremeni broj koji se sme ignorisati. Gate se menja tek u istom review-u
+u kom se uvedu stvarna JWT revision/revalidation pravila i merljiva session
+evidencija.
+
+### 44.4. Izolovani SQL fixture runner
+
+`scripts/test-auth-email-verification-audits.ts` pravi tri fiksno imenovane
+lokalne CI baze: legacy, current-blocked i current-clean. Runner radi samo uz
+`CI=true`, zahteva loopback PostgreSQL URL i tačan base DB naziv `provera`.
+Odbija druge hostove i druga imena, ne koristi shell interpolaciju i prihvata
+samo allow-list psql promenljivih bez NUL/newline vrednosti.
+
+Fixture matrica dokazuje:
+
+- tačan set i broj svih legacy kategorija;
+- tačan set i broj current blocked/clean kategorija;
+- legacy skripta odbija current šemu;
+- current skripta odbija legacy šemu;
+- nedostajuće preflight promenljive i obavezne fixture promenljive bez ikakvog
+  DML-a daju status `3` preko sanitizovanog SQL `RAISE EXCEPTION` pod
+  `ON_ERROR_STOP`;
+- staged blocked i clean daju očekivani status `3`;
+- clean ostaje blokiran isključivo JWT blockerom;
+- strict je odbijen;
+- nekanonski, future ili van 7–30 dana parametri su odbijeni;
+- tačna cutoff jednakost se tretira kao post-cutoff;
+- nemoguć kalendarski datum pada fail-closed.
+
+Workflow taj runner izvršava nad zasebnim PostgreSQL 16 servisom pre ostatka
+testova. Lokalni računar nema odobren psql/test-DB dokaz, pa lokalni DB skip
+nije predstavljen kao PASS; kompletan dokaz mora dati exact-head CI.
+
+Prvi exact-head pokušaj je otkrio bitnu psql prenosivost: `\quit 2` i
+`\quit 3` ne postavljaju proizvoljan procesni exit code u PostgreSQL 16, već
+završavaju normalno statusom `0`. Zato su svi kontrolisani negativni izlazi
+prebačeni na generički `RAISE EXCEPTION`; psql dokumentovano vraća script-error
+status `3`, stderr ne sadrži podatke naloga, a aggregate blocker izveštaj ostaje
+na stdout-u pre završnog rollback-a i greške. Runner sada zasebno dokazuje i da
+oba current fixture-a odbijaju nedostajuće obavezne promenljive.
+
+Prvi neuspešni run bio je `33323438924` na feature SHA
+`8cccdaaf8143d5a150cf9a239f56ed6ad2f4e7c8`; zaustavljen je upravo na fixture
+koraku. Korekcija je commitovana kao
+`e99cb3f5d53e9b8d5ca85e5ed8dcb9e4e6c146df`. Sledeći exact-head run
+`33323841820` potvrdio je da migration deploy, drift, DB invariant smoke,
+izolovani audit fixture-i, lint i typecheck prolaze. Zatim je puni real-DB paket
+prijavio pet zasebnih regresija dokaza; release i production deploy poslovi u
+oba run-a ostali su `SKIPPED`.
+
+Tih pet nalaza razloženo je ovako:
+
+1. Credentials fixture prefix `verified-login-password-mutation-<UUID>` imao
+   je local-part od 69 znakova, iznad runtime granice 64. Login ga je ispravno
+   odbio pre bcrypt-a. Fixture-i su skraćeni na `vl-...` i sada sami potvrđuju
+   da prolaze isti `normalizeEmailAddress` ugovor kao produkcijski unos.
+2. Resend/verify race test je očekivao da `emailVerified` bude tačno jednak
+   ubrizganom resend satu. Verification commit namerno čita novi PostgreSQL sat
+   tek posle User i token lock-a, pa je kasniji timestamp ispravan. Equality je
+   zamenjen donjom i gornjom granicom merenom isključivo DB satom.
+3. Prisma JS `number` parametar šalje kao PostgreSQL `bigint`, dok
+   `pg_blocking_pids` prima `integer`. Sva tri interpolirana PID lock-observer
+   testa sada eksplicitno kastuju bound PID na `integer`; runtime query-ji nisu
+   menjani.
+4. `pg_advisory_xact_lock(bigint)` vraća PostgreSQL pseudo-tip `void` koji
+   Prisma ne može da deserijalizuje iz `$queryRaw` rezultata. Missing-email
+   privileged create zato je završavao coarse `PERSISTENCE_FAILURE` pre create
+   upisa. Lock je ostao blocking transaction-level advisory lock, ali je njegov
+   `void` rezultat zatvoren u `MATERIALIZED` CTE, dok Prisma vidi samo tačno
+   jedan boolean `lockAcquired=true` red. Svaki drugi oblik pada fail-closed.
+5. Privileged lock-clock i password-reset lock-clock test bili su dva pojavljivanja
+   istog PID `bigint` problema iz tačke 3, ne dve runtime greške.
+
+Lokalno nema psql/Docker dokaza za ove real-DB putanje; zato nijedna od ovih
+korekcija nije proglašena završenom dok novi exact-head PostgreSQL 16 run ne
+prođe svih 315 testova, browser smoke i build.
+
+### 44.5. Grace expand migracija i invariant smoke
+
+`User` dobija:
+
+```text
+emailVerificationLoginGraceUntil DateTime?
+```
+
+Migracija `20260830020000_expand_verified_login_grace` radi samo nullable,
+no-default `TIMESTAMP(3)` column add. Nema backfill-a, indeksa, constrainta,
+`INSERT`, `UPDATE` ili `DELETE` izraza. PostgreSQL takav add može da izvede kao
+metadata-only promenu, ali `ALTER TABLE` ipak zahteva kratak
+`ACCESS EXCLUSIVE` lock. Zato migracija koristi:
+
+- `search_path = pg_catalog, public`;
+- `lock_timeout = '10s'`;
+- `statement_timeout = '2min'`;
+- jednu eksplicitnu transakciju.
+
+`scripts/db-invariant-smoke.sql` proverava postojanje kolone, nullability,
+`timestamp(3) without time zone`, odsustvo defaulta i odsustvo dedicated
+single-column indeksa. Aktivni Prisma lanac sada ima sedam migracija; poznata
+produkcijska baza i dalje je dokumentovana samo do prve četiri. Ova migracija
+nije primenjena na produkciju.
+
+Novi nalozi, resend/registration tokovi i demo fixture-i eksplicitno koriste
+grace `NULL`. Grace ne nastaje automatski. Eventualni rollout DML mora biti
+posebno pregledan, ograničen samo na odobrene legacy CUSTOMER redove, praćen
+aggregate before/after dokazom i rollback planom.
+
+### 44.6. Konfiguracija `audit | staged | strict`
+
+`lib/auth/config.ts` uvodi:
+
+- `AUTH_VERIFIED_LOGIN_POLICY=audit|staged|strict`;
+- obaveznu eksplicitnu vrednost u `NODE_ENV=production`;
+- compatibility-safe `audit` default samo van produkcije kada promenljiva
+  zaista nije prisutna;
+- odbijanje blank, padded, mixed-case i nepoznatih vrednosti;
+- `AUTH_VERIFIED_LOGIN_GRACE_DEADLINE` obavezan samo za `staged`;
+- strogi canonical UTC millisecond parser;
+- runtime maksimum grace prozora od 30 dana, meren prema svežem DB vremenu.
+
+`.env.example` postavlja `AUTH_VERIFIED_LOGIN_POLICY="audit"` i ostavlja
+deadline samo kao komentar. Stare `ADMIN_EMAIL`/`ADMIN_PASSWORD` example
+vrednosti su uklonjene jer privileged CLI više ne prima lozinku kroz argument
+ili trajnu env bootstrap konvenciju.
+
+`evaluateVerifiedLoginPolicy()` primenjuje sledeće:
+
+- verified nalog je dozvoljen;
+- `audit` dozvoljava password-valid neverifikovan nalog, ali vraća
+  `requiresEmailVerification=true` i coarse `AUDIT_WOULD_DENY` razlog;
+- `staged` dozvoljava samo CUSTOMER čiji non-null grace tačno odgovara
+  konfigurisanom deadline-u i oba su strogo posle DB `evaluatedAt`;
+- staff nikada ne koristi grace;
+- `strict` odbija svaki neverifikovan nalog;
+- invalidna role, nonfinite vreme, hronološki nemoguć `emailVerified` ili
+nevalidan grace metadata završavaju fail-closed internim ishodom.
+
+### 44.7. Constant-work credentials login
+
+Stari direktni Prisma + bcrypt `authorize()` zamenjen je servisom u
+`credentials-login.ts` i DB adapterom u `credentials-login-database.ts`.
+Privacy/timing ugovor je:
+
+1. email prolazi kroz centralnu strogu canonical normalizaciju;
+2. sintaksno validan email pokušaj pravi tačno jedan bcrypt compare;
+3. nepostojeći nalog, malformed hash, missing/empty/overlong password koriste
+   fiksni javni cost-12 dummy par;
+4. dummy hash se ne generiše po zahtevu;
+5. runtime prihvata samo `$2a$`/`$2b$` cost-12 hash format;
+6. policy/profile se ne čita pre uspešnog bcrypt-a;
+7. svaki očekivani denial vraća isti NextAuth `null`/CredentialsSignin put;
+8. log događaj nosi samo kontrolisanu stage/reason vrednost, nikada email,
+   User ID, lozinku, hash ili raw exception.
+
+Posle uspešnog compare-a DB adapter otvara transakciju, uzima `User FOR SHARE`,
+čita svež policy snapshot i tek posle lock-a uzorkuje
+`clock_timestamp()::timestamptz(3)`. Snapshot mora imati isti User ID,
+normalizovan email i passwordHash kao credential koji je upravo proveravan.
+Brisanje naloga ili promena emaila/hash-a između lookup-a i snapshot-a poništava
+login. Time uspešan bcrypt nad zastarelim credentialom ne može izdati novu
+sesiju.
+
+`index.ts` prenosi `requiresEmailVerification` u JWT/session samo pri izdavanju
+ili osvežavanju postojećeg token payload-a. To služi za audit notice, ali nije
+DB revalidation i ne zatvara stale-session blocker.
+
+### 44.8. Persistentni verification notice
+
+`UnverifiedEmailNotice.tsx` je dodat u korisnički account layout. Kada session
+nosi `requiresEmailVerification=true`, korisnik dobija trajno upozorenje i link
+ka resend toku. Notice nije enforcement mehanizam i može ostati stale na drugom
+uređaju dok se JWT ne revalidira. Zbog toga se UI dokaz ne koristi kao uslov za
+staged/strict aktivaciju.
+
+### 44.9. DB-authoritativna email verifikacija
+
+Verify tok sada vezuje pripremljeni session claim za tačan User snapshot:
+email, passwordHash, role, firstName i lastName. Production route ne kopira ceo
+Prisma User objekat u claim, već samo potrebna očekivana polja.
+
+Commit lock redosled je:
+
+```text
+User FOR UPDATE
+  → exact EmailVerification FOR UPDATE
+  → clock_timestamp()::timestamptz(3)
+  → exact snapshot/credential/expiry provera
+  → emailVerified + throttle/grace cleanup
+  → sibling token cleanup
+```
+
+DB sat se čita tek posle oba moguća lock wait-a. Node route vreme više ne
+odlučuje da li je token istekao. Ako token istekne dok radnik čeka red lock,
+commit vraća konflikt/expired ishod, prepared cookie se odbacuje i nema User/
+token mutacije. Ako se role ili passwordHash promene nakon pripreme cookie-ja,
+exact snapshot provera takođe odbija commit i ostavlja token retryable.
+
+Uspešan commit postavlja `emailVerified` iz DB vremena i atomski čisti grace,
+verification resend throttle i sve sibling verification tokene. JWT koji se
+izdaje posle uspeha eksplicitno postavlja
+`requiresEmailVerification=false`.
+
+### 44.10. Password-reset request: stale snapshot i javna granica
+
+Javni request handler sada primenjuje redosled:
+
+```text
+trusted same-origin guard
+  → account-independent limiter
+  → bounded JSON čitanje
+  → exact { email } shape
+  → canonical email
+  → after() scheduling
+  → private lookup/DB/SMTP rad
+```
+
+Body mora biti neenkodiran UTF-8 `application/json`, tačno jedan plain-object
+`email` ključ i najviše 1024 stvarna bajta. Deklarisani i streaming oversize
+zahtevi daju 413; stream se prekida čim pređe granicu. Malformed UTF-8/JSON i
+dodatna polja se odbijaju. Tačno 1024 bajta prolazi. Neproveren origin se
+odbija pre limitera i body read-a. Odbijen ili pokvaren limiter takođe ne čita
+body; limiter exception daje stage-only `RATE_LIMIT`, generički private 503 i
+`no-store`, čak i ako reporter baci grešku.
+
+Za svaki validan email čiji je callback zakazan javni account-dependent ugovor
+ostaje identičan 202. Nepostojeći nalog, uspeh i background/SMTP kvar ne
+otkrivaju postojanje naloga.
+
+Privatni DB tok prvo čita minimalni User snapshot sa `id`, `email`, `role` i
+PostgreSQL `xmin` revision vrednošću. Write transakcija zatim radi:
+
+```text
+User FOR UPDATE
+  → exact email/role/xmin recheck
+  → clock_timestamp()::timestamptz(3)
+  → PasswordReset upsert
+```
+
+Intervening password, email, role, profile ili privileged update menja tuple
+revision i sprečava da stale request ponovo uvede reset credential. Delivery
+koristi sveže zaključane email/firstName vrednosti.
+
+### 44.11. Password-reset confirm: DB expiry i verification revocation
+
+Confirm handler dobija isti local trusted-write guard, 1024-byte bounded JSON i
+exact `{ token, password }` shape. Guard je pre limitera; limiter je pre body/
+token/DB rada. Unsupported media/encoding, nevalidan UTF-8, malformed JSON,
+missing/extra key i oversize imaju kontrolisane private odgovore.
+
+Node `now()` i route `resetAt` više nisu autoritet. Posle hash-first, strogo
+izolovanog legacy fallback lookup-a, password hashovanja i pripreme kompletnog
+success response-a, commit radi:
+
+```text
+User FOR UPDATE
+  → exact PasswordReset FOR UPDATE
+  → clock_timestamp()::timestamptz(3)
+  → exact current-hash ili legacy credential provera
+  → expires > DB resetAt
+  → User password update
+  → exact claim delete
+  → reset sibling cleanup
+  → EmailVerification cleanup
+```
+
+Expiry ili credential konflikt odbacuju prepared success/cookie i daju isti
+generičan invalid ishod. Operativni kvar daje stage-only retry odgovor. Sve
+mutacije su u jednoj transakciji: failure posle stvarnog password update-a i
+stvarnog exact token delete-a rollback-uje i hash i token, pa isti claim može
+bezbedno da se ponovi.
+
+Uspešan reset briše sve verification linkove zato što su i oni passwordless
+session-issuing credentials. To sprečava da stari email link posle promene
+lozinke izda novu sesiju. Već izdati JWT ipak nije opozvan ovim cleanup-om; to
+ostaje zaseban P1 blocker.
+
+### 44.12. Authenticated password change
+
+`password-change.ts` centralizuje promenu lozinke za ulogovanog korisnika.
+Minimalni ID/hash lookup prethodi jednom cost-12 constant-work compare-u; novi
+hash nastaje van transakcije. Write transakcija uzima `User FOR UPDATE`, radi
+exact passwordHash CAS i u istom commitu briše PasswordReset i
+EmailVerification credentiale.
+
+Pogrešna trenutna lozinka, obrisan User i hash promenjen nakon bcrypt-a daju
+isti generičan denial. Cleanup kvar rollback-uje password upis. Route više ne
+duplira auth logiku i emituje samo coarse stage greške. Postojeće JWT sesije
+drugih uređaja još nisu opozvane.
+
+### 44.13. Privileged-account servis i CLI
+
+`privileged-account.ts` i preuređeni `scripts/create-admin.ts` uvode eksplicitan
+bezbednosni ugovor za ADMIN/OPERATOR provisioning:
+
+- `--password` argument je zabranjen da lozinka ne završi u shell history ili
+  process listi;
+- lozinka se čita sa stdin-a ili maskiranog TTY prompta;
+- postojeći nalog je no-op bez eksplicitnog `--update-existing`;
+- email i password prolaze centralnu normalizaciju/politiku;
+- missing-email create se serializuje PostgreSQL advisory lock-om;
+- postojeći User se zaključava `FOR UPDATE`;
+- DB vreme se čita tek nakon lock-a;
+- nalog postaje verified, dobija traženu role, novi hash i grace `NULL`;
+- throttle, EmailVerification i PasswordReset credentiali se čiste atomski;
+- rezultat je coarse `created|updated|exists` bez PII-ja.
+
+Real-PG test sa dva paralelna missing-email radnika dokazuje tačno jedan
+`created` i jedan `exists`. Drugi test kroz `pg_blocking_pids` dokazuje da je
+`emailVerified` uzet posle stvarnog User lock wait-a i da je
+`createdAt <= emailVerified`. Treći izvršava stvarni User update i verification
+delete, zatim ubrizgava failure u reset cleanup, potvrđuje potpuni rollback i
+uspešan retry.
+
+CLI još ne opoziva postojeće JWT sesije i to eksplicitno prijavljuje kao
+ograničenje; nije dozvoljeno predstaviti role/password update kao trenutni
+globalni session revoke.
+
+### 44.14. Demo seed fail-closed zaštita
+
+`prisma/seed-demo.ts` namerno koristi javno poznatu `Demo1234!` lozinku za pet
+demo naloga i pri rerun-u osvežava njihov hash/role. Zato je pre prvog DML-a
+dodat `requireSafeDemoSeedTarget()` ugovor:
+
+- zahteva tačno `DEMO_DATABASE_SEED=true`;
+- zahteva validan PostgreSQL URL;
+- naziv baze mora jasno sadržati `demo`, `e2e`, `test` ili `provera`;
+- bilo koji substring `prod`, `production` ili `live` odbija cilj;
+- decoded naziv ne sme sadržati dodatnu `/` putanju;
+- read-only `SELECT current_database()` mora tačno odgovarati URL cilju;
+- tek nakon toga počinje prvi Settings upsert.
+
+Time nazivi poput `shop_demo_prod2`, `production2_demo`, `live2-demo` i
+`prodbackup_demo` padaju fail-closed. Opt-in je jednokratan operativni signal,
+ne vrednost koju treba trajno uključiti u produkcionom Environment-u.
+
+Demo user upsert sada verified nalogu postavlja grace `NULL` i u istoj
+transakciji briše stare EmailVerification i PasswordReset tokene. Guard ne
+pretvara demo seed u produkcijski alat; skripta ostaje isključivo za namensku
+demo/test bazu.
+
+### 44.15. Registracija, resend i DB precision usklađivanje
+
+Novi registracioni nalozi eksplicitno dobijaju
+`emailVerificationLoginGraceUntil: null`. Uspešna verifikacija ga čisti.
+Privileged provisioning i demo seed takođe postavljaju `NULL`; nema implicitnog
+grace nasleđivanja.
+
+Auth DB clock query-ji u credentials snapshot-u, registraciji, resend-u,
+verification commitu, privileged provisioning-u i reset tokovima standardizovani
+su na `clock_timestamp()::timestamptz(3)`. Time se JS `Date` i PostgreSQL
+`timestamp(3)` poređenja ne razlikuju zbog mikrosekundi koje šema ne čuva.
+
+### 44.16. Test matrica
+
+Unit/route testovi pokrivaju:
+
+- production-required policy, audit default i canonical deadline parser;
+- audit/staged/strict odluke i 30-day runtime granicu;
+- tačno jedan bcrypt compare, dummy put i cost-12 format;
+- lookup failure, unknown user, wrong password i malformed hash privatnost;
+- fresh policy snapshot, stale email/hash/delete denial i DB clock posle lock-a;
+- notice/session marker mapiranje;
+- verification User→token lock, DB expiry, snapshot konflikt i cookie discard;
+- reset-request exact JSON, 1024-byte limit, origin/limiter redosled, xmin i DB
+  clock;
+- reset-confirm exact JSON, 1024-byte limit, hash/legacy izolaciju, DB expiry,
+  rollback i verification-link revocation;
+- password-change compare/CAS/cleanup/rollback;
+- privileged create/update/no-op, cleanup i coarse failure;
+- demo seed opt-in/URL/name zabrane;
+- SQL category parity i fixture runner safety.
+
+Gated real-PostgreSQL testovi obuhvataju:
+
+- credentials snapshot nakon stvarnog User lock wait-a;
+- verification token race, DB expiry nakon token lock wait-a i stale
+  role/password snapshot;
+- reset-request User lock/xmin/DB-clock slučaj;
+- reset-confirm concurrent current/legacy claim, stvarni token-delete rollback,
+  EmailVerification cleanup i expiry preko stvarnog PasswordReset lock wait-a;
+- authenticated password-change CAS i cleanup;
+- privileged concurrent create, clock-after-lock i rollback.
+
+CI workflow dodaje `AUTH_VERIFIED_LOGIN_POLICY=audit`, izolovani SQL audit
+fixture korak i `RUN_VERIFIED_LOGIN_DB_TESTS=true`. Workflow deploy trigger,
+release potvrda i produkcijski job nisu prošireni ovim paketom.
+
+Konačni lokalni brojevi, exact-head run i post-merge run namerno nisu upisani
+pre stvarnog stabilnog full pokretanja i GitHub dokaza.
+
+### 44.17. Poznati blockeri za staged/strict i live
+
+1. **JWT session revision/revalidation.** NextAuth koristi rolling JWT. Role,
+   password i verification stanje ulaze u token pri loginu i trenutno se ne
+   proveravaju u bazi na svakom zaštićenom zahtevu. Reset/password change/
+   privileged update zato ne opozivaju već izdate sesije. Potrebni su
+   `authVersion` ili ekvivalentna revision vrednost, bump u svim security
+   mutacijama, DB/cache revalidation u proxy-ju i serverskim autorizacijama i
+   apsolutni nerolling rok.
+2. **Shared limiter i trusted proxy.** Postojeći limiter je process-local LRU,
+   a rute koriste sirovi `x-forwarded-for`. Potreban je allow-list proxy hopova,
+   kanonski client IP, atomarni shared Redis/DB limiter i IP + blind account
+   ključ. NextAuth credentials callback posebno mora biti pokriven jer svaki
+   canonical email pokušaj radi cost-12 bcrypt.
+3. **Origin/proxy ugovor.** Lokalni guard zatvara cross-origin browser put, ali
+   konačni scheme/host/client-IP ugovor mora biti vezan za pregledanu proxy
+   konfiguraciju.
+4. **Durable auth outbox.** `after()` nije queue. Potrebni su transactional
+   outbox, worker, retry/dedupe, delivery/bounce metrike i shutdown/redeploy
+   dokaz.
+5. **Produkcijski audit i migracije.** Legacy audit, business review, backup/
+   restore clone, lock plan, tri auth expand migracije i current audit nisu
+   izvršeni nad produkcijom.
+6. **Grace DML.** Nije napisana niti izvršena automatska backfill skripta.
+   Eventualni grace upis je poseban odobren i auditovan postupak.
+7. **Hash-only contract.** Compat upisi još čuvaju raw tokene. Ostaju hash-only
+   writes, najduži TTL + grace, dokaz nula legacy fallback-a i contract
+   migracija.
+8. **Reverse-proxy abuse granice.** Application 1024-byte body limit nije
+   zamena za upstream body/rate/timeout/connection zaštitu.
+9. **Širi rollout.** SMTP/runtime monitoring, domen/HTTPS, backup, pravni
+   podaci, slike, sadržaj, payment/operativa i ostali ranije dokumentovani
+   gate-ovi ostaju otvoreni.
+
+### 44.18. Šta u ovoj etapi nije rađeno
+
+- nije kontaktirana, auditovana, backfill-ovana ili migrirana produkcijska
+  baza;
+- nijednom produkcionom korisniku nije upisan grace;
+- nijedan `emailVerified` nije automatski postavljen;
+- privileged CLI i demo seed nisu pokretani nad produkcijom;
+- realni `.env` sadržaj, secrets i produkcijski credentiali nisu čitani;
+- VPS, PM2, nginx, DNS, TLS i proxy nisu menjani;
+- GitHub `production` Environment, variables, secrets i required reviewer nisu
+  menjani;
+- nije napravljen `prodavnica-v2-*` release tag;
+- nije pokrenut V2/production deployment;
+- presentation `main` nije merge cilj i nije menjan;
+- workflow „svaki push na main objavljuje novu live verziju” nije aktiviran i
+  ostaje apsolutno poslednji korak.
+
+### 44.19. Grupisani inventar promena
+
+Policy i login:
+
+- `.env.example`;
+- `lib/auth/config.ts` i `config.test.ts`;
+- `lib/auth/verified-login-policy.ts` i test;
+- `lib/auth/credentials-login.ts`, DB adapter, unit i PG test;
+- `lib/auth/index.ts`;
+- account layout i `UnverifiedEmailNotice.tsx`.
+
+Šema i audit:
+
+- `prisma/schema.prisma`;
+- `20260830020000_expand_verified_login_grace/migration.sql`;
+- `scripts/db-invariant-smoke.sql`;
+- legacy/current/preflight SQL;
+- tri `scripts/auth-audit-fixtures/*` fixture-a;
+- `scripts/test-auth-email-verification-audits.ts`;
+- `.github/workflows/objavi.yml` verify deo.
+
+Verification/reset/password:
+
+- verification route, route factory, servis i testovi;
+- reset request route/factory/service i testovi;
+- reset confirm route/factory/service i testovi;
+- `password.ts` constant-work helper/testovi;
+- `password-change.ts`, ruta i unit/PG testovi;
+- registration/resend grace/DB-clock usklađivanje.
+
+Privileged/demo:
+
+- `privileged-account.ts` i unit/PG testovi;
+- `scripts/create-admin.ts`;
+- `README.md` i `prisma/seed.ts` CLI primeri bez zabranjenog `--password`;
+- `lib/database/demo-seed-safety.ts` i test;
+- `prisma/seed-demo.ts`.
+
+Dokumentacija:
+
+- `CLAUDE.md`;
+- `IZMENE.md`;
+- ovaj detaljni dnevnik;
+- detaljni zbirni izveštaj;
+- Prisma baseline, V2 rollout i GitHub deploy runbook.
+
+### 44.20. Završni Git/CI/deployment dokaz
+
+Dok stvarni commit/PR/run ne postoji, polje ostaje doslovno
+`PENDING_FINAL_EVIDENCE`; procena se ne zapisuje kao dokaz.
+
+| Dokaz | Vrednost |
+| --- | --- |
+| Feature grana | `ispravka/v2-verified-login-audit-grace` |
+| Feature SHA | `PENDING_FINAL_EVIDENCE` |
+| Lokalni full test/pass/skip/fail | `PENDING_FINAL_EVIDENCE` |
+| Lint/typecheck/Prisma/diff/build | `PENDING_FINAL_EVIDENCE` |
+| Audit fixture runner | `PENDING_FINAL_EVIDENCE` |
+| PR i V2-only base | `PENDING_FINAL_EVIDENCE` |
+| Exact-head run/attempt/jobs | `PENDING_FINAL_EVIDENCE` |
+| V2 merge SHA/vreme | `PENDING_FINAL_EVIDENCE` |
+| Post-merge run/attempt/jobs | `PENDING_FINAL_EVIDENCE` |
+| Remote V2 head | `PENDING_FINAL_EVIDENCE` |
+| Release/deploy poslovi | `PENDING_FINAL_EVIDENCE` |
+| V2 tagovi/deploymenti | `PENDING_FINAL_EVIDENCE` |
+
+Ovaj dokaz se popunjava tek posle zelenog exact-head CI-ja, V2-only merge-a i
+zelenog post-merge run-a u kom release i deploy poslovi ostanu `SKIPPED`.
+Main-push live workflow se time i dalje ne aktivira; on ostaje poslednja,
+posebno odobrena etapa nakon svih bezbednosnih i operativnih gate-ova.

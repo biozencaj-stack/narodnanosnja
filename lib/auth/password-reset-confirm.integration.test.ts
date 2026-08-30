@@ -14,6 +14,7 @@ import {
   type PasswordResetConfirmDatabase,
 } from "./password-reset-confirm";
 import {
+  PASSWORD_RESET_CONFIRM_INVALID_MESSAGE,
   PASSWORD_RESET_CONFIRM_SUCCESS_MESSAGE,
   createPasswordResetConfirmHandler,
   type PasswordResetConfirmFailure,
@@ -99,24 +100,111 @@ function barrierDatabaseAdapter(
   };
 }
 
-function failingPasswordUpdateAdapter(
+interface ObservedWorkerStart {
+  pid: number;
+  startedAt: Date;
+}
+
+function observedDatabaseAdapter(
+  prisma: PrismaClient,
+  onStart: (worker: ObservedWorkerStart) => void,
+  onFailure: (error: unknown) => void,
+): PasswordResetConfirmDatabase {
+  return {
+    $transaction: async (work) => {
+      try {
+        return await prisma.$transaction(
+          async (transaction) => {
+            const rows = await transaction.$queryRaw<ObservedWorkerStart[]>`
+              SELECT
+                pg_backend_pid() AS "pid",
+                clock_timestamp()::timestamptz(3) AS "startedAt"
+            `;
+            const started = rows[0];
+            if (
+              rows.length !== 1 ||
+              !started ||
+              !Number.isInteger(started.pid) ||
+              !(started.startedAt instanceof Date) ||
+              !Number.isFinite(started.startedAt.getTime())
+            ) {
+              throw new Error("Reset confirm worker nema validan DB identitet");
+            }
+            onStart(started);
+            return work(transaction);
+          },
+          { timeout: 15_000 },
+        );
+      } catch (error) {
+        onFailure(error);
+        throw error;
+      }
+    },
+  };
+}
+
+async function waitForSpecificRowLock(
+  observer: PrismaClient,
+  workerPid: number,
+  blockerPid: number,
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const rows = await observer.$queryRaw<
+      Array<{ waitEventType: string | null; blockingPids: number[] }>
+    >`
+      SELECT
+        "wait_event_type" AS "waitEventType",
+        pg_catalog.pg_blocking_pids("pid") AS "blockingPids"
+      FROM pg_catalog.pg_stat_activity
+      WHERE "pid" = ${workerPid}
+    `;
+    if (
+      rows[0]?.waitEventType === "Lock" &&
+      rows[0].blockingPids.includes(blockerPid)
+    ) {
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(
+    "Reset confirm worker nije primećen u PasswordReset row-lock wait-u",
+  );
+}
+
+function failingAfterClaimDeleteAdapter(
   prisma: PrismaClient,
 ): PasswordResetConfirmDatabase {
   return {
     $transaction: (work) =>
-      prisma.$transaction((transaction) =>
-        work({
-          passwordReset: {
+      prisma.$transaction(async (transaction) => {
+        let exactClaimWasDeleted = false;
+        return work({
+          $queryRaw: (strings, ...values) =>
+            transaction.$queryRaw(strings, ...values),
+          emailVerification: {
             deleteMany: (input) =>
-              transaction.passwordReset.deleteMany(input),
+              transaction.emailVerification.deleteMany(input),
           },
-          user: {
-            async update() {
-              throw new Error("Injected password update failure");
+          passwordReset: {
+            async deleteMany(input) {
+              if ("id" in input.where) {
+                const result = await transaction.passwordReset.deleteMany(
+                  input,
+                );
+                assert.equal(result.count, 1);
+                exactClaimWasDeleted = true;
+                return result;
+              }
+              assert.equal(exactClaimWasDeleted, true);
+              throw new Error("Injected reset sibling cleanup failure");
             },
           },
-        }),
-      ),
+          user: {
+            updateMany: (input) => transaction.user.updateMany(input),
+          },
+        });
+      }),
   };
 }
 
@@ -138,7 +226,6 @@ function trustedRequest(token: string, password: string): NextRequest {
 function createDatabaseHandler(
   prisma: PrismaClient,
   database: PasswordResetConfirmDatabase,
-  resetAt: Date,
   failures: PasswordResetConfirmFailure[],
   lookupCounts: { hash: number; legacy: number },
   commitCounts?: { attempts: number; winners: number },
@@ -182,20 +269,18 @@ function createDatabaseHandler(
       NextResponse.json({
         message: PASSWORD_RESET_CONFIRM_SUCCESS_MESSAGE,
       }),
-    async commitReset(claim, passwordHash, claimResetAt) {
+    async commitReset(claim, passwordHash) {
       if (commitCounts) commitCounts.attempts += 1;
       await commitPasswordResetConfirmation(
         database,
         claim,
         passwordHash,
-        claimResetAt,
       );
       if (commitCounts) commitCounts.winners += 1;
     },
     reportFailure(failure) {
       failures.push(failure);
     },
-    now: () => resetAt,
   });
 }
 
@@ -241,6 +326,20 @@ test(
         expires,
       },
     });
+    const verificationRawToken = randomBytes(32).toString("hex");
+    const verificationHash = hashCredentialToken(
+      "email-verification",
+      verificationRawToken,
+    );
+    assert.ok(verificationHash);
+    await prisma.emailVerification.create({
+      data: {
+        userId: hashUser.id,
+        token: null,
+        tokenHash: verificationHash,
+        expires,
+      },
+    });
 
     const barrier = createTwoWorkerBarrier();
     const hashFailures: PasswordResetConfirmFailure[] = [];
@@ -249,7 +348,6 @@ test(
     const hashHandler = createDatabaseHandler(
       prisma,
       barrierDatabaseAdapter(prisma, barrier),
-      resetAt,
       hashFailures,
       hashLookups,
       commitCounts,
@@ -300,6 +398,13 @@ test(
       await prisma.passwordReset.count({ where: { userId: hashUser.id } }),
       0,
     );
+    assert.equal(
+      await prisma.emailVerification.count({
+        where: { userId: hashUser.id },
+      }),
+      0,
+      "successful reset must revoke the real verification credential",
+    );
 
     // Legacy fixture proves hash-first miss followed by the compatibility key.
     const legacyUser = await prisma.user.create({
@@ -326,7 +431,6 @@ test(
     const legacyHandler = createDatabaseHandler(
       prisma,
       databaseAdapter(prisma),
-      resetAt,
       legacyFailures,
       legacyLookups,
     );
@@ -388,12 +492,11 @@ test(
 
     await assert.rejects(
       commitPasswordResetConfirmation(
-        failingPasswordUpdateAdapter(prisma),
+        failingAfterClaimDeleteAdapter(prisma),
         rollbackClaim,
         retryPasswordHash,
-        resetAt,
       ),
-      /Injected password update failure/,
+      /Injected reset sibling cleanup failure/,
     );
     const [rowAfterRollback, userAfterRollback] = await Promise.all([
       prisma.passwordReset.findUnique({ where: { id: rollbackRow.id } }),
@@ -409,7 +512,6 @@ test(
       databaseAdapter(prisma),
       rollbackClaim,
       retryPasswordHash,
-      resetAt,
     );
     const [rowAfterRetry, userAfterRetry] = await Promise.all([
       prisma.passwordReset.findUnique({ where: { id: rollbackRow.id } }),
@@ -423,5 +525,247 @@ test(
       await verifyPassword(retryPassword, userAfterRetry.passwordHash),
       true,
     );
+  },
+);
+
+test(
+  "reset confirm meri DB vreme posle stvarnog PasswordReset lock wait-a i odbacuje pripremljeni cookie bez mutacije",
+  { skip: !RUN_DATABASE_TESTS, timeout: 45_000 },
+  async (testContext) => {
+    assertSafeTestDatabase();
+
+    const { PrismaClient: RuntimePrismaClient } = await import(
+      "@prisma/client"
+    );
+    const observer = new RuntimePrismaClient();
+    const locker = new RuntimePrismaClient();
+    const worker = new RuntimePrismaClient();
+    const runId = randomUUID();
+    const email = `reset-confirm-lock-${runId}@example.invalid`;
+    const rawToken = randomBytes(32).toString("hex");
+    const tokenHash = hashCredentialToken("password-reset", rawToken);
+    assert.ok(tokenHash);
+
+    let releaseTokenLock: () => void = () => undefined;
+    let lockerTransaction: Promise<unknown> | null = null;
+    let confirmation: Promise<NextResponse> | null = null;
+    testContext.after(async () => {
+      releaseTokenLock();
+      await Promise.allSettled(
+        [lockerTransaction, confirmation].filter(
+          (value): value is Promise<unknown> => value !== null,
+        ),
+      );
+      try {
+        await observer.user.deleteMany({ where: { email } });
+      } finally {
+        await Promise.allSettled([
+          observer.$disconnect(),
+          locker.$disconnect(),
+          worker.$disconnect(),
+        ]);
+      }
+    });
+
+    const oldPasswordHash = await hashPassword("StaraLockLozinka1!");
+    const user = await observer.user.create({
+      data: {
+        email,
+        passwordHash: oldPasswordHash,
+        firstName: "Reset",
+        lastName: "Lock",
+      },
+      select: { id: true, updatedAt: true },
+    });
+    const reset = await observer.passwordReset.create({
+      data: {
+        userId: user.id,
+        token: null,
+        tokenHash,
+        expires: new Date(Date.now() + 60_000),
+      },
+      select: { id: true },
+    });
+
+    let signalTokenLock: (state: {
+      pid: number;
+      expiresAt: Date;
+    }) => void = () => undefined;
+    const tokenLockAcquired = new Promise<{
+      pid: number;
+      expiresAt: Date;
+    }>((resolve) => {
+      signalTokenLock = resolve;
+    });
+    const releaseRequested = new Promise<void>((resolve) => {
+      releaseTokenLock = resolve;
+    });
+    lockerTransaction = locker.$transaction(
+      async (transaction) => {
+        const pidRows = await transaction.$queryRaw<Array<{ pid: number }>>`
+          SELECT pg_backend_pid() AS "pid"
+        `;
+        const blockerPid = pidRows[0]?.pid;
+        assert.equal(pidRows.length, 1);
+        assert.ok(Number.isInteger(blockerPid));
+
+        await transaction.$executeRaw`
+          UPDATE public."PasswordReset"
+          SET "expires" =
+            clock_timestamp()::timestamptz(3) + INTERVAL '3 seconds'
+          WHERE "id" = ${reset.id}
+        `;
+        const rows = await transaction.$queryRaw<
+          Array<{ id: string; expires: Date }>
+        >`
+          SELECT "id", "expires"
+          FROM public."PasswordReset"
+          WHERE "id" = ${reset.id}
+        `;
+        const locked = rows[0];
+        assert.equal(rows.length, 1);
+        assert.equal(locked?.id, reset.id);
+        assert.ok(locked?.expires instanceof Date);
+        signalTokenLock({
+          pid: blockerPid as number,
+          expiresAt: locked.expires,
+        });
+        await releaseRequested;
+      },
+      { timeout: 15_000 },
+    );
+
+    const { pid: blockerPid, expiresAt } = await Promise.race([
+      tokenLockAcquired,
+      lockerTransaction.then(() => {
+        throw new Error("PasswordReset lock je pušten pre signala testa");
+      }),
+    ]);
+
+    let resolveWorker: (started: ObservedWorkerStart) => void = () =>
+      undefined;
+    let rejectWorker: (error: unknown) => void = () => undefined;
+    const workerStarted = new Promise<ObservedWorkerStart>(
+      (resolve, reject) => {
+        resolveWorker = resolve;
+        rejectWorker = reject;
+      },
+    );
+    const failures: PasswordResetConfirmFailure[] = [];
+    let preparedCookie: string | null = null;
+    const handler = createPasswordResetConfirmHandler({
+      checkRateLimit: () => true,
+      validatePassword,
+      createLookupKeys: (token) =>
+        createCredentialTokenLookupKeys("password-reset", token),
+      findByCurrentHash: (currentHash) =>
+        observer.passwordReset.findUnique({
+          where: { tokenHash: currentHash },
+          select: {
+            id: true,
+            userId: true,
+            token: true,
+            tokenHash: true,
+            expires: true,
+          },
+        }),
+      findByLegacyToken: (legacyPlaintext) =>
+        observer.passwordReset.findFirst({
+          where: { token: legacyPlaintext, tokenHash: null },
+          select: {
+            id: true,
+            userId: true,
+            token: true,
+            tokenHash: true,
+            expires: true,
+          },
+        }),
+      hashPassword,
+      prepareSuccessResponse() {
+        const response = NextResponse.json({
+          message: PASSWORD_RESET_CONFIRM_SUCCESS_MESSAGE,
+        });
+        response.cookies.set("prepared-reset-session", "must-be-discarded", {
+          httpOnly: true,
+          sameSite: "lax",
+          path: "/",
+        });
+        preparedCookie = response.headers.get("set-cookie");
+        return response;
+      },
+      commitReset: (claim, preparedPasswordHash) =>
+        commitPasswordResetConfirmation(
+          observedDatabaseAdapter(worker, resolveWorker, rejectWorker),
+          claim,
+          preparedPasswordHash,
+        ),
+      reportFailure(failure) {
+        failures.push(failure);
+      },
+    });
+
+    confirmation = handler(
+      trustedRequest(rawToken, "NovaLockLozinka2!"),
+    );
+    const started = await workerStarted;
+    await waitForSpecificRowLock(observer, started.pid, blockerPid);
+
+    const whileBlocked = await observer.$queryRaw<Array<{ at: Date }>>`
+      SELECT clock_timestamp()::timestamptz(3) AS "at"
+    `;
+    assert.ok(whileBlocked[0]?.at instanceof Date);
+    assert.ok(
+      whileBlocked[0].at.getTime() < expiresAt.getTime(),
+      "worker mora ući u row-lock wait pre isteka reset tokena",
+    );
+
+    const deadline = Date.now() + 5_000;
+    let crossedExpiry = false;
+    while (Date.now() < deadline) {
+      const rows = await observer.$queryRaw<Array<{ at: Date }>>`
+        SELECT clock_timestamp()::timestamptz(3) AS "at"
+      `;
+      const databaseNow = rows[0]?.at;
+      assert.ok(databaseNow instanceof Date);
+      if (databaseNow.getTime() >= expiresAt.getTime()) {
+        crossedExpiry = true;
+        break;
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(
+      crossedExpiry,
+      true,
+      "DB expiry granica nije dostignuta dok je PasswordReset lock držan",
+    );
+
+    releaseTokenLock();
+    await lockerTransaction;
+    const response = await confirmation;
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      error: PASSWORD_RESET_CONFIRM_INVALID_MESSAGE,
+    });
+    assert.equal(response.headers.get("set-cookie"), null);
+    assert.match(
+      preparedCookie ?? "",
+      /prepared-reset-session=must-be-discarded/,
+    );
+    assert.deepEqual(failures, [{ stage: "COMMIT" }]);
+
+    const [storedUser, storedReset] = await Promise.all([
+      observer.user.findUniqueOrThrow({
+        where: { id: user.id },
+        select: { passwordHash: true, updatedAt: true },
+      }),
+      observer.passwordReset.findUnique({
+        where: { id: reset.id },
+        select: { tokenHash: true, expires: true },
+      }),
+    ]);
+    assert.equal(storedUser.passwordHash, oldPasswordHash);
+    assert.equal(storedUser.updatedAt.getTime(), user.updatedAt.getTime());
+    assert.equal(storedReset?.tokenHash, tokenHash);
+    assert.equal(storedReset?.expires.getTime(), expiresAt.getTime());
   },
 );

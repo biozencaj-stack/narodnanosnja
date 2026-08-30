@@ -33,6 +33,7 @@ interface StoredEmailVerification extends EmailVerificationRouteRecord {
   user: {
     id: string;
     email: string;
+    passwordHash: string;
     role: Role;
     firstName: string;
     lastName: string;
@@ -170,6 +171,7 @@ function createProductionHandlers(
           role: verification.user.role,
           firstName: verification.user.firstName,
           lastName: verification.user.lastName,
+          requiresEmailVerification: false,
           sub: verification.user.id,
         },
         secret: authSecret,
@@ -186,10 +188,10 @@ function createProductionHandlers(
       });
       return response;
     },
-    commitVerification: (verifiedAt, verification) => {
+    commitVerification: (verification) => {
       const claim = createStoredEmailVerificationClaim(verification);
       if (!claim) throw new EmailVerificationConflictError();
-      return commitEmailVerification(prisma, claim, verifiedAt);
+      return commitEmailVerification(prisma, claim);
     },
     untrustedWriteResponse: forbiddenResponse,
     invalidTokenResponse: () =>

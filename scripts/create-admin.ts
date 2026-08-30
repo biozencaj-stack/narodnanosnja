@@ -1,223 +1,362 @@
 #!/usr/bin/env npx tsx
 /**
- * CLI Script za kreiranje Admin/Operator korisnika
+ * Bezbedno kreiranje ili eksplicitno ažuriranje ADMIN/OPERATOR naloga.
  *
- * Upotreba:
- *   npx tsx scripts/create-admin.ts --email admin@[COMPANY_NAME].rs --password Lozinka123! --role ADMIN
- *   npx tsx scripts/create-admin.ts --email operator@[COMPANY_NAME].rs --password Lozinka123! --role OPERATOR
- *
- * Ili interaktivno (pita za input):
- *   npx tsx scripts/create-admin.ts
+ * Lozinka nikada nije podržana kao argument komandne linije. Prosledite je
+ * preko standardnog ulaza ili je unesite u maskiranom interaktivnom promptu.
  */
 
 import { PrismaClient } from "@prisma/client";
-import bcrypt from "bcryptjs";
-import * as readline from "readline";
+import { createInterface } from "node:readline";
+import { normalizeEmailAddress } from "../lib/auth/email-address";
+import {
+  MAX_BCRYPT_PASSWORD_BYTES,
+  hashPassword,
+  validatePassword,
+} from "../lib/auth/password";
+import {
+  createPrismaPrivilegedAccountDatabase,
+  provisionPrivilegedAccount,
+  type PrivilegedAccountRole,
+} from "../lib/auth/privileged-account";
 
-const prisma = new PrismaClient();
+interface CliArguments {
+  email?: string;
+  role?: string;
+  passwordStdin: boolean;
+  updateExisting: boolean;
+  help: boolean;
+}
 
-// Parse command line arguments
-function parseArgs(): { email?: string; password?: string; role?: string } {
-  const args = process.argv.slice(2);
-  const result: { email?: string; password?: string; role?: string } = {};
+class CliInputError extends Error {}
+class CliCancelledError extends Error {}
 
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--email" && args[i + 1]) {
-      result.email = args[i + 1];
-      i++;
-    } else if (args[i] === "--password" && args[i + 1]) {
-      result.password = args[i + 1];
-      i++;
-    } else if (args[i] === "--role" && args[i + 1]) {
-      result.role = args[i + 1].toUpperCase();
-      i++;
-    } else if (args[i] === "--help" || args[i] === "-h") {
-      console.log(`
-Kreiranje Admin/Operator korisnika za [COMPANY_NAME]
+const PASSWORD_STDIN_MAX_BYTES = MAX_BCRYPT_PASSWORD_BYTES + 2;
+const MASKED_PASSWORD_MAX_CHARACTERS = 4_096;
 
-Upotreba:
-  npx tsx scripts/create-admin.ts [opcije]
+function parseArguments(argv: readonly string[]): CliArguments {
+  // Reject the legacy secret-bearing argument even when help was requested.
+  // Never interpolate the supplied argument or adjacent value into output.
+  if (
+    argv.some(
+      (argument) =>
+        argument === "--password" || argument.startsWith("--password="),
+    )
+  ) {
+    throw new CliInputError(
+      "Lozinka kroz argument komandne linije nije dozvoljena.",
+    );
+  }
 
-Opcije:
-  --email <email>      Email adresa korisnika
-  --password <pass>    Lozinka (min 8 karaktera)
-  --role <role>        ADMIN ili OPERATOR
-  --help, -h           Prikaži pomoć
+  const result: CliArguments = {
+    passwordStdin: false,
+    updateExisting: false,
+    help: false,
+  };
+  const seen = new Set<string>();
 
-Primeri:
-  npx tsx scripts/create-admin.ts --email admin@[COMPANY_NAME].rs --password Minad123! --role ADMIN
-  npx tsx scripts/create-admin.ts --email operator@[COMPANY_NAME].rs --password Ratorope123! --role OPERATOR
-  npx tsx scripts/create-admin.ts  # Interaktivni režim
-      `);
-      process.exit(0);
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+
+    if (argument === "--help" || argument === "-h") {
+      result.help = true;
+      continue;
     }
+
+    if (argument === "--password-stdin") {
+      if (seen.has(argument)) throw new CliInputError("Duplirana opcija.");
+      seen.add(argument);
+      result.passwordStdin = true;
+      continue;
+    }
+
+    if (argument === "--update-existing") {
+      if (seen.has(argument)) throw new CliInputError("Duplirana opcija.");
+      seen.add(argument);
+      result.updateExisting = true;
+      continue;
+    }
+
+    if (argument === "--email" || argument === "--role") {
+      if (seen.has(argument)) throw new CliInputError("Duplirana opcija.");
+      const value = argv[index + 1];
+      if (!value || value.startsWith("--")) {
+        throw new CliInputError("Opciji nedostaje vrednost.");
+      }
+      seen.add(argument);
+      if (argument === "--email") result.email = value;
+      else result.role = value;
+      index += 1;
+      continue;
+    }
+
+    throw new CliInputError("Nepoznata opcija.");
   }
 
   return result;
 }
 
-// Prompt for input
-function prompt(question: string, hidden = false): Promise<string> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
+function printHelp(): void {
+  console.log(`
+Kreiranje ili ažuriranje privilegovanog naloga
 
-  return new Promise((resolve) => {
-    if (hidden) {
-      // For password input - note: this won't actually hide in all terminals
-      process.stdout.write(question);
-      let input = "";
+Upotreba:
+  npx tsx scripts/create-admin.ts [opcije]
 
-      process.stdin.setRawMode?.(true);
-      process.stdin.resume();
-      process.stdin.setEncoding("utf8");
+Opcije:
+  --email <adresa>       Email adresa naloga
+  --role <uloga>         Isključivo ADMIN ili OPERATOR
+  --password-stdin       Čitaj lozinku sa standardnog ulaza
+  --update-existing      Izričito dozvoli izmenu postojećeg naloga
+  --help, -h             Prikaži pomoć
 
-      const onData = (char: string) => {
-        if (char === "\n" || char === "\r" || char === "\u0004") {
-          process.stdin.setRawMode?.(false);
-          process.stdin.removeListener("data", onData);
-          rl.close();
-          console.log();
-          resolve(input);
-        } else if (char === "\u0003") {
-          // Ctrl+C
-          process.exit();
-        } else if (char === "\u007F" || char === "\b") {
-          // Backspace
-          if (input.length > 0) {
-            input = input.slice(0, -1);
-          }
-        } else {
-          input += char;
-        }
-      };
-
-      process.stdin.on("data", onData);
-    } else {
-      rl.question(question, (answer) => {
-        rl.close();
-        resolve(answer.trim());
-      });
-    }
-  });
+Bez --password-stdin lozinka se unosi kroz maskirani TTY prompt.
+Opcija --password nije dozvoljena zato što tajne ostaju u istoriji komandi i
+listi procesa. Promena uloge i opoziv postojećih JWT/sesija su zasebne radnje.
+`);
 }
 
-// Simple prompt without hiding (fallback)
-function simplePrompt(question: string): Promise<string> {
-  const rl = readline.createInterface({
+function promptVisible(question: string): Promise<string> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return Promise.reject(new CliInputError("Potreban je interaktivni TTY."));
+  }
+
+  const readline = createInterface({
     input: process.stdin,
     output: process.stdout,
   });
 
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
+  return new Promise((resolve, reject) => {
+    readline.once("SIGINT", () => {
+      readline.close();
+      reject(new CliCancelledError());
+    });
+    readline.question(question, (answer) => {
+      readline.close();
       resolve(answer.trim());
     });
   });
 }
 
-// Validate email
-function isValidEmail(email: string): boolean {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
-}
-
-// Validate password
-function isValidPassword(password: string): boolean {
-  return password.length >= 8;
-}
-
-// Validate role
-function isValidRole(role: string): role is "ADMIN" | "OPERATOR" {
-  return role === "ADMIN" || role === "OPERATOR";
-}
-
-async function main() {
-  console.log("\n🔐 [COMPANY_NAME] - Kreiranje Admin/Operator korisnika\n");
-
-  const args = parseArgs();
-
-  // Get email
-  let email = args.email;
-  if (!email) {
-    email = await simplePrompt("Email adresa: ");
-  }
-  if (!isValidEmail(email)) {
-    console.error("❌ Nevalidna email adresa");
-    process.exit(1);
+function promptMaskedPassword(question: string): Promise<string> {
+  const input = process.stdin;
+  const output = process.stdout;
+  if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== "function") {
+    return Promise.reject(
+      new CliInputError("Maskirani unos zahteva interaktivni TTY."),
+    );
   }
 
-  // Check if user already exists
-  const existingUser = await prisma.user.findUnique({
-    where: { email },
+  return new Promise((resolve, reject) => {
+    let password = "";
+    let settled = false;
+    const wasRaw = input.isRaw === true;
+    const wasPaused = input.isPaused();
+
+    const cleanup = () => {
+      input.removeListener("data", onData);
+      input.setRawMode?.(wasRaw);
+      if (wasPaused) input.pause();
+    };
+
+    const finish = (result: string | Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      output.write("\n");
+      if (typeof result === "string") resolve(result);
+      else reject(result);
+    };
+
+    const onData = (chunk: Buffer | string) => {
+      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      for (const character of text) {
+        if (character === "\r" || character === "\n") {
+          finish(password);
+          return;
+        }
+        if (character === "\u0003" || character === "\u0004") {
+          finish(new CliCancelledError());
+          return;
+        }
+        if (character === "\u007f" || character === "\b") {
+          const characters = Array.from(password);
+          if (characters.length > 0) {
+            characters.pop();
+            password = characters.join("");
+            output.write("\b \b");
+          }
+          continue;
+        }
+
+        const codePoint = character.codePointAt(0) ?? 0;
+        if (codePoint < 32 || codePoint === 127) continue;
+        if (Array.from(password).length >= MASKED_PASSWORD_MAX_CHARACTERS) {
+          finish(new CliInputError("Unos je predugačak."));
+          return;
+        }
+        password += character;
+        output.write("*");
+      }
+    };
+
+    output.write(question);
+    input.setEncoding("utf8");
+    input.setRawMode(true);
+    input.resume();
+    input.on("data", onData);
   });
-  if (existingUser) {
-    console.error(`❌ Korisnik sa emailom ${email} već postoji (role: ${existingUser.role})`);
-    const update = await simplePrompt("Da li želite da ažurirate ovog korisnika? (da/ne): ");
-    if (update.toLowerCase() !== "da" && update.toLowerCase() !== "d") {
-      console.log("Operacija otkazana.");
-      process.exit(0);
+}
+
+function containsControlCharacter(value: string): boolean {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (codePoint < 32 || codePoint === 127) return true;
+  }
+  return false;
+}
+
+async function readPasswordFromStdin(): Promise<string> {
+  if (process.stdin.isTTY) {
+    throw new CliInputError(
+      "--password-stdin zahteva preusmeren standardni ulaz.",
+    );
+  }
+
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  for await (const chunk of process.stdin) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+    totalBytes += buffer.byteLength;
+    if (totalBytes > PASSWORD_STDIN_MAX_BYTES) {
+      throw new CliInputError("Lozinka ne ispunjava bezbednosne uslove.");
+    }
+    chunks.push(buffer);
+  }
+
+  let password: string;
+  try {
+    password = new TextDecoder("utf-8", { fatal: true }).decode(
+      Buffer.concat(chunks),
+    );
+  } catch {
+    throw new CliInputError("Lozinka ne ispunjava bezbednosne uslove.");
+  }
+
+  if (password.endsWith("\r\n")) password = password.slice(0, -2);
+  else if (password.endsWith("\n")) password = password.slice(0, -1);
+
+  if (containsControlCharacter(password)) {
+    throw new CliInputError("Lozinka ne ispunjava bezbednosne uslove.");
+  }
+  return password;
+}
+
+function normalizeRole(value: string): PrivilegedAccountRole | null {
+  const normalized = value.trim().toUpperCase();
+  return normalized === "ADMIN" || normalized === "OPERATOR"
+    ? normalized
+    : null;
+}
+
+async function run(): Promise<number> {
+  const arguments_ = parseArguments(process.argv.slice(2));
+  if (arguments_.help) {
+    printHelp();
+    return 0;
+  }
+
+  if (
+    arguments_.passwordStdin &&
+    (!arguments_.email || !arguments_.role)
+  ) {
+    throw new CliInputError(
+      "Uz --password-stdin obavezni su --email i --role.",
+    );
+  }
+
+  const submittedEmail =
+    arguments_.email ?? (await promptVisible("Email adresa: "));
+  const normalizedEmail = normalizeEmailAddress(submittedEmail);
+  if (!normalizedEmail) {
+    throw new CliInputError("Email adresa nije validna.");
+  }
+
+  const submittedRole = arguments_.role ?? (await promptVisible("Uloga: "));
+  const role = normalizeRole(submittedRole);
+  if (!role) {
+    throw new CliInputError("Uloga mora biti ADMIN ili OPERATOR.");
+  }
+
+  let password = arguments_.passwordStdin
+    ? await readPasswordFromStdin()
+    : await promptMaskedPassword("Lozinka: ");
+  const validation = validatePassword(password);
+  if (!validation.valid) {
+    password = "";
+    throw new CliInputError(
+      "Lozinka ne ispunjava propisane bezbednosne uslove.",
+    );
+  }
+
+  let passwordHash: string;
+  try {
+    passwordHash = await hashPassword(password);
+  } finally {
+    // Best-effort shortening of the lifetime of the plaintext reference.
+    password = "";
+  }
+
+  const prisma = new PrismaClient();
+  try {
+    const result = await provisionPrivilegedAccount(
+      {
+        email: normalizedEmail,
+        passwordHash,
+        role,
+        updateExisting: arguments_.updateExisting,
+      },
+      createPrismaPrivilegedAccountDatabase(prisma),
+    );
+
+    if (result.kind === "exists") {
+      console.log(
+        "Nalog već postoji; bez --update-existing ništa nije promenjeno.",
+      );
+      return 2;
+    }
+
+    if (result.kind === "created") {
+      console.log("Privilegovani nalog je uspešno kreiran.");
+      return 0;
+    }
+
+    console.log("Privilegovani nalog je uspešno ažuriran.");
+    console.warn(
+      "Upozorenje: postojeći JWT/sesije nisu opozvani; opoziv je zasebna operacija.",
+    );
+    return 0;
+  } finally {
+    try {
+      await prisma.$disconnect();
+    } catch {
+      // Do not expose a raw disconnect error or let it mask the coarse result.
     }
   }
-
-  // Get password
-  let password = args.password;
-  if (!password) {
-    console.log("(Lozinka mora imati minimum 8 karaktera)");
-    password = await simplePrompt("Lozinka: ");
-  }
-  if (!isValidPassword(password)) {
-    console.error("❌ Lozinka mora imati minimum 8 karaktera");
-    process.exit(1);
-  }
-
-  // Get role
-  let role = args.role;
-  if (!role) {
-    role = await simplePrompt("Uloga (ADMIN/OPERATOR): ");
-    role = role.toUpperCase();
-  }
-  if (!isValidRole(role)) {
-    console.error("❌ Uloga mora biti ADMIN ili OPERATOR");
-    process.exit(1);
-  }
-
-  // Hash password
-  console.log("\n⏳ Kreiranje korisnika...");
-  const passwordHash = await bcrypt.hash(password, 12);
-
-  // Create or update user
-  const user = await prisma.user.upsert({
-    where: { email },
-    update: {
-      passwordHash,
-      role,
-      emailVerified: new Date(),
-    },
-    create: {
-      email,
-      passwordHash,
-      firstName: role === "ADMIN" ? "Admin" : "Operator",
-      lastName: "[COMPANY_NAME]",
-      role,
-      emailVerified: new Date(),
-    },
-  });
-
-  console.log(`\n✅ Korisnik uspešno ${existingUser ? "ažuriran" : "kreiran"}!`);
-  console.log(`   Email: ${user.email}`);
-  console.log(`   Uloga: ${user.role}`);
-  console.log(`   ID: ${user.id}`);
-  console.log("\n🎉 Gotovo! Korisnik se sada može ulogovati.\n");
 }
 
-main()
-  .catch((e) => {
-    console.error("❌ Greška:", e.message);
-    process.exit(1);
+run()
+  .then((exitCode) => {
+    process.exitCode = exitCode;
   })
-  .finally(async () => {
-    await prisma.$disconnect();
+  .catch((error: unknown) => {
+    if (error instanceof CliCancelledError) {
+      console.error("Operacija je otkazana.");
+    } else if (error instanceof CliInputError) {
+      // These messages are fixed strings and never include submitted values.
+      console.error(error.message);
+    } else {
+      console.error("Operacija nije uspela zbog interne greške.");
+    }
+    process.exitCode = 1;
   });

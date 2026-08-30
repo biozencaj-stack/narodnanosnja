@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { NextRequest, NextResponse } from "next/server";
-import { EmailVerificationConflictError } from "./email-verification";
+import {
+  EmailVerificationConflictError,
+  EmailVerificationExpiredError,
+} from "./email-verification";
 import {
   applyEmailVerificationPrivateHeaders,
   createEmailVerificationJsonResponse,
@@ -129,7 +132,6 @@ function dependencies(
     reportFailure(failure) {
       failures.push(failure);
     },
-    now: () => VERIFIED_AT,
     ...overrides,
   };
 }
@@ -266,13 +268,11 @@ test("POST enforces its local trusted-write guard before params and lookup", asy
 test("valid POST prepares session and full response before the commit", async () => {
   const calls: string[] = [];
   const failures: EmailVerificationRouteFailure[] = [];
-  let committedAt: Date | undefined;
   let committedRecord: TestVerification | undefined;
   const handlers = createEmailVerificationRouteHandlers(
     dependencies(calls, failures, {
-      async commitVerification(verifiedAt, verification) {
+      async commitVerification(verification) {
         calls.push("commit");
-        committedAt = verifiedAt;
         committedRecord = verification;
       },
     }),
@@ -297,7 +297,6 @@ test("valid POST prepares session and full response before the commit", async ()
     "prepare-success",
     "commit",
   ]);
-  assert.equal(committedAt, VERIFIED_AT);
   assert.equal(committedRecord, ACTIVE_VERIFICATION);
   assert.deepEqual(failures, []);
 });
@@ -345,10 +344,9 @@ test("commit remains deferred until asynchronous response preparation finishes",
   assert.deepEqual(failures, []);
 });
 
-test("a credential expiring during session or response preparation is never committed", async () => {
+test("DB expiry discovered at commit discards the prepared session cookie", async () => {
   const calls: string[] = [];
   const failures: EmailVerificationRouteFailure[] = [];
-  let clockReads = 0;
   const expires = new Date(VERIFIED_AT.getTime() + 30_000);
   const handlers = createEmailVerificationRouteHandlers(
     dependencies(calls, failures, {
@@ -356,9 +354,9 @@ test("a credential expiring during session or response preparation is never comm
         calls.push(`lookup:${token}`);
         return { ...ACTIVE_VERIFICATION, expires };
       },
-      now() {
-        clockReads += 1;
-        return clockReads === 1 ? VERIFIED_AT : expires;
+      async commitVerification() {
+        calls.push("commit-expired");
+        throw new EmailVerificationExpiredError();
       },
     }),
   );
@@ -372,10 +370,9 @@ test("a credential expiring during session or response preparation is never comm
     "current-session",
     "issue-session",
     "prepare-success",
+    "commit-expired",
     "expired",
   ]);
-  assert.equal(clockReads, 2);
-  assert.equal(calls.includes("commit"), false);
   assert.equal(response.headers.get("set-cookie"), null);
   assertProtected(response);
   assert.deepEqual(failures, []);
@@ -417,7 +414,7 @@ test("malformed and absent tokens are invalid without later work", async () => {
   }
 });
 
-test("expired tokens are reported read-only and boundary expiry is closed", async () => {
+test("expiry boundary remains DB-authoritative and closed", async () => {
   const calls: string[] = [];
   const failures: EmailVerificationRouteFailure[] = [];
   const expiredVerification = {
@@ -430,6 +427,10 @@ test("expired tokens are reported read-only and boundary expiry is closed", asyn
         calls.push(`lookup:${token}`);
         return expiredVerification;
       },
+      async commitVerification() {
+        calls.push("commit-expired");
+        throw new EmailVerificationExpiredError();
+      },
     }),
   );
 
@@ -437,8 +438,14 @@ test("expired tokens are reported read-only and boundary expiry is closed", asyn
 
   assert.equal(response.status, 410);
   assert.deepEqual(await response.json(), { kind: "expired" });
-  assert.deepEqual(calls, [`lookup:${TOKEN}`, "expired"]);
-  assert.equal(calls.includes("commit"), false);
+  assert.deepEqual(calls, [
+    `lookup:${TOKEN}`,
+    "current-session",
+    "issue-session",
+    "prepare-success",
+    "commit-expired",
+    "expired",
+  ]);
   assertProtected(response);
   assert.deepEqual(failures, []);
 });
@@ -514,8 +521,11 @@ test("every operational failure is stage-only and returns a retryable response",
     {
       stage: "EXPIRY_CHECK",
       override: {
-        now() {
-          throw new Error("sensitive clock");
+        async findVerification() {
+          return {
+            ...ACTIVE_VERIFICATION,
+            expires: new Date(Number.NaN),
+          };
         },
       },
     },

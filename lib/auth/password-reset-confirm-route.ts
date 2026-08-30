@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { readBoundedJson } from "../security/bounded-json";
 import { isTrustedWriteRequest } from "../security/origin";
 import {
   PasswordResetConfirmConflictError,
@@ -8,6 +9,7 @@ import { isBcryptSafePassword } from "./password";
 
 export const PASSWORD_RESET_CONFIRM_TOKEN_PATTERN = /^[0-9a-f]{64}$/i;
 export { MAX_BCRYPT_PASSWORD_BYTES } from "./password";
+export const MAX_PASSWORD_RESET_CONFIRM_JSON_BYTES = 1024;
 
 export const PASSWORD_RESET_CONFIRM_PRIVATE_HEADERS = {
   "Cache-Control": "private, no-store, max-age=0",
@@ -74,10 +76,8 @@ export interface PasswordResetConfirmHandlerDependencies {
   commitReset: (
     claim: PasswordResetConfirmClaim,
     passwordHash: string,
-    resetAt: Date,
   ) => Promise<void>;
   reportFailure: (failure: PasswordResetConfirmFailure) => void;
-  now?: () => Date;
 }
 
 function jsonResponse(body: unknown, status: number): NextResponse {
@@ -118,6 +118,31 @@ function safelyReportFailure(
   } catch {
     // Observability must never replace the generic public response.
   }
+}
+
+function exactPasswordResetConfirmBody(
+  body: unknown,
+): { token: unknown; password: unknown } | null {
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    Array.isArray(body) ||
+    Object.getPrototypeOf(body) !== Object.prototype
+  ) {
+    return null;
+  }
+
+  const keys = Object.keys(body);
+  if (
+    keys.length !== 2 ||
+    !Object.prototype.hasOwnProperty.call(body, "token") ||
+    !Object.prototype.hasOwnProperty.call(body, "password") ||
+    keys.some((key) => key !== "token" && key !== "password")
+  ) {
+    return null;
+  }
+
+  return body as { token: unknown; password: unknown };
 }
 
 function recordClaim(
@@ -179,21 +204,27 @@ export function createPasswordResetConfirmHandler(
         );
       }
 
-      let body: unknown;
-      try {
-        body = await request.json();
-      } catch {
+      const bodyResult = await readBoundedJson(
+        request,
+        MAX_PASSWORD_RESET_CONFIRM_JSON_BYTES,
+      );
+      if (!bodyResult.ok) {
+        const error =
+          bodyResult.status === 413
+            ? "Zahtev je prevelik."
+            : bodyResult.status === 415
+              ? "Nepodržan format zahteva."
+              : "Neispravan zahtev";
+        return jsonResponse({ error }, bodyResult.status);
+      }
+
+      const body = exactPasswordResetConfirmBody(bodyResult.value);
+      if (!body) {
         return jsonResponse({ error: "Neispravan zahtev" }, 400);
       }
 
-      const submittedToken =
-        typeof body === "object" && body !== null && "token" in body
-          ? (body as { token?: unknown }).token
-          : undefined;
-      const submittedPassword =
-        typeof body === "object" && body !== null && "password" in body
-          ? (body as { password?: unknown }).password
-          : undefined;
+      const submittedToken = body.token;
+      const submittedPassword = body.password;
 
       if (
         typeof submittedToken !== "string" ||
@@ -239,13 +270,9 @@ export function createPasswordResetConfirmHandler(
       const claim = recordClaim(record, keys, lookupKind);
 
       stage = "EXPIRY_CHECK";
-      const lookupAt = dependencies.now?.() ?? new Date();
       const expiryTime = record.expires.getTime();
-      if (!Number.isFinite(expiryTime) || !Number.isFinite(lookupAt.getTime())) {
+      if (!Number.isFinite(expiryTime)) {
         throw new Error("Invalid reset clock");
-      }
-      if (expiryTime <= lookupAt.getTime()) {
-        return invalidCredentialResponse();
       }
 
       stage = "PASSWORD_HASH";
@@ -256,23 +283,8 @@ export function createPasswordResetConfirmHandler(
         await dependencies.prepareSuccessResponse(),
       );
 
-      // Bcrypt and response preparation can cross the expiry boundary. Measure
-      // again immediately before the atomic claim and never move time backward.
-      stage = "EXPIRY_CHECK";
-      const beforeCommit = dependencies.now?.() ?? new Date();
-      if (!Number.isFinite(beforeCommit.getTime())) {
-        throw new Error("Invalid reset clock");
-      }
-      const resetAt =
-        beforeCommit.getTime() >= lookupAt.getTime()
-          ? beforeCommit
-          : lookupAt;
-      if (expiryTime <= resetAt.getTime()) {
-        return invalidCredentialResponse();
-      }
-
       stage = "COMMIT";
-      await dependencies.commitReset(claim, passwordHash, resetAt);
+      await dependencies.commitReset(claim, passwordHash);
 
       return successResponse;
     } catch (error) {

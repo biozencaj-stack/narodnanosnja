@@ -4,7 +4,10 @@ import {
   generateRawCredentialToken,
   hashCredentialToken,
 } from "@/lib/auth/credential-token";
-import { processPasswordResetRequest } from "@/lib/auth/password-reset-request";
+import {
+  createPrismaPasswordResetRequestDatabase,
+  processPasswordResetRequest,
+} from "@/lib/auth/password-reset-request";
 import { createPasswordResetRequestHandler } from "@/lib/auth/password-reset-request-route";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { sendPasswordResetEmail } from "@/lib/email/auth-emails";
@@ -14,40 +17,17 @@ function reportFailure({ stage }: { stage: string }): void {
   console.error("Password reset request internal failure", { stage });
 }
 
+const passwordResetDatabase =
+  createPrismaPasswordResetRequestDatabase(prisma);
+
 export const POST = createPasswordResetRequestHandler({
   checkRateLimit,
   schedule: (task) => after(task),
   processRequest: (email) =>
     processPasswordResetRequest(email, {
-      findUserByEmail: (normalizedEmail) =>
-        prisma.user.findUnique({
-          where: { email: normalizedEmail },
-          select: { id: true, email: true, firstName: true },
-        }),
+      ...passwordResetDatabase,
       generateToken: generateRawCredentialToken,
       hashToken: (token) => hashCredentialToken("password-reset", token),
-      now: () => new Date(),
-      replaceTokensForRequest: async ({
-        userId,
-        legacyPlaintextToken,
-        tokenHash,
-        expires,
-      }) => {
-        await prisma.passwordReset.upsert({
-          where: { userId },
-          create: {
-            userId,
-            token: legacyPlaintextToken,
-            tokenHash,
-            expires,
-          },
-          update: {
-            token: legacyPlaintextToken,
-            tokenHash,
-            expires,
-          },
-        });
-      },
       sendResetEmail: sendPasswordResetEmail,
       reportFailure,
     }),
