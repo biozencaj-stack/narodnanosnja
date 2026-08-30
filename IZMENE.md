@@ -11,7 +11,7 @@ Zapisa ima više i lako je otvoriti pogrešan. Poređano po dubini:
 
 | Dokument | Obim | Šta pokriva |
 | --- | --- | --- |
-| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 36 odeljaka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
+| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 37 odeljaka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
 | Ovaj fajl (`IZMENE.md`) | sažeti dnevnik | Hronologija i odluke — zašto je nešto urađeno tako |
 | `docs/ARCHITECTURE-V2.md` | 4 KB | Arhitektonske granice platforme |
 | `docs/CATALOG-MIGRATION-PLAN.md` | 10 KB | Redosled prelaska na generički katalog |
@@ -675,3 +675,31 @@ nisu dokazani i dok REVIEW inbox, reconciliation, refund i bankarski staging
 nisu završeni. Postojeći DB race test pokriva dva cleanup radnika; posebna
 real-DB trka cleanup-a sa payment start/callback putem ostaje dodatni uslov pre
 kartica.
+
+---
+
+## XV. Bezbedna newsletter odjava — 30. avgust 2026.
+
+Newsletter unsubscribe tok više nema javni fallback ključ niti mutaciju preko
+GET zahteva. Centralni `lib/newsletter/unsubscribe.ts` normalizuje adresu,
+potpisuje je HMAC tokenom i verifikuje token timing-safe poređenjem pre bilo
+kakvog pristupa bazi.
+
+Produkcija dobija zaseban `NEWSLETTER_UNSUBSCRIBE_SECRET` od najmanje 32 bajta.
+Podešen ali slab dedicated secret radi fail-closed i ne pada tiho na drugi
+ključ. Ranije poslati linkovi mogu privremeno da se verifikuju jakim
+`NEXTAUTH_SECRET` samo uz eksplicitni
+`NEWSLETTER_UNSUBSCRIBE_ACCEPT_NEXTAUTH_LEGACY=true`; novi linkovi se uvek
+potpisuju dedicated ključem, a migracioni flag se zatim vraća na `false`.
+
+GET link sada samo proverava potpis i vodi na `noindex`/`no-referrer` stranicu
+za potvrdu. Pretplata se menja tek potpisanim POST zahtevom posle izričitog
+klika korisnika. Jedna transakcija idempotentno deaktivira i korisničku i
+gostujuću pretplatu, bez otkrivanja da li adresa postoji. Posle uspeha email i
+Bearer token se uklanjaju iz browser URL-a i istorije.
+
+Regresioni testovi pokrivaju jake/slabe/nedostajuće ključeve, legacy migraciju,
+normalizaciju, pogrešne i rotirane tokene, URL izgradnju, zabranu mutacije bez
+autorizacije i idempotentnu deaktivaciju. PR #4 i završni objedinjeni V2 CI su
+zeleni. Promena nema Prisma migraciju, nije deployovana i nije menjala server,
+produkcione tajne ili podatke.
