@@ -376,8 +376,15 @@ commita. Ambiguous SMTP failure ne briše token i ne vraća cooldown/brojač.
 `after()` je lifecycle pomoć, ne durable queue. Pad procesa ili redeploy posle
 već vraćenog 202 može izgubiti registracionu/resend obradu. Transactional
 auth-email outbox, worker/retry, delivery monitoring i shutdown/redeploy smoke
-ostaju obavezni pre live-a. Završni lokalni/CI/PR dokaz za ovu etapu:
-`PENDING_FINAL_EVIDENCE`.
+ostaju obavezni pre live-a. Etapa je integrisana samo u V2 kroz PR #18:
+feature `964831f490b54a3f5b11ec0cecce8b562551d4d8`, merge
+`15c18cf1de19ceee4de4a06eff28bf7114d3fc19`, exact-head run `33317607438` i
+post-merge run `33317787952`, oba attempt 1 SUCCESS. Lokalno je 237 testova:
+229 pass, 8 očekivanih PostgreSQL skip-ova i 0 fail; u CI-ju svih 237 prolazi,
+uključujući 8 PostgreSQL scenarija. Lint, typecheck, Prisma validate,
+diff-check, mobile Chromium E2E i build 93/93 su zeleni. Release potvrda i
+produkcijski deploy su preskočeni; nema V2 release taga/deploymenta i live/prod
+stanje je netaknuto.
 
 Implementirana atomska registracija i resend još ne znače da login sme globalno
 da odbije svaki nalog sa `emailVerified = NULL`. Pre verified-login

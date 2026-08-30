@@ -1289,7 +1289,7 @@ Auth-token/reset-claim kod je integrisan isključivo u kanonsku V2 granu:
 | V2 merge | `8cf83e56be9cf0775db92ba9319eac5d993994e0` |
 | Post-merge run | [`33313329660`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33313329660), attempt 1, SUCCESS |
 | Post-merge poslovi | `Provera verzije` SUCCESS; `Potvrdi V2 release` SKIPPED; `Objavi na produkciju` SKIPPED |
-| Remote V2 head pri PR #16 post-merge proveri i baza ove docs grane | `8cf83e56be9cf0775db92ba9319eac5d993994e0` |
+| Remote V2 head pri PR #16 post-merge proveri | `8cf83e56be9cf0775db92ba9319eac5d993994e0` |
 | Release tagovi | nema `prodavnica-v2-*` tagova |
 
 Oba kompletna `Provera verzije` posla podigla su PostgreSQL 16, izvršila
@@ -1315,9 +1315,12 @@ netaknuti.
 Peta P1 auth etapa zatvara dve recovery granice koje su u prethodnim odeljcima
 namerno ostale otvorene: parcijalno kreiranje naloga bez verification
 credentiala i odsustvo samouslužnog, enumeration-safe resend toka. Kod je
-implementiran na zasebnoj V2 feature grani. Završni feature SHA, PR, exact-head
-run, merge SHA i post-merge run biće upisani tek kada zaista postoje:
-`PENDING_FINAL_EVIDENCE`.
+implementiran na grani `ispravka/v2-atomska-registracija-resend` kao feature
+`964831f490b54a3f5b11ec0cecce8b562551d4d8`. Kroz
+[PR #18](https://github.com/biozencaj-stack/narodnanosnja/pull/18), sa base
+granom isključivo `verzija/v2.0-univerzalna-platforma`, spojen je 30. avgusta
+2026. u 14:46:32 UTC kao merge
+`15c18cf1de19ceee4de4a06eff28bf7114d3fc19`.
 
 Ova etapa je razvojni/CI presek. Produkciona baza nije čitana ili menjana,
 migracija nije primenjena na server, `.env` i produkcione tajne nisu čitane,
@@ -1512,8 +1515,20 @@ Dodate su unit, route-contract i opt-in PostgreSQL provere za:
 
 Workflow uključuje `RUN_REGISTRATION_DB_TESTS=true` i
 `RUN_EMAIL_VERIFICATION_RESEND_DB_TESTS=true` uz izolovani PostgreSQL 16 servis.
-Tačni završni lokalni brojevi, build broj ruta, feature/PR/merge SHA i exact-head
-i post-merge runovi ne navode se unapred: `PENDING_FINAL_EVIDENCE`.
+Lokalno je kompletan paket imao 237 testova: 229 prolazi, 8 real-PostgreSQL
+scenarija je očekivano preskočeno bez bezbedne lokalne baze i nema failure-a.
+ESLint quiet, typecheck, Prisma validate, diff-check i probni build 93/93 su
+prošli. Exact-head pull-request run
+[`33317607438`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33317607438),
+attempt 1, završio je SUCCESS na tačnom feature SHA-u; post-merge V2 push run
+[`33317787952`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33317787952),
+attempt 1, završio je SUCCESS na tačnom merge SHA-u. Oba kompletna CI-ja
+izvršila su migration deploy, drift, DB smoke, lint, typecheck, svih 237 testova
+sa svih 8 PostgreSQL scenarija, mobile Chromium E2E i build. U post-merge run-u
+`Potvrdi V2 release` i `Objavi na produkciju` bili su SKIPPED. Remote V2 head je
+tačno merge SHA, nema `prodavnica-v2-*` tagova, nema deployment zapisa za merge
+SHA niti V2/production deploymenta; pet istorijskih deployment zapisa je
+nevezano.
 
 ### XXI.8. Šta ostaje pre live-a
 
