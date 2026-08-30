@@ -792,3 +792,14 @@ uniformnost, prefetch-safe POST potvrda umesto GET auto-login mutacije,
 hashovani jednokratni tokeni, atomska registracija i resend, kontrolisani
 verified-login rollout, session revocation/sveža role provera i shared login
 limiter. Live puštanje ostaje poslednja faza.
+
+Promena je potom spojena isključivo u kanonsku V2 granu kroz
+[PR #10](https://github.com/biozencaj-stack/narodnanosnja/pull/10). Feature
+commit je `db35f6efce16535e6f831fcf98549934c018d0cf`, a V2 merge
+`d6d44c806447d5e7211c9312fcaa0d98ef8f2c1b`. Exact-head run
+[`33305077539`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33305077539)
+i post-merge run
+[`33305210714`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33305210714)
+završili su uspešno; u oba su release potvrda i produkcijski deploy preskočeni.
+Read-only GitHub provera posle merge-a i dalje nalazi 0 production deployment
+zapisa.
