@@ -236,6 +236,30 @@ Ovo pravilo još ne znači da login sme globalno da odbije svaki nalog sa
 kontrolisani backfill postojećih naloga, atomska registracija, stvarni resend
 tok i bezbedan oporavak od SMTP greške.
 
+## Zahtev za reset lozinke (v2)
+
+Za svaki sintaksno validan email čiji je callback uspešno registrovan
+`POST /api/auth/reset-password/request` mora imati isti account-independent
+javni ugovor: neposredni HTTP 202, generičku poruku i `no-store`/`no-cache`
+zaglavlja. Lookup naloga, zamena tokena i SMTP ne smeju se vratiti u sinhroni
+response put; produkcijska ruta ih registruje kroz Next.js `after()` tek kao
+callback, nikada kao već pokrenut Promise. Nevalidan input, rate limit i
+sinhroni kvar samog scheduler-a mogu imati 400/429/503 jer nastaju pre lookup-a
+i ne zavise od postojanja naloga.
+
+Logovi ovog toka smeju da sadrže samo kontrolisanu fazu (`LOOKUP`,
+`TOKEN_REPLACEMENT`, `DELIVERY`, `SCHEDULING` ili `BACKGROUND`). Ne logovati
+email, token ili originalnu DB/SMTP grešku. Brisanje ranijih i kreiranje novog
+tokena ostaju jedna DB transakcija. SMTP greška ne sme automatski obrisati novi
+token, jer poruka može biti prihvaćena pre gubitka SMTP odgovora i korisnik bi
+dobio već poništen link.
+
+`after()` je lifecycle pomoć, ne durable delivery queue. Trenutna transakcija
+je atomska za jedan zahtev, ali bez unique/CAS/Serializable zaštite ne garantuje
+jedan token pod paralelnim zahtevima. Pre produkcije još su potrebni
+transactional outbox i runtime smoke, shared limiter i trusted-proxy client IP,
+hashovani tokeni, exactly-once reset confirm i PostgreSQL concurrency test.
+
 ## SMTP i slanje emaila (v2)
 
 Svaki email tok mora praviti transport isključivo kroz
@@ -325,6 +349,11 @@ Release tag se ne pravi tokom običnog razvoja; live puštanje je poslednji kora
 - [ ] Instalacija i provera VPS cleanup timera; kod endpointa postoji, ali još
       nije operativno zakazan niti smoke-testiran na serveru
 - [ ] REVIEW reconciliation, refund tok i email outbox
+- [ ] Transactional auth-email outbox i runtime dokaz da `after()` posao nije
+      izgubljen pri shutdown/redeploy granici
+- [ ] Hashovani reset tokeni, exactly-once confirm i concurrency-safe jedan
+      aktivni token po korisniku
+- [ ] Shared auth/reset limiter i eksplicitan trusted-proxy/client-IP ugovor
 
 ## Bezbedno objavljivanje šeme
 

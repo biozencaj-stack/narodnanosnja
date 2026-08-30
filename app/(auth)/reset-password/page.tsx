@@ -58,8 +58,8 @@ export default function ResetPasswordRequestPage() {
           Proverite email
         </h1>
         <p className="text-stone-600 mb-6">
-          Ako nalog sa email adresom <strong>{email}</strong> postoji, poslali
-          smo vam uputstva za resetovanje lozinke.
+          Ako nalog sa email adresom <strong>{email}</strong> postoji, uputstva
+          za resetovanje lozinke biće poslata.
         </p>
         <Link
           href="/login"
