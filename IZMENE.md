@@ -851,10 +851,19 @@ ostaviti dva važeća tokena. Tokeni su i dalje čitljivi u bazi, reset-confirm 
 nema exactly-once claim, a procesni LRU i ceo `x-forwarded-for` nisu shared
 limiter/trusted-proxy ugovor.
 
-Promena je trenutno lokalno završena na grani `ispravka/v2-reset-privacy`.
-GitHub PR, exact-head CI, V2 merge i post-merge dokaz biće upisani tek kada
-zaista postoje. Nema Prisma migracije, produkcionih podataka, servera, tajni,
-GitHub Environment promene, release taga ili live deploya. Sledeći auth koraci
-su prefetch-safe POST potvrda, hashovani jednokratni tokeni, exactly-once reset
+Promena je spojena isključivo u kanonsku V2 granu kroz
+[PR #12](https://github.com/biozencaj-stack/narodnanosnja/pull/12). Feature
+commit je `d7bf89494098c8d88d5f81ddd08af31e07e3b136`, a V2 merge
+`9f998866b1be2dad576f5c626fee05c41a978572`. Exact-head run
+[`33307015696`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33307015696)
+i post-merge run
+[`33307162583`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33307162583)
+završili su uspešno; u oba su `Potvrdi V2 release` i
+`Objavi na produkciju` preskočeni. Read-only provera posle merge-a nalazi 0
+production deployment zapisa.
+
+Nema Prisma migracije, produkcionih podataka, servera, tajni, GitHub
+Environment promene, release taga ili live deploya. Sledeći auth koraci su
+prefetch-safe POST potvrda, hashovani jednokratni tokeni, exactly-once reset
 confirm, atomska registracija/resend, session revocation i shared limiter. Live
 puštanje ostaje poslednja, posebno odobrena faza.

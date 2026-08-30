@@ -3145,21 +3145,34 @@ kartice nisu uključene i ništa nije pušteno live.
 
 ### 40.7. PR, exact-head i post-merge CI dokaz
 
-U trenutku ovog lokalnog zapisa kod i dokumentacija nalaze se samo na feature
-grani `ispravka/v2-reset-privacy`. PR broj, feature commit, exact-head run, V2
-merge SHA i post-merge run namerno nisu izmišljeni niti unapred upisani.
+Planirani V2-only redosled je završen stvarnim GitHub dokazima:
 
-Obavezan sledeći redosled je:
+1. feature commit
+   `d7bf89494098c8d88d5f81ddd08af31e07e3b136` pushovan je samo na
+   `ispravka/v2-reset-privacy`;
+2. [PR #12](https://github.com/biozencaj-stack/narodnanosnja/pull/12) otvoren
+   je kao non-draft sa base granom
+   `verzija/v2.0-univerzalna-platforma` i tačnim feature headom;
+3. exact-head pull-request run
+   [`33307015696`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33307015696)
+   završio je `SUCCESS` za 2 min 47 s;
+4. `Provera verzije` je prošla PostgreSQL 16, sve migracije, drift i DB
+   invarijante, lint, TypeScript, svih 126 testova sa oba uključena real-DB
+   scenarija, mobilni Chromium COD E2E i produkcijski build;
+5. `Potvrdi V2 release` i `Objavi na produkciju` bili su `SKIPPED`;
+6. PR je spojen samo u kanonsku V2 granu kao merge
+   `9f998866b1be2dad576f5c626fee05c41a978572`;
+7. post-merge push run
+   [`33307162583`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33307162583)
+   završio je `SUCCESS` za 2 min 40 s i ponovio kompletan pipeline;
+8. oba release posla bila su ponovo `SKIPPED`.
 
-1. commitovati pregledano radno stablo;
-2. pushovati samo feature granu;
-3. otvoriti PR isključivo ka `verzija/v2.0-univerzalna-platforma`;
-4. sačekati kompletan PostgreSQL/Chromium/build CI na tačnom head SHA-u;
-5. potvrditi da su `Potvrdi V2 release` i `Objavi na produkciju` preskočeni;
-6. spojiti samo u kanonsku V2 granu;
-7. ponoviti isti dokaz na post-merge SHA-u;
-8. tek tada dopuniti ovaj odeljak stvarnim linkovima i SHA vrednostima.
+Read-only GitHub API provera posle merge-a potvrdila je zatvoren/merged PR,
+tačan V2 base, feature head, merge SHA i kanonski V2 head. Ista provera nalazi
+0 `production` deployment zapisa. Presentation `main` nije bio base ili merge
+cilj, GitHub `production` Environment nije menjan, nije napravljen release tag,
+nije kontaktiran server i ništa nije pušteno live.
 
-Ni jedan od ovih koraka ne pravi release tag i ne pušta sajt live. Produkcijska
-aktivacija ostaje poslednja, posebno odobrena faza posle svih P0/P1, legalnih,
-infrastrukturnih, backup/restore i operativnih gate-ova.
+Produkcijska aktivacija ostaje poslednja, posebno odobrena faza posle svih
+preostalih P0/P1, legalnih, infrastrukturnih, backup/restore i operativnih
+gate-ova.
