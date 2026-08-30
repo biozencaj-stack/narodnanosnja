@@ -3,11 +3,11 @@
 > Datum preseka: 30. avgust 2026.<br>
 > Glavni projekat: `narodnanosnja-prodavnica`<br>
 > V2 grana: `verzija/v2.0-univerzalna-platforma`<br>
-> Aktuelni remote V2 head pre ove radne auth faze: `4e53d138b6b2c3c0c206ab6a28d169fecbbe4ab`<br>
+> Remote V2 head pri PR #16 post-merge proveri i baza ove docs grane: `8cf83e56be9cf0775db92ba9319eac5d993994e0`<br>
 > P1 auth izvorna grana: `ispravka/v2-auth-secret-verifikacija` — spojena kroz PR #10<br>
 > P1 reset-privacy izvorna grana: `ispravka/v2-reset-privacy` — spojena kroz PR #12<br>
 > P1 prefetch-safe izvorna grana: `ispravka/v2-prefetch-safe-verifikacija` — spojena kroz PR #14<br>
-> P1 auth-token/reset-claim radna grana: `ispravka/v2-hashovani-tokeni-reset-claim` — lokalno, PR/CI još pending<br>
+> P1 auth-token/reset-claim izvorna grana: `ispravka/v2-hashovani-tokeni-reset-claim` — spojena kroz PR #16<br>
 > Raniji konsolidovani test tree: `762f004ce8774ef24f61b9231394b4afb8b84331`<br>
 > Produkcijski status: V2 aplikacija nije deployovana; kartice su isključene; `main` nije menjan ovim V2 radom<br>
 > Svrha: samostalan, konsolidovan i detaljan opis svega što je urađeno do ovog preseka
@@ -81,14 +81,15 @@ su očekivano preskočena i nema failure-a. Exact-head run `33309850609` i
 post-merge run `33309984025` zatim su oba završila uspešno sa uključenim opt-in
 PostgreSQL testovima, Chromium smoke-om i buildom.
 
-Radni auth-token/reset-claim presek iz odeljka 34 podigao je lokalno stablo na
+Auth-token/reset-claim presek iz odeljka 34 podigao je lokalno stablo na
 172 testa: 169 prolazi, tri real-PostgreSQL scenarija su očekivano preskočena
 bez bezbedne lokalne test baze i nema failure-a. Lint, TypeScript, Prisma schema
 validate, `git diff --check` i probni produkcijski build prolaze; build je
 završio 91/91 stranica sa lažnim CI vrednostima i namerno nedostupnim loopback
-DB URL-om. Nova migracija/DB smoke nad realnim PostgreSQL-om, PR exact-head i
-post-merge CI još su pending i ne smeju se računati kao dokaz dok zaista ne
-prođu.
+DB URL-om. Exact-head run `33313169708` i post-merge run `33313329660` zatim su
+oba prošla kompletnu proveru nad izolovanim PostgreSQL 16 servisom, uključujući
+migraciju, ojačani DB smoke i sva tri opt-in testa. To nije produkcijska
+migracija ili live aktivacija.
 
 Osnovni deo izveštaja čuva prvobitni vremenski presek. Operativne dopune u
 odeljcima 30–34 opisuju naknadno implementiranu P0 release granicu i aktuelni
@@ -113,9 +114,9 @@ su:
 | Checkout | Server-authoritative cene, promocije, dostava i minimum; idempotentno i transakciono kreiranje porudžbine |
 | Zaliha | Stabilni `ProductSize` identiteti, soft-retire, CAS zaštita i exactly-once povrat zalihe/kupona |
 | Payment | Ojačan NestPay start/callback, payment state machine, audit događaji, `PROCESSING` i `REVIEW` |
-| Bezbednost | Deny-by-default admin, HTML sanitizacija, Origin zaštita, security headeri, reCAPTCHA, bezbedan login callback, centralni SMTP, potpisana newsletter odjava, reset-privacy i prefetch-safe email potvrda; lokalno je dodat compat hash-first auth credential i exactly-once reset-confirm presek |
-| Baza | Produkcioni baseline i tri ranija expand koraka, 42 tabele, 4 završene migracije, 0 drift i očuvani poslovni redovi; nova auth-token expand migracija je lokalno pripremljena, ali nije primenjena na produkciju |
-| CI | Poslednji integrisani prefetch-safe presek ima zeleni PostgreSQL/migration/smoke, lint, TypeScript, 145 testova, Chromium i build; novi lokalni presek ima 172 testa (169 pass/3 DB skip) i uspešan probni build 91/91, dok real-DB i exact-head CI još čekaju |
+| Bezbednost | Deny-by-default admin, HTML sanitizacija, Origin zaštita, security headeri, reCAPTCHA, bezbedan login callback, centralni SMTP, potpisana newsletter odjava, reset-privacy, prefetch-safe email potvrda i integrisan compat hash-first/exactly-once reset-confirm presek |
+| Baza | Produkcioni baseline i tri ranija expand koraka, 42 tabele, 4 produkciono završene migracije i 0 ranijeg drift-a; nova auth-token expand migracija dokazana je na praznoj CI bazi, ali nije primenjena na produkciju |
+| CI | Auth-token feature i merge SHA imaju zeleni PostgreSQL 16 migrate/drift/smoke, sva tri DB integration testa, lint, TypeScript, Chromium COD E2E i build; lokalno ostaje 172/169/3 bez bezbedne DB baze |
 | Deployment | Izolovani release direktorijumi, health SHA provera, atomska aktivacija i rollback; produkcijski deploy još nije aktiviran |
 | Dokumentacija | Arhitektura, katalog migracija, rollout, GitHub deploy, Prisma baseline i konsolidovani dnevnici |
 
@@ -1071,7 +1072,9 @@ konfigurisan.
 Read-only audit od 30. avgusta 2026. potvrdio je da spoljašnji GitHub
 `production` Environment i dalje dopušta samo staru `main` branch politiku,
 nema required reviewer ni wait timer, ima 0 Environment secrets, 0 variables i
-0 deployment zapisa. `main` nema branch protection niti repository ruleset.
+0 `production` Environment deployment zapisa. Istorijski `github-pages`
+deploymenti nisu produkcijski V2 deploymenti. `main` nema branch protection
+niti repository ruleset.
 Ništa od tog spoljašnjeg stanja nije menjano ovom etapom.
 
 Allowed-tag policy/ruleset, obavezni reviewer, secrets i variables ostaju za
@@ -1915,39 +1918,43 @@ ovog rada:
 | Stavka | Stanje |
 | --- | --- |
 | Remote V2 grana | `origin/verzija/v2.0-univerzalna-platforma` |
-| Aktuelni remote V2 head pre radne auth-token faze | `4e53d138b6b2c3c0c206ab6a28d169fecbbe4ab` |
+| Remote V2 head pri PR #16 post-merge proveri i baza ove docs grane | `8cf83e56be9cf0775db92ba9319eac5d993994e0` |
 | V2 merge pre prvobitnog izveštaja | `79216213a3ad45d8d3be372aeb5f62dd5371cbe7` |
 | P0 release-granica merge | `6aa506924aa5b95d30e638adffa209c307aed6b0` |
 | P0 release-granica tree | `6a74eb3a1e159fcae2d700ea82a149ceace7e49c` |
 | Lokalni docs head pre ovog izveštaja | `4816b9319b376e741577536edea62d886a68665c` |
 | Lokalni docs tree | isti `762f004c...` |
 | Aktuelni presentation `main` | `0d28f8773272ccabb94ba0554c576ea810fdfd9a` |
-| PR #2–#6, #8 i #10–#14 | MERGED isključivo u V2 |
+| PR #2–#6, #8, #10–#16 | relevantni V2 PR-ovi MERGED isključivo u V2; PR #1 ostaje izuzetak opisan ispod |
 | PR #1 | CLOSED bez merge-a; istorijski pogrešan V2 → `main` put |
-| Poslednji objedinjeni kodni CI | run `33282336793`, SUCCESS |
-| Poslednji exact-tree docs CI | run `33282725051`, SUCCESS |
+| Raniji objedinjeni kodni CI | run `33282336793`, SUCCESS |
+| Raniji exact-tree docs CI | run `33282725051`, SUCCESS |
 | P0 exact-head PR CI | run `33302673497`, SUCCESS; oba release posla SKIPPED |
 | P0 post-merge V2 CI | run `33302806208`, SUCCESS; oba release posla SKIPPED |
 | Auth exact-head/post-merge CI | runovi `33305077539`/`33305210714`, SUCCESS; release poslovi SKIPPED |
 | Reset exact-head/post-merge CI | runovi `33307015696`/`33307162583`, SUCCESS; release poslovi SKIPPED |
 | Prefetch-safe exact-head/post-merge CI | runovi `33309850609`/`33309984025`, SUCCESS; release poslovi SKIPPED |
 | Prefetch-safe feature/merge | `6ffd173b3eda59815894ea43181543791dba58a0` / `c96473c22fb56f8b6c1b5b34570936d526577c10` |
-| Deployment/tag dokaz za aktuelni merge | 0 deployment zapisa za merge SHA; 0 tagova pokazuje na merge |
+| Prefetch-safe deployment/tag dokaz | 0 deployment zapisa za merge SHA; 0 tagova pokazuje na merge |
 | Dokumentacioni PR #15 merge | `4e53d138b6b2c3c0c206ab6a28d169fecbbe4ab`; verification run uspešan posle rerun-a, release/deploy preskočeni |
-| Trenutna radna grana | `ispravka/v2-hashovani-tokeni-reset-claim`; lokalne izmene, PR/CI pending |
+| Auth-token feature/merge | `b6c7aada0a692b826ff04443308f62584c96fe0a` / `8cf83e56be9cf0775db92ba9319eac5d993994e0` |
+| Auth-token exact-head/post-merge CI | runovi `33313169708`/`33313329660`, attempt 1, SUCCESS; release/deploy poslovi SKIPPED |
+| Auth-token deployment/tag dokaz | 0 V2/production deployment zapisa; nema `prodavnica-v2-*` tagova |
+| GitHub deployment presek 30. avgusta 2026. | 5 istorijskih `main`/`github-pages` zapisa; najnoviji `2026-08-30T08:30:02Z`; nijedan V2 SHA/ref ili `production` |
+| Trenutna docs grana | `dokumentacija/v2-auth-token-ci-dokaz`; samo dokazna dokumentacija |
 
 Radni branch pre pravljenja ovog izveštaja bio je dokumentaciona grana sa istim
-stablom kao završni V2 merge. Sam izveštaj i prateća dopuna indeksa u
+početnim stablom kao PR #16 V2 merge. Sam izveštaj i prateća dopuna indeksa u
 `IZMENE.md` predstavljaju isključivo dokumentacionu izmenu: ne menjaju runtime,
 bazu, capability funkcije niti deployment stanje. Za njihov kasniji Git/PR
 status merodavni su aktuelni branch i GitHub evidencija, a ne ovaj vremenski
 presek.
 
-Naknadna dokumentaciona integracija kroz PR #15 pomerila je remote V2 head na
-`4e53d138...` bez runtime, release ili deploy posledice. Trenutni auth-token
-presek polazi upravo od tog head-a, ali još postoji samo na radnoj grani.
-Presentation `main`, GitHub `production` Environment i live stanje nisu
-menjani.
+Auth-token presek je zatim kroz PR #16 spojen isključivo u V2 i pomerio remote
+head na `8cf83e56...`. Exact-head i post-merge CI dokazali su ga na izolovanoj
+PostgreSQL bazi, dok su oba release/deploy posla preskočena. Presentation
+`main`, GitHub `production` Environment, server, produkcijska baza i live stanje
+nisu menjani.
 
 ### 25.2. Funkcionalno stanje
 
@@ -1956,8 +1963,8 @@ menjani.
 - guest COD happy path je browser-testiran;
 - server-authoritative quote/order/inventory/coupon tok postoji;
 - kartični kod i state machine postoje, ali capability je isključen;
-- četiri ranija P1 auth/security preseka su spojena u V2; auth-token/reset-claim
-  presek je lokalno implementiran, ali PR/CI/merge još čekaju;
+- auth-token/reset-claim presek je, pored ranijih P1 auth/security koraka,
+  spojen u V2 uz zeleni exact-head i post-merge real-DB CI;
 - reservation cleanup postoji u kodu, ali nije operativno zakazan;
 - generički katalog postoji na schema/API nivou, ali nije end-to-end aktivan;
 - admin ima važne operativne preglede, ali nema kompletan backoffice;
@@ -1970,6 +1977,8 @@ Raniji kontrolisani production DB rad je dokumentovan kao završen: 42 tabele,
 4 migracije, 0 drift i očuvani poslovni brojevi. Taj rezultat ne znači da je
 aktuelna V2 aplikacija na serveru. Pre sledeće DB/app promene stanje se mora
 ponovo nezavisno očitati; istorijski zapis nije dozvola za novu mutaciju.
+Nova auth-token migracija prošla je samo na praznoj izolovanoj CI bazi; nije
+primenjena na produkcionu bazu i ne menja navedeni produkcioni presek.
 
 ---
 
@@ -2052,8 +2061,8 @@ Potrebno je:
 
 Prva dva koraka preporučenog redosleda implementirana su, proverena i spojena u
 kanonsku V2 granu kroz PR #10. Reset-privacy korak zatim je integrisan kroz PR
-#12, a prefetch-safe potvrda kroz PR #14, svaki uz zaseban exact-head i
-post-merge CI dokaz:
+#12, prefetch-safe potvrda kroz PR #14, a auth-token/reset-claim presek kroz PR
+#16, svaki uz zaseban exact-head i post-merge CI dokaz:
 
 - javni `fallback-secret` je uklonjen, a jedini resolver odbija nedostajući,
   slab, razmacima okružen ili poznati placeholder ključ;
@@ -2088,11 +2097,11 @@ Preostali auth nalazi su:
 - login ne zahteva `emailVerified`;
 - registracija sada koristi stage-only delivery log i oprezan copy, ali i dalje
   nema pouzdan outbox ili stvarni resend;
-- lokalni radni presek uvodi unique reset-user/upsert i exactly-once
-  reset-confirm, ali još nema PR, real-DB CI ili V2 merge dokaz;
-- lokalni radni presek uvodi purpose-separated hash-first lookup, ali compat
-  dual-write i plaintext kolone/indeksi i dalje čuvaju čitljiv bearer dok se ne
-  završe runtime, TTL+grace i contract faza;
+- unique reset-user/upsert i exactly-once reset-confirm su integrisani i imaju
+  two-worker/legacy/rollback dokaz na izolovanom PostgreSQL-u;
+- purpose-separated hash-first lookup je integrisan, ali compat dual-write i
+  plaintext kolone/indeksi i dalje čuvaju čitljiv bearer dok se ne završe
+  produkcioni runtime, hash-only, TTL+grace i contract faza;
 - promena lozinke ne opoziva postojeće JWT sesije;
 - promena role može ostati keširana u postojećem JWT-u.
 
@@ -2106,18 +2115,18 @@ Preporučeni redosled popravke je:
    `after()` granica i isti account-dependent failure oblik;
 4. **Integrisano u V2 kroz PR #14:** prefetch-safe POST potvrda umesto GET
    auto-login mutacije;
-5. **Lokalno implementirano, integracija pending:** expand/compat hash kolone,
+5. **Integrisano u V2 kroz PR #16:** expand/compat hash kolone,
    hash-first/no-downgrade lookup, unique reset user i exactly-once reset
-   confirm;
-6. završiti finalni diff review, exact-head real-DB CI i V2-only merge tog preseka;
-7. pre runtime migracije uraditi duplicate audit, backup/restore i lock plan;
-8. posle compat dokaza preći na hash-only writes, sačekati TTL+grace i tek
+   confirm, uz zeleni exact-head/post-merge real-DB CI;
+6. pre produkcione runtime migracije uraditi duplicate audit, backup/restore i
+   lock plan;
+7. posle compat dokaza preći na hash-only writes, sačekati TTL+grace i tek
    contract migracijom ukloniti plaintext;
-9. atomska registracija i concurrency-safe resend/outbox;
-10. produkcioni audit/backfill `emailVerified` stanja;
-11. tek zatim verified-login enforcement;
-12. `sessionVersion`/revocation i sveža role provera za osetljive radnje;
-13. shared login limiter, lockout politika i po mogućstvu MFA za admin.
+8. atomska registracija i concurrency-safe resend/outbox;
+9. produkcioni audit/backfill `emailVerified` stanja;
+10. tek zatim verified-login enforcement;
+11. `sessionVersion`/revocation i sveža role provera za osetljive radnje;
+12. shared login limiter, lockout politika i po mogućstvu MFA za admin.
 
 Prva dva koraka imaju zeleni exact-head PR run `33305077539` na `db35f6e` i
 zeleni post-merge V2 push run `33305210714` na `d6d44c8`. Reset-privacy ima
@@ -2126,6 +2135,13 @@ zeleni exact-head run `33307015696` na `d7bf894` i zeleni post-merge run
 `33309850609` na `6ffd173` i zeleni post-merge run `33309984025` na
 `c96473c`. U svih šest run-ova release potvrda i produkcijski deploy bili su
 preskočeni. To nije live aktivacija.
+
+Auth-token presek ima zeleni exact-head run `33313169708` na `b6c7aada...` i
+zeleni post-merge run `33313329660` na `8cf83e56...`. Oba attempt 1 run-a
+izvršila su migraciju, drift, ojačani smoke, sva tri DB integration testa,
+lint, TypeScript, Chromium COD E2E i build; release potvrda i produkcijski
+deploy bili su preskočeni. To je CI dokaz na izolovanoj bazi, ne produkcijska
+migracija ili live aktivacija.
 
 ### 26.3. P1 — production dependency ranjivosti
 
@@ -2378,9 +2394,9 @@ privlačnosti funkcije.
 3. Završeno kroz PR #14: prefetch-safe native POST confirmation, canonical
    origin/cookie granica i sensitive-credential zaštita imaju zeleni exact-head
    i post-merge V2 CI, bez release/deploy posledice.
-4. Lokalno je implementiran expand/compat hash-first presek sa exactly-once
-   reset-confirmom i uspešnim probnim buildom; završiti real-DB exact-head CI i
-   V2-only integraciju.
+4. Završeno kroz PR #16: expand/compat hash-first presek sa exactly-once
+   reset-confirmom ima zeleni exact-head i post-merge PostgreSQL CI, bez
+   release/deploy posledice.
 5. Pre auth DB rollouta uraditi duplicate audit, backup/restore i lock plan;
    zatim compat runtime dokaz, hash-only writes, TTL+grace i contract cleanup.
 6. Uvesti atomsku registraciju, concurrency-safe resend i auth-email outbox.
@@ -2592,9 +2608,9 @@ specijalizovane detalje:
 - [`../README.md`](../README.md) — opšti ulaz u projekat, uz napomenu da
   zastarele V2 setup delove treba uskladiti pre produkcione upotrebe;
 - [GitHub Actions run `33282336793`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33282336793)
-  — poslednji zeleni objedinjeni kodni presek;
+  — raniji zeleni objedinjeni kodni presek;
 - [GitHub Actions run `33282725051`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33282725051)
-  — zeleni dokumentacioni head sa istim tree-em kao završni V2 merge;
+  — zeleni dokumentacioni head sa istim tree-em kao tadašnji završni V2 merge;
 - [PR #8](https://github.com/biozencaj-stack/narodnanosnja/pull/8) — P0 release
   granica spojena isključivo u kanonsku V2 granu;
 - [GitHub Actions run `33302673497`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33302673497)
@@ -3331,13 +3347,12 @@ Environment ostali su netaknuti.
 
 ## 34. P1 auth credential storage i atomska reset potvrda
 
-Ovaj odeljak opisuje najnoviji lokalni auth presek na grani
+Ovaj odeljak opisuje auth presek sa grane
 `ispravka/v2-hashovani-tokeni-reset-claim`, izvedenoj iz remote V2 head-a
-`4e53d138b6b2c3c0c206ab6a28d169fecbbe4ab`. U trenutku dokumentovanja kod je
-implementiran, lokalno statički/unit proveren i probno produkcijski izgrađen,
-ali real-PostgreSQL CI, PR, merge i post-merge dokaz još ne postoje. Zato se
-stanje ovde označava kao „lokalno implementirano”, ne kao „uklopljeno u V2” ili
-„aktivno”.
+`4e53d138b6b2c3c0c206ab6a28d169fecbbe4ab`. Feature `b6c7aada...` prošao je
+exact-head CI i kroz PR #16 spojen je samo u V2 kao `8cf83e56...`, uz ponovljen
+zeleni post-merge CI. Integracija u V2 ne znači da je migracija primenjena na
+produkciju ili da je aplikacija puštena live.
 
 ### 34.1. Šta je konkretno dodato
 
@@ -3440,7 +3455,7 @@ validiranog storefront `URL` objekta i strogo normalizovanog raw credentiala.
 Malformed, whitespace ili query-injected token prekida slanje. Raniji duplirani
 reset generator uklonjen je iz `lib/auth/password.ts`.
 
-### 34.4. Lokalni dokaz i pending granice
+### 34.4. Lokalni i CI dokaz
 
 | Provera | Trenutno stanje |
 | --- | --- |
@@ -3450,35 +3465,58 @@ reset generator uklonjen je iz `lib/auth/password.ts`.
 | Prisma schema validate | PASS sa lažnim loopback URL-om, bez DB konekcije |
 | `git diff --check` | PASS |
 | probni produkcijski build | PASS; 91/91 stranica uz lažne CI vrednosti i namerno nedostupan `127.0.0.1:9` DB URL; očekivani safe-default DB logovi, bez produkcione konekcije |
-| real PostgreSQL migracija/smoke/sva tri DB scenarija | pending kroz exact-head CI |
-| feature commit/push/PR | pending |
-| exact-head/post-merge V2 CI | pending |
+| real PostgreSQL migracija/smoke/sva tri DB scenarija | PASS na praznoj izolovanoj PostgreSQL 16 CI bazi u oba run-a |
+| feature commit/push/PR | `b6c7aada...`; PR #16 MERGED samo u V2 |
+| exact-head/post-merge V2 CI | `33313169708` / `33313329660`, attempt 1, SUCCESS |
 | release/deploy/live | nije pokrenuto; ostaje poslednja faza |
 
-Workflow je pripremljen sa `RUN_PASSWORD_RESET_CONFIRM_DB_TESTS=true`, pa
-budući exact-head run mora da izvrši sva tri real-DB scenarija: reservation
-cleanup, email verification i password reset confirm. Lokalna tri skip-a su
-zabeležena kao nedostatak real-DB dokaza, ne kao prolasci.
+Workflow sa `RUN_PASSWORD_RESET_CONFIRM_DB_TESTS=true` izvršio je sva tri
+real-DB scenarija: reservation cleanup, email verification i password reset
+confirm. Lokalna tri skip-a ostaju tačan lokalni rezultat; DB pokriće je
+dokazano zasebno u izolovanom CI-ju.
 
 ### 34.5. Zašto ovo još nije hash-only završetak
 
 Trenutni dual-write red i dalje sadrži upotrebljiv raw bearer. Završni
 credential-at-rest redosled je zato:
 
-1. završiti review i dobiti V2-only exact-head/post-merge CI;
-2. read-only auditirati duplicate reset redove i dokazati backup/restore;
-3. kontrolisano primeniti compat expand uz timeout/lock monitoring;
-4. runtime potvrditi hash-first ponašanje i rollback mogućnost;
-5. zasebnim presekom ugasiti plaintext dual-write;
-6. sačekati najduži verification/reset TTL plus grace period;
-7. dokazati nula legacy fallback čitanja;
-8. tek tada contract migracijom ukloniti plaintext kolone/indekse.
+1. read-only auditirati duplicate reset redove i dokazati backup/restore;
+2. kontrolisano primeniti compat expand uz timeout/lock monitoring;
+3. runtime potvrditi hash-first ponašanje i rollback mogućnost;
+4. zasebnim presekom ugasiti plaintext dual-write;
+5. sačekati najduži verification/reset TTL plus grace period;
+6. dokazati nula legacy fallback čitanja;
+7. tek tada contract migracijom ukloniti plaintext kolone/indekse.
 
 Nezavisno od toga ostaju atomska registracija, resend/cooldown/outbox,
 verified-login audit/backfill, session revocation, sveža role provera i shared
 limiter/trusted-proxy ugovor. Nijedna promena iz ovog odeljka nije menjala
 server, produkcione podatke/tajne, GitHub `production` Environment, release tag
 ili live sajt.
+
+### 34.6. PR #16, SHA i deployment dokaz
+
+| Stavka | Dokaz |
+| --- | --- |
+| Feature commit | `b6c7aada0a692b826ff04443308f62584c96fe0a` |
+| PR | [#16](https://github.com/biozencaj-stack/narodnanosnja/pull/16), base samo V2 |
+| Exact-head | [`33313169708`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33313169708), attempt 1, SUCCESS |
+| Merge | `8cf83e56be9cf0775db92ba9319eac5d993994e0` |
+| Post-merge | [`33313329660`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33313329660), attempt 1, SUCCESS |
+| Remote V2 head pri PR #16 post-merge proveri | `8cf83e56be9cf0775db92ba9319eac5d993994e0` |
+| Release/deploy poslovi | SKIPPED u oba run-a |
+| Release tagovi | nema `prodavnica-v2-*` tagova |
+
+Oba `Provera verzije` posla izvršila su PostgreSQL 16 migrate deploy, drift,
+ojačani DB invariant smoke, sva tri DB integration testa, lint, typecheck,
+Chromium COD E2E i build. Time je feature ponovljen na tačnom head-u i merge
+SHA-u, ali samo na praznoj izolovanoj CI bazi.
+
+Read-only GitHub provera 30. avgusta 2026. našla je pet istorijskih deployment
+zapisa. Svi pripadaju presentation `main`/`github-pages` toku, a najnoviji je
+`2026-08-30T08:30:02Z`. Nijedan nije vezan za V2 feature/merge SHA ili ref i
+nijedan nije environment `production`. Ispravna tvrdnja je 0 V2/production
+deployment zapisa iz ovog preseka, ne globalno 0 deployments.
 
 ---
 
@@ -3490,9 +3528,9 @@ ranija P1 hotfixa i sva tri integrisana auth preseka: auth hardening,
 reset-privacy i prefetch-safe verification, uz release mehanizam sa rollbackom.
 Repository-side V2 release granica i sva tri auth preseka imaju zelene
 exact-head i post-merge CI dokaze, uz preskočene release/deploy poslove.
-Četvrti auth-token/reset-claim presek je lokalno implementiran i probno
-izgrađen, ali još čeka real-DB CI, PR i V2 integraciju; njegova dual-write faza
-nije završni hash-only contract.
+Četvrti auth-token/reset-claim presek je integrisan kroz PR #16 i ima zeleni
+exact-head i post-merge real-DB CI; njegova dual-write faza ipak nije završni
+hash-only contract niti produkcijska migracija.
 Spoljašnja GitHub/live zaštita namerno još nije aktivirana. Najveći preostali
 rizik nije jedna izolovana funkcija, već poslednji kilometar: critical/high
 dependency i auth hardening, abuse/consent/email zaštita, pravni podaci i

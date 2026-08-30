@@ -1091,11 +1091,12 @@ release posla bila su preskočena i nijedan tag nije otvorio produkcijski put.
 
 ## XX. P1 auth credential storage i atomska reset potvrda — 30. avgust 2026.
 
-Četvrta P1 auth etapa radi se na grani
+Četvrta P1 auth etapa urađena je na grani
 `ispravka/v2-hashovani-tokeni-reset-claim`, izvedenoj iz kanonskog V2 head-a
-`4e53d138b6b2c3c0c206ab6a28d169fecbbe4ab`. Cilj je jedan strogi credential
-format za verification/reset, indeksirani hash-first lookup i exactly-once
-promena lozinke, uz kompatibilnost sa ranije izdatim linkovima.
+`4e53d138b6b2c3c0c206ab6a28d169fecbbe4ab`, i kroz PR #16 spojena isključivo u
+V2 kao `8cf83e56be9cf0775db92ba9319eac5d993994e0`. Cilj je jedan strogi
+credential format za verification/reset, indeksirani hash-first lookup i
+exactly-once promena lozinke, uz kompatibilnost sa ranije izdatim linkovima.
 
 Ovo je **expand/compat**, ne završni hash-only presek. Trenutni register i
 reset-request upisi privremeno čuvaju i raw token i hash; plaintext kolone i
@@ -1233,26 +1234,25 @@ U trenutku ove dopune važi:
 | Prisma schema validate | prolazi sa lažnim loopback DB URL-om, bez DB konekcije |
 | `git diff --check` | prolazi |
 | probni produkcijski build | PASS; 91/91 stranica, lažne CI tajne/URL-ovi i namerno nedostupan `127.0.0.1:9` DB URL; očekivani DB safe-default logovi, bez produkcione konekcije |
-| real-PostgreSQL migracija/smoke/test | lokalno nije pokrenuto; GitHub CI pending |
-| PR/exact-head/post-merge CI | pending; PR još nije otvoren |
+| real-PostgreSQL migracija/smoke/test | lokalno nije pokrenuto; kompletno prošlo na izolovanom PostgreSQL 16 servisu u exact-head i post-merge CI-ju |
+| PR/exact-head/post-merge CI | PR #16 spojen samo u V2; oba run-a SUCCESS, release/deploy poslovi SKIPPED |
 
 Tri skip-a su real-DB reservation-cleanup, email-verification i novi
 password-reset-confirm scenario. Workflow dobija
-`RUN_PASSWORD_RESET_CONFIRM_DB_TESTS=true`, pa budući exact-head CI mora da ga
-izvrši nad izolovanim PostgreSQL servisom zajedno sa migracijom i ojačanim DB
+`RUN_PASSWORD_RESET_CONFIRM_DB_TESTS=true`; exact-head i post-merge CI su ga
+izvršili nad izolovanim PostgreSQL servisom zajedno sa migracijom i ojačanim DB
 smoke-om.
 
 Produkcijska baza nije čitana ili kontaktirana, a nova migracija nije lokalno
 primenjena. Sadržaj `.env` nije ručno otvaran niti ispisivan; build loader ga je
 automatski učitao, ali su DB, auth, site URL i card-payment vrednosti eksplicitno
-pregazile lažne CI vrednosti. Ovaj presek još nema feature commit, remote push,
-PR, exact-head CI, merge ili post-merge run; dokazi se dopisuju tek kada zaista
-postoje.
+pregazile lažne CI vrednosti. Naknadni real-DB dokaz odnosi se isključivo na
+praznu izolovanu GitHub Actions PostgreSQL 16 bazu, ne na produkciju.
 
 ### XX.7. Preostali bezbedni redosled
 
-Posle završenog lokalnog builda, finalnog review-a i V2-only PR/CI dokaza, DB
-rollout i dalje mora ići fazno:
+Posle završenog lokalnog builda, finalnog review-a i uspešnog V2-only PR/CI
+dokaza, produkcioni DB rollout i dalje mora ići fazno:
 
 1. audit duplikata, backup/restore i lock-time plan;
 2. kontrolisana compat expand primena;
@@ -1268,3 +1268,35 @@ Nisu menjani server, produkcioni podaci/tajne, DNS/TLS/proxy, PM2, GitHub
 `production` Environment ili production secrets/variables. Nije napravljen
 release tag i ništa nije pušteno live. Live ostaje poslednja posebno odobrena
 faza.
+
+### XX.8. PR #16, exact-head i post-merge CI dokaz
+
+Auth-token/reset-claim kod je integrisan isključivo u kanonsku V2 granu:
+
+| Dokaz | Rezultat |
+| --- | --- |
+| Feature commit | `b6c7aada0a692b826ff04443308f62584c96fe0a` |
+| PR | [#16](https://github.com/biozencaj-stack/narodnanosnja/pull/16), base `verzija/v2.0-univerzalna-platforma` |
+| Exact-head run | [`33313169708`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33313169708), attempt 1, SUCCESS na tačnom feature SHA-u |
+| Exact-head poslovi | `Provera verzije` SUCCESS; `Potvrdi V2 release` SKIPPED; `Objavi na produkciju` SKIPPED |
+| V2 merge | `8cf83e56be9cf0775db92ba9319eac5d993994e0` |
+| Post-merge run | [`33313329660`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33313329660), attempt 1, SUCCESS |
+| Post-merge poslovi | `Provera verzije` SUCCESS; `Potvrdi V2 release` SKIPPED; `Objavi na produkciju` SKIPPED |
+| Remote V2 head pri PR #16 post-merge proveri i baza ove docs grane | `8cf83e56be9cf0775db92ba9319eac5d993994e0` |
+| Release tagovi | nema `prodavnica-v2-*` tagova |
+
+Oba kompletna `Provera verzije` posla podigla su PostgreSQL 16, izvršila
+`prisma migrate deploy`, drift proveru i ojačani DB invariant smoke, a zatim
+sva tri opt-in DB integration testa koja su lokalno bila preskočena. Prošli su
+i kompletan test paket, lint, TypeScript, Chromium COD E2E i produkcijski
+build. Migracija je time dokazana na praznoj izolovanoj CI bazi, ali nije
+primenjena na produkcionu bazu.
+
+Read-only GitHub provera 30. avgusta 2026. našla je pet deployment zapisa, ali
+svih pet pripada istorijskom presentation `main`/`github-pages` toku; najnoviji
+je iz
+`2026-08-30T08:30:02Z`. Nijedan zapis ne koristi feature/merge V2 SHA ili V2
+ref, niti environment `production`. Tačan zaključak za ovaj presek je zato
+**0 V2/production deployment zapisa**, a ne globalno nula GitHub deploymenta.
+Server, produkciona baza/migracija, tajne, release tag i live sajt ostali su
+netaknuti.
