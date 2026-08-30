@@ -674,6 +674,25 @@ floor-uje na ceo sekund iz tog istog `Date` uzorka. Time nema drugog
 `timestamp without time zone` clock polja koje Prisma može drugačije mapirati,
 a `sae - sat = 86400`, HMAC insert i policy hronologija ostaju nepromenjeni.
 
+Treći pokušaj, commit `e773a91150e2ea765e41b54fc8fff307d77fc6e5` i run
+`33330591629`, ponovo je stao na istoj assertion liniji, ali je novi coarse
+signal bio prazna lista faza. To dokazuje da issuer nije ni otvorio transakciju:
+odbio je ulaz pre `TIME_ZONE`. Pregled fixture-a je zatim dao egzaktan uzrok.
+Lokalni deo generisanog emaila
+`credentials-v2-belgrade-clock-<36-char UUID>` ima `66` znakova, dok zajednički
+email ugovor ispravno dozvoljava najviše `64`. Kraći `success` fixture ima `59`,
+`stale-bcrypt` tačno `64`, a `rollback` `60`, pa je samo navodno ne-UTC grana
+bila odbijena kao nekanonski kandidat. Prethodna dva neuspeha zato nisu dokaz
+DB timezone kvara i nisu stvarno izvršila Belgrade issuance transakciju.
+
+Fixture oznaka je skraćena na `belgrade`, čime lokalni deo ima `60` znakova.
+Helper sada za svaki kreirani credentials fixture eksplicitno proverava da
+`normalizeEmailAddress(user.email) === user.email`, pa buduća preduga ili
+nekanonska test adresa pada sa tačnim fixture objašnjenjem pre auth assertiona.
+Transaction-local UTC i apsolutne timestamp projekcije ostaju pregledano
+defense-in-depth ojačanje; njihov prvi stvarni real-PG Belgrade dokaz čeka
+sledeći run i neće biti proglašen zelenim unapred.
+
 ## 9. Obavezni transakcioni redosledi aktivacije i narednih faza
 
 Faze 4 i 5 prvo grade i testiraju dormantne orkestracione jezgre. One se ne
@@ -825,6 +844,8 @@ red nije tvrdnja o uspehu.
 | Faza 4 prvi real-PG pokušaj | [run `33329700089`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33329700089), credentials Belgrade fixture `FAIL`; release/deploy `SKIPPED` |
 | Faza 4 transaction-local UTC commit | `027b806950fc768cc9fa5ec9a83f1689e226b651` |
 | Faza 4 drugi real-PG pokušaj | [run `33330178183`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33330178183), isti coarse credentials ishod `FAIL`; ostali pre-test gate-ovi `PASS`, release/deploy `SKIPPED` |
+| Faza 4 apsolutni timestamp/coarse-stage commit | `e773a91150e2ea765e41b54fc8fff307d77fc6e5` |
+| Faza 4 treći real-PG pokušaj | [run `33330591629`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33330591629), `FAIL` pre transakcije; coarse faze `[]` otkrile predug fixture email; release/deploy `SKIPPED` |
 | Faza 4 zeleni exact-head dokaz | čeka sledeći dokazani korektivni presek |
 | Feature merge SHA | nije izvršen |
 | Post-merge V2 run | nije izvršen |

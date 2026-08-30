@@ -8,6 +8,7 @@ import {
   createPrismaCredentialsSessionIssuer,
   type CredentialsSessionIssuanceTransaction,
 } from "./credentials-session-issuance";
+import { normalizeEmailAddress } from "./email-address";
 import { CREDENTIALS_DUMMY_PASSWORD_HASH, hashPassword } from "./password";
 import { createAuthSessionStorageKey, generateAuthSessionSid } from "./session-claims";
 
@@ -98,6 +99,11 @@ test(
         },
         select: { id: true, email: true, passwordHash: true },
       });
+      assert.equal(
+        normalizeEmailAddress(user.email),
+        user.email,
+        "credentials issuer fixture email must itself be canonical",
+      );
       userIds.push(user.id);
       await prisma.$executeRaw`
         UPDATE public."User"
@@ -179,7 +185,7 @@ test(
       "stale bcrypt snapshot must not create a V2 Session",
     );
 
-    const belgradeUser = await createVerifiedUser("belgrade-clock");
+    const belgradeUser = await createVerifiedUser("belgrade");
     let observedIssuerTimeZone: string | null = null;
     const belgradeFailureReports: unknown[] = [];
     const belgradeIssuer = createCredentialsSessionIssuer({
