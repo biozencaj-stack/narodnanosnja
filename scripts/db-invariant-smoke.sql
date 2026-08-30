@@ -3,7 +3,239 @@
 -- Sve fixture vrednosti postoje samo unutar ove transakcije i uvek se vraćaju.
 
 BEGIN;
-SET LOCAL search_path = public, pg_catalog;
+SET LOCAL search_path = pg_catalog, public;
+
+-- Auth-token compatibility expand: hash columns are nullable while old and
+-- new application versions overlap, plaintext indexes remain available, and
+-- PasswordReset has at most one row per user.
+DO $$
+DECLARE
+  expected_index RECORD;
+BEGIN
+  IF (
+    SELECT "is_nullable"
+    FROM information_schema.columns
+    WHERE "table_schema" = 'public'
+      AND "table_name" = 'PasswordReset'
+      AND "column_name" = 'token'
+  ) IS DISTINCT FROM 'YES'
+     OR (
+       SELECT "is_nullable"
+       FROM information_schema.columns
+       WHERE "table_schema" = 'public'
+         AND "table_name" = 'PasswordReset'
+         AND "column_name" = 'tokenHash'
+     ) IS DISTINCT FROM 'YES'
+     OR (
+       SELECT "is_nullable"
+       FROM information_schema.columns
+       WHERE "table_schema" = 'public'
+         AND "table_name" = 'EmailVerification'
+         AND "column_name" = 'token'
+     ) IS DISTINCT FROM 'YES'
+     OR (
+       SELECT "is_nullable"
+       FROM information_schema.columns
+       WHERE "table_schema" = 'public'
+         AND "table_name" = 'EmailVerification'
+         AND "column_name" = 'tokenHash'
+     ) IS DISTINCT FROM 'YES' THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: auth token/tokenHash nullability is invalid';
+  END IF;
+
+  FOR expected_index IN
+    SELECT *
+    FROM (
+      VALUES
+        ('PasswordReset_tokenHash_key', 'PasswordReset', 'tokenHash', true),
+        ('EmailVerification_tokenHash_key', 'EmailVerification', 'tokenHash', true),
+        ('PasswordReset_userId_key', 'PasswordReset', 'userId', true),
+        ('PasswordReset_token_key', 'PasswordReset', 'token', true),
+        ('PasswordReset_token_idx', 'PasswordReset', 'token', false),
+        ('EmailVerification_token_key', 'EmailVerification', 'token', true),
+        ('EmailVerification_token_idx', 'EmailVerification', 'token', false)
+    ) AS required("indexName", "tableName", "columnName", "mustBeUnique")
+  LOOP
+    IF NOT EXISTS (
+      SELECT 1
+      FROM pg_catalog.pg_index AS catalog_index
+      JOIN pg_catalog.pg_class AS indexed_table
+        ON indexed_table.oid = catalog_index.indrelid
+      JOIN pg_catalog.pg_namespace AS table_namespace
+        ON table_namespace.oid = indexed_table.relnamespace
+      JOIN pg_catalog.pg_attribute AS indexed_column
+        ON indexed_column.attrelid = indexed_table.oid
+       AND indexed_column.attnum = catalog_index.indkey[0]
+      WHERE catalog_index.indexrelid = to_regclass(
+        format('public.%I', expected_index."indexName")
+      )
+        AND table_namespace.nspname = 'public'
+        AND indexed_table.relname = expected_index."tableName"
+        AND indexed_column.attname = expected_index."columnName"
+        AND NOT indexed_column.attisdropped
+        AND catalog_index.indisunique = expected_index."mustBeUnique"
+        AND catalog_index.indisvalid
+        AND catalog_index.indisready
+        AND NOT catalog_index.indnullsnotdistinct
+        AND catalog_index.indnkeyatts = 1
+        AND catalog_index.indnatts = 1
+        AND catalog_index.indpred IS NULL
+        AND catalog_index.indexprs IS NULL
+    ) THEN
+      RAISE EXCEPTION
+        'DB invariant smoke failed: index % is missing, invalid, not ready, or has the wrong table/column/uniqueness contract',
+        expected_index."indexName";
+    END IF;
+  END LOOP;
+
+  IF to_regclass('public."PasswordReset_userId_idx"') IS NOT NULL
+     OR to_regclass('public."PasswordReset_tokenHash_idx"') IS NOT NULL
+     OR to_regclass('public."EmailVerification_tokenHash_idx"') IS NOT NULL THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: redundant auth expand index exists';
+  END IF;
+
+  RAISE NOTICE 'PASS: auth token expand catalog contract is valid';
+END;
+$$;
+
+INSERT INTO "User" (
+  "id", "email", "passwordHash", "firstName", "lastName", "updatedAt"
+) VALUES
+  (
+    'codex-smoke-auth-user-a',
+    'codex-smoke-auth-a@example.invalid',
+    'codex-smoke-password-hash',
+    'Codex',
+    'Auth A',
+    CURRENT_TIMESTAMP
+  ),
+  (
+    'codex-smoke-auth-user-b',
+    'codex-smoke-auth-b@example.invalid',
+    'codex-smoke-password-hash',
+    'Codex',
+    'Auth B',
+    CURRENT_TIMESTAMP
+  );
+
+INSERT INTO "PasswordReset" (
+  "id", "userId", "token", "tokenHash", "expires"
+) VALUES (
+  'codex-smoke-password-reset-a',
+  'codex-smoke-auth-user-a',
+  NULL,
+  'v1:' || repeat('a', 64),
+  TIMESTAMP '2026-08-31 12:00:00'
+);
+
+DO $$
+DECLARE
+  rejected_user BOOLEAN := false;
+  rejected_hash BOOLEAN := false;
+BEGIN
+  BEGIN
+    INSERT INTO "PasswordReset" (
+      "id", "userId", "token", "tokenHash", "expires"
+    ) VALUES (
+      'codex-smoke-password-reset-duplicate-user',
+      'codex-smoke-auth-user-a',
+      'codex-smoke-reset-token-b',
+      'v1:' || repeat('b', 64),
+      TIMESTAMP '2026-08-31 13:00:00'
+    );
+  EXCEPTION WHEN unique_violation THEN
+    rejected_user := true;
+  END;
+
+  BEGIN
+    INSERT INTO "PasswordReset" (
+      "id", "userId", "token", "tokenHash", "expires"
+    ) VALUES (
+      'codex-smoke-password-reset-duplicate-hash',
+      'codex-smoke-auth-user-b',
+      'codex-smoke-reset-token-c',
+      'v1:' || repeat('a', 64),
+      TIMESTAMP '2026-08-31 13:00:00'
+    );
+  EXCEPTION WHEN unique_violation THEN
+    rejected_hash := true;
+  END;
+
+  IF NOT rejected_user OR NOT rejected_hash THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: PasswordReset uniqueness was not enforced';
+  END IF;
+
+  RAISE NOTICE 'PASS: PasswordReset userId and tokenHash uniqueness is enforced';
+END;
+$$;
+
+INSERT INTO "PasswordReset" (
+  "id", "userId", "token", "tokenHash", "expires"
+) VALUES (
+  'codex-smoke-password-reset-plaintext-compatible',
+  'codex-smoke-auth-user-b',
+  'codex-smoke-reset-token-legacy',
+  NULL,
+  TIMESTAMP '2026-08-31 14:00:00'
+);
+
+INSERT INTO "EmailVerification" (
+  "id", "userId", "token", "tokenHash", "expires"
+) VALUES
+  (
+    'codex-smoke-email-verification-a',
+    'codex-smoke-auth-user-a',
+    NULL,
+    'v1:' || repeat('c', 64),
+    TIMESTAMP '2026-08-31 12:00:00'
+  ),
+  (
+    'codex-smoke-email-verification-sibling',
+    'codex-smoke-auth-user-a',
+    NULL,
+    'v1:' || repeat('d', 64),
+    TIMESTAMP '2026-08-31 13:00:00'
+  );
+
+DO $$
+DECLARE
+  rejected BOOLEAN := false;
+BEGIN
+  BEGIN
+    INSERT INTO "EmailVerification" (
+      "id", "userId", "token", "tokenHash", "expires"
+    ) VALUES (
+      'codex-smoke-email-verification-duplicate-hash',
+      'codex-smoke-auth-user-b',
+      'codex-smoke-verification-token',
+      'v1:' || repeat('c', 64),
+      TIMESTAMP '2026-08-31 14:00:00'
+    );
+  EXCEPTION WHEN unique_violation THEN
+    rejected := true;
+  END;
+
+  IF NOT rejected THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: duplicate EmailVerification.tokenHash was accepted';
+  END IF;
+
+  RAISE NOTICE 'PASS: EmailVerification hash uniqueness and sibling rows are valid';
+END;
+$$;
+
+INSERT INTO "EmailVerification" (
+  "id", "userId", "token", "tokenHash", "expires"
+) VALUES (
+  'codex-smoke-email-verification-plaintext-compatible',
+  'codex-smoke-auth-user-b',
+  'codex-smoke-verification-token-legacy',
+  NULL,
+  TIMESTAMP '2026-08-31 15:00:00'
+);
 
 INSERT INTO "ProductType" (
   "id",

@@ -118,6 +118,7 @@ jobs:
         env:
           RUN_RESERVATION_CLEANUP_DB_TESTS: "true"
           RUN_AUTH_VERIFICATION_DB_TESTS: "true"
+          RUN_PASSWORD_RESET_CONFIRM_DB_TESTS: "true"
         run: npm test
 
       - name: Instaliraj Chromium za browser smoke test

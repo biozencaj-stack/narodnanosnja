@@ -11,8 +11,8 @@ Zapisa ima više i lako je otvoriti pogrešan. Poređano po dubini:
 
 | Dokument | Obim | Šta pokriva |
 | --- | --- | --- |
-| **`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-08-30.md`** | 33 glavna odeljka | **Konsolidovan presek svega urađenog.** Implementirano stanje, razlozi, Git/PR/CI dokazi, ključni fajlovi, P0/P1/P2 dug, preporučeni redosled i produkcioni checklist |
-| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 41 odeljak | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
+| **`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-08-30.md`** | 34 glavna odeljka | **Konsolidovan presek svega urađenog.** Implementirano stanje, razlozi, Git/PR/CI dokazi, ključni fajlovi, P0/P1/P2 dug, preporučeni redosled i produkcioni checklist |
+| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 42 odeljka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
 | Ovaj fajl (`IZMENE.md`) | sažeti dnevnik | Hronologija i odluke — zašto je nešto urađeno tako |
 | `docs/ARCHITECTURE-V2.md` | 4 KB | Arhitektonske granice platforme |
 | `docs/CATALOG-MIGRATION-PLAN.md` | 10 KB | Redosled prelaska na generički katalog |
@@ -1086,3 +1086,185 @@ smoke, lint, TypeScript i produkcijski build. Read-only GitHub provera potvrdila
 je tačan feature head, V2 base, merge SHA i remote V2 head. Presentation
 `main`, live sajt i GitHub `production` Environment ostali su netaknuti; oba
 release posla bila su preskočena i nijedan tag nije otvorio produkcijski put.
+
+---
+
+## XX. P1 auth credential storage i atomska reset potvrda — 30. avgust 2026.
+
+Četvrta P1 auth etapa radi se na grani
+`ispravka/v2-hashovani-tokeni-reset-claim`, izvedenoj iz kanonskog V2 head-a
+`4e53d138b6b2c3c0c206ab6a28d169fecbbe4ab`. Cilj je jedan strogi credential
+format za verification/reset, indeksirani hash-first lookup i exactly-once
+promena lozinke, uz kompatibilnost sa ranije izdatim linkovima.
+
+Ovo je **expand/compat**, ne završni hash-only presek. Trenutni register i
+reset-request upisi privremeno čuvaju i raw token i hash; plaintext kolone i
+indeksi ostaju zbog rolling/rollback prozora. Zato ova etapa još ne štiti novi
+credential od čitaoca baze. Ona postavlja format, konkurentnost i bezbedan
+redosled za kasniji hash-only/grace/contract prelaz.
+
+### XX.1. Centralni purpose-separated credential helper
+
+Novi `lib/auth/credential-token.ts` je jedini generator/parser/storage helper:
+
+- pravi 32 CSPRNG bajta kao tačno 64 lowercase hex znaka;
+- parser prihvata samo 64 hex znaka, normalizuje case i ne radi `trim()`;
+- storage ključ je lowercase `v1:<64-hex-sha256>`;
+- namespace, verzija i purpose (`email-verification` ili `password-reset`) su
+  odvojeni NUL bajtovima pre hashovanja, pa isti raw token u dva toka nema isti
+  hash;
+- lookup ključevi eksplicitno naređuju current hash pre legacy plaintexta;
+- recognizer odbija raw, uppercase, malformed i drugu storage verziju.
+
+Raw vrednost i dalje postoji samo zato što mora da stigne kroz email/browser
+capability granicu; current DB lookup i conditional claim koriste hash. Šest
+direktnih testova pokriva entropiju/format, strogi parser, poznate digest
+vrednosti, purpose separation, verziju i fail-closed input bez credential echo-a.
+
+### XX.2. Expand/compat šema i migracija bez automatskog čišćenja
+
+`PasswordReset.token` i `EmailVerification.token` postaju nullable, a oba
+modela dobijaju nullable unique `tokenHash`. `PasswordReset.userId` postaje
+unique, pa korisnik može imati najviše jedan reset red. Stari ne-unique user
+indeks se uklanja kao redundantan; svi plaintext token indeksi ostaju za compat.
+`EmailVerification.userId` ostaje ne-unique da bi sibling tokovi bili dozvoljeni
+do uspešnog atomic cleanup-a.
+
+Migracija `20260830000000_expand_hashed_auth_tokens` radi u transakciji, sa
+hardened `search_path = pg_catalog, public`, `lock_timeout='10s'` i
+`statement_timeout='2min'`. Pre promene šeme uzima
+`SHARE ROW EXCLUSIVE` lock nad `PasswordReset` i fail-closed traži duple
+`userId` vrednosti. Ako postoje, cela migracija se prekida. U migraciji nema
+`DELETE`, `UPDATE` ni `INSERT`: ne bira pobednički link i ne uništava podatke na
+osnovu neproverene pretpostavke. Pre produkcione primene obavezni su read-only
+audit, backup/restore dokaz, eksplicitno razrešenje svakog duplikata i plan za
+lock vreme. `statement_timeout` važi po SQL naredbi, dok DDL lockovi ostaju do
+`COMMIT`-a. Ako `prisma migrate deploy` zbog preflight-a ili timeout-a evidentira
+ovu migraciju kao neuspelu, prvo se potvrđuju potpuni PostgreSQL rollback i
+otklanjanje uzroka; tek zatim se kontrolisano radi
+`prisma migrate resolve --rolled-back 20260830000000_expand_hashed_auth_tokens`
+i ponavlja deploy. Resolve se ne koristi za prikrivanje delimičnog ili
+neistraženog stanja.
+
+`scripts/db-invariant-smoke.sql` unutar rollback transakcije proverava nullable
+kolone, hash-only i legacy-only redove, reset-user/hash uniqueness i dozvoljene
+verification sibling redove. Za svih sedam auth indeksa proverava da su
+`indisvalid` i `indisready`, da pripadaju tačno očekivanoj tabeli i jednoj
+očekivanoj koloni, kao i tačan unique/non-unique ugovor. Tako indeks istog
+imena na pogrešnoj tabeli/koloni ili parcijalno/nevalidno stanje ne može da dâ
+lažan PASS. PostgreSQL 16 `indnullsnotdistinct` takođe mora biti `false`, jer
+nullable compat kolone zavise od standardnog `NULLS DISTINCT` ponašanja.
+
+### XX.3. Jedan reset red i hash-first compat upis
+
+Immediate-202 reset-request ugovor ostaje nepromenjen: lookup, upis i SMTP su u
+`after()` callbacku. Privatni pipeline sada generiše raw token centralno,
+izračunava password-reset hash i prekida pre persistence/emaila ako credential
+nije validan. `PasswordReset.upsert({ where: { userId } })`, zajedno sa unique
+user indeksom, čuva najviše jedan aktivni reset red. Compat zapis još dual-write
+čuva raw token, current hash i expiry; samo raw token ide u email.
+
+Ovo rešava sibling redove pod paralelnim requestima, ali ne pretvara `after()`
+u durable queue. Process shutdown posle vraćenog 202 i dalje može izgubiti
+background posao, pa transactional outbox, worker/retry i delivery monitoring
+ostaju otvoreni.
+
+### XX.4. Exactly-once reset confirm
+
+Novi testabilni route/service tok sprovodi sledeći redosled:
+
+1. trusted same-origin guard pre body/config/DB rada;
+2. postojeći procesni rate limit;
+3. strogi JSON, 64-hex token i password tip;
+4. postojeća password politika plus najviše 72 UTF-8 bajta zbog bcrypt granice;
+5. current hash lookup prvi;
+6. legacy lookup tek posle hash promašaja i samo uz `tokenHash: null`;
+7. record-to-claim provera ponovo zabranjuje plaintext downgrade reda sa hashom;
+8. strogi prvi `expires > lookupAt` check;
+9. bcrypt i kompletan private success response pre mutacije;
+10. ponovno merenje vremena posle tih skupih koraka i strogi
+    `expires > resetAt` check;
+11. jedna transakcija conditional `deleteMany` claim-om vezuje `id`, `userId`,
+    tačan stored hash ili legacy token sa `tokenHash: null`, i expiry;
+12. samo `count === 1` menja `User.passwordHash` i briše sve reset siblinge;
+13. claim, password update i cleanup zajedno commit-uju ili rollback-uju.
+
+Concurrent gubitnik dobija isti generičan 400 kao nepostojeći/istekli link i ne
+dobija pripremljeni success. Operativni kvar daje generičan 503. Svaki odgovor
+ima private/no-store/no-referrer/noindex zaglavlja, a log sadrži samo kontrolisanu
+fazu bez tokena, hasha, emaila, lozinke ili raw exceptiona.
+
+Opt-in PostgreSQL test barijerom preklapa dva radnika sa dve različite nove
+lozinke: tačno jedan pobeđuje i samo njegov bcrypt hash ostaje. Isti test
+proverava hash-miss → čist legacy put i rollback/retry kada password update
+namerno zakaže posle conditional delete-a.
+
+### XX.5. Verification, registracija i email URL
+
+Verification zadržava prefetch-safe POST i session/response-before-commit
+invarijante. Produkcijski lookup traži hash prvi, a legacy red samo sa
+`tokenHash: null`. Claim se gradi iz credentiala stvarno pročitanog iz storage-a;
+red sa bilo kakvom current-column vrednošću ne može pasti na plaintext kopiju.
+Legacy conditional delete dodatno zahteva `tokenHash: null`.
+
+Po adversarial review-u verification sada ponovo meri vreme i posle session
+encode/response pripreme, neposredno pre atomic claima. Token koji je bio važeći
+pri lookup-u, ali istekne tokom tih koraka, dobija read-only late-expiry ishod:
+nema claima, `emailVerified` upisa, sibling cleanup-a ni session cookie-ja.
+
+Registracija koristi centralni generator i purpose-separated hash i u compat
+fazi dual-write čuva oba oblika. Top-level failure log je stage-only
+`{ stage: "REQUEST" }`. User i verification red ipak još nisu napravljeni u
+jednoj transakciji; pravi resend/cooldown i outbox ostaju sledeća faza.
+
+Novi `lib/email/auth-email-links.ts` pravi oba auth URL-a iz validiranog
+kanonskog storefront `URL` objekta i strogo normalizovanog raw credentiala.
+Malformed, razmacima okružen ili query-injected token fail-closed prekida slanje.
+
+### XX.6. Provere i tačan status preseka
+
+U trenutku ove dopune važi:
+
+| Provera | Rezultat |
+| --- | --- |
+| kompletan `npm test` | 172 ukupno; 169 prolazi; 3 očekivana opt-in PostgreSQL skip-a; 0 failure-a |
+| `npm run lint -- --quiet` | prolazi |
+| `npm run typecheck` | prolazi |
+| Prisma schema validate | prolazi sa lažnim loopback DB URL-om, bez DB konekcije |
+| `git diff --check` | prolazi |
+| probni produkcijski build | PASS; 91/91 stranica, lažne CI tajne/URL-ovi i namerno nedostupan `127.0.0.1:9` DB URL; očekivani DB safe-default logovi, bez produkcione konekcije |
+| real-PostgreSQL migracija/smoke/test | lokalno nije pokrenuto; GitHub CI pending |
+| PR/exact-head/post-merge CI | pending; PR još nije otvoren |
+
+Tri skip-a su real-DB reservation-cleanup, email-verification i novi
+password-reset-confirm scenario. Workflow dobija
+`RUN_PASSWORD_RESET_CONFIRM_DB_TESTS=true`, pa budući exact-head CI mora da ga
+izvrši nad izolovanim PostgreSQL servisom zajedno sa migracijom i ojačanim DB
+smoke-om.
+
+Produkcijska baza nije čitana ili kontaktirana, a nova migracija nije lokalno
+primenjena. Sadržaj `.env` nije ručno otvaran niti ispisivan; build loader ga je
+automatski učitao, ali su DB, auth, site URL i card-payment vrednosti eksplicitno
+pregazile lažne CI vrednosti. Ovaj presek još nema feature commit, remote push,
+PR, exact-head CI, merge ili post-merge run; dokazi se dopisuju tek kada zaista
+postoje.
+
+### XX.7. Preostali bezbedni redosled
+
+Posle završenog lokalnog builda, finalnog review-a i V2-only PR/CI dokaza, DB
+rollout i dalje mora ići fazno:
+
+1. audit duplikata, backup/restore i lock-time plan;
+2. kontrolisana compat expand primena;
+3. runtime dokaz hash-first/rollback ponašanja;
+4. zaseban prelaz novih upisa sa dual-write na hash-only;
+5. čekanje najdužeg auth-token TTL-a plus dogovoreni grace period uz nula
+   legacy fallback čitanja;
+6. tek onda contract migracija koja uklanja plaintext kolone/indekse;
+7. atomska registracija, resend/cooldown/outbox, verified-login audit/backfill,
+   session revocation i shared limiter/trusted-proxy ugovor.
+
+Nisu menjani server, produkcioni podaci/tajne, DNS/TLS/proxy, PM2, GitHub
+`production` Environment ili production secrets/variables. Nije napravljen
+release tag i ništa nije pušteno live. Live ostaje poslednja posebno odobrena
+faza.

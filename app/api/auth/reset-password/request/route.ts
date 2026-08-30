@@ -1,6 +1,9 @@
 import { after } from "next/server";
 import { prisma } from "@/lib/db";
-import { generateResetToken } from "@/lib/auth/password";
+import {
+  generateRawCredentialToken,
+  hashCredentialToken,
+} from "@/lib/auth/credential-token";
 import { processPasswordResetRequest } from "@/lib/auth/password-reset-request";
 import { createPasswordResetRequestHandler } from "@/lib/auth/password-reset-request-route";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -21,14 +24,28 @@ export const POST = createPasswordResetRequestHandler({
           where: { email: normalizedEmail },
           select: { id: true, email: true, firstName: true },
         }),
-      generateToken: generateResetToken,
+      generateToken: generateRawCredentialToken,
+      hashToken: (token) => hashCredentialToken("password-reset", token),
       now: () => new Date(),
-      replaceTokensForRequest: async ({ userId, token, expires }) => {
-        await prisma.$transaction(async (transaction) => {
-          await transaction.passwordReset.deleteMany({ where: { userId } });
-          await transaction.passwordReset.create({
-            data: { userId, token, expires },
-          });
+      replaceTokensForRequest: async ({
+        userId,
+        legacyPlaintextToken,
+        tokenHash,
+        expires,
+      }) => {
+        await prisma.passwordReset.upsert({
+          where: { userId },
+          create: {
+            userId,
+            token: legacyPlaintextToken,
+            tokenHash,
+            expires,
+          },
+          update: {
+            token: legacyPlaintextToken,
+            tokenHash,
+            expires,
+          },
         });
       },
       sendResetEmail: sendPasswordResetEmail,

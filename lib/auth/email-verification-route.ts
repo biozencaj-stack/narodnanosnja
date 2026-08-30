@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   EmailVerificationConflictError,
-  type EmailVerificationClaim,
   prepareVerificationSuccessBeforeCommit,
 } from "./email-verification";
+import { normalizeRawCredentialToken } from "./credential-token";
 import { isTrustedWriteRequest } from "../security/origin";
 
 export const EMAIL_VERIFICATION_TOKEN_PATTERN = /^[0-9a-f]{64}$/i;
@@ -87,7 +87,6 @@ export interface EmailVerificationRouteDependencies<
     request: NextRequest,
   ) => Awaitable<NextResponse>;
   commitVerification: (
-    claim: EmailVerificationClaim,
     verifiedAt: Date,
     verification: TVerification,
   ) => Promise<void>;
@@ -155,6 +154,13 @@ function safelyReportFailure(
   }
 }
 
+class EmailVerificationExpiredBeforeCommitError extends Error {
+  constructor() {
+    super("Email verification credential expired before commit");
+    this.name = "EmailVerificationExpiredBeforeCommitError";
+  }
+}
+
 export function createEmailVerificationRouteHandlers<
   TVerification extends EmailVerificationRouteRecord,
 >(dependencies: EmailVerificationRouteDependencies<TVerification>) {
@@ -190,16 +196,13 @@ export function createEmailVerificationRouteHandlers<
       }
 
       const { token: submittedToken } = await context.params;
-      if (
-        typeof submittedToken !== "string" ||
-        !EMAIL_VERIFICATION_TOKEN_PATTERN.test(submittedToken)
-      ) {
+      const token = normalizeRawCredentialToken(submittedToken);
+      if (!token) {
         return await prepareFailureResponse(
           dependencies.invalidTokenResponse,
           request,
         );
       }
-      const token = submittedToken.toLowerCase();
 
       stage = "LOOKUP";
       const verification = await dependencies.findVerification(token);
@@ -211,12 +214,13 @@ export function createEmailVerificationRouteHandlers<
       }
 
       stage = "EXPIRY_CHECK";
-      const verifiedAt = dependencies.now?.() ?? new Date();
+      const lookupAt = dependencies.now?.() ?? new Date();
       const expiresAt = verification.expires.getTime();
-      if (!Number.isFinite(expiresAt)) {
-        throw new Error("Invalid verification expiry");
+      const lookupTime = lookupAt.getTime();
+      if (!Number.isFinite(expiresAt) || !Number.isFinite(lookupTime)) {
+        throw new Error("Invalid verification clock");
       }
-      if (expiresAt <= verifiedAt.getTime()) {
+      if (expiresAt <= lookupTime) {
         // Expiry is read-only here. A retry, maintenance job or future resend
         // flow remains responsible for any token cleanup.
         return await prepareFailureResponse(
@@ -253,19 +257,36 @@ export function createEmailVerificationRouteHandlers<
           return applyEmailVerificationPrivateHeaders(response);
         },
         async () => {
+          // Session encoding and response preparation can cross the expiry
+          // boundary. Measure again immediately before the atomic claim and
+          // never allow a clock anomaly to move the claim time backwards.
+          stage = "EXPIRY_CHECK";
+          const beforeCommit = dependencies.now?.() ?? new Date();
+          const beforeCommitTime = beforeCommit.getTime();
+          if (!Number.isFinite(beforeCommitTime)) {
+            throw new Error("Invalid verification clock");
+          }
+          const verifiedAt =
+            beforeCommitTime >= lookupTime ? beforeCommit : lookupAt;
+          if (expiresAt <= verifiedAt.getTime()) {
+            throw new EmailVerificationExpiredBeforeCommitError();
+          }
+
           stage = "COMMIT";
           await dependencies.commitVerification(
-            {
-              id: verification.id,
-              userId: verification.userId,
-              token,
-            },
             verifiedAt,
             verification,
           );
         },
       );
     } catch (error) {
+      if (error instanceof EmailVerificationExpiredBeforeCommitError) {
+        return await prepareFailureResponse(
+          dependencies.expiredTokenResponse,
+          request,
+        );
+      }
+
       safelyReportFailure(dependencies.reportFailure, stage);
 
       if (error instanceof EmailVerificationConflictError) {

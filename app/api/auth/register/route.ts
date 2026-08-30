@@ -3,7 +3,10 @@ import { prisma } from "@/lib/db";
 import { hashPassword, validatePassword } from "@/lib/auth/password";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { sendVerificationEmail } from "@/lib/email/auth-emails";
-import crypto from "crypto";
+import {
+  generateRawCredentialToken,
+  hashCredentialToken,
+} from "@/lib/auth/credential-token";
 
 export async function POST(request: NextRequest) {
   try {
@@ -74,7 +77,14 @@ export async function POST(request: NextRequest) {
     });
 
     // Generate verification token
-    const verificationToken = crypto.randomBytes(32).toString("hex");
+    const verificationToken = generateRawCredentialToken();
+    const verificationTokenHash = hashCredentialToken(
+      "email-verification",
+      verificationToken,
+    );
+    if (!verificationTokenHash) {
+      throw new Error("Verification credential generation failed");
+    }
     const tokenExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
     // Save verification token
@@ -82,6 +92,7 @@ export async function POST(request: NextRequest) {
       data: {
         userId: user.id,
         token: verificationToken,
+        tokenHash: verificationTokenHash,
         expires: tokenExpiry,
       },
     });
@@ -110,8 +121,9 @@ export async function POST(request: NextRequest) {
       },
       { status: 201 }
     );
-  } catch (error) {
-    console.error("Registration error:", error);
+  } catch {
+    // Do not expose submitted account data or raw persistence failures.
+    console.error("Registration internal failure", { stage: "REQUEST" });
     return NextResponse.json(
       { error: "Greška pri registraciji. Pokušajte ponovo." },
       { status: 500 }

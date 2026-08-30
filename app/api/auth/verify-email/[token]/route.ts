@@ -9,7 +9,12 @@ import {
   resolveAuthSecret,
   shouldUseSecureAuthCookies,
 } from "@/lib/auth/config";
-import { commitEmailVerification } from "@/lib/auth/email-verification";
+import {
+  EmailVerificationConflictError,
+  commitEmailVerification,
+  createStoredEmailVerificationClaim,
+} from "@/lib/auth/email-verification";
+import { createCredentialTokenLookupKeys } from "@/lib/auth/credential-token";
 import {
   EMAIL_VERIFICATION_TOKEN_PATTERN,
   createEmailVerificationJsonResponse,
@@ -23,6 +28,8 @@ import {
 import { isTrustedWriteRequest } from "@/lib/security/origin";
 
 interface StoredEmailVerification extends EmailVerificationRouteRecord {
+  token: string | null;
+  tokenHash: string | null;
   user: {
     id: string;
     email: string;
@@ -122,11 +129,29 @@ function createProductionHandlers(
         storefrontUrl,
       );
     },
-    findVerification: (token) =>
-      prisma.emailVerification.findUnique({
-        where: { token },
+    async findVerification(token) {
+      const lookup = createCredentialTokenLookupKeys(
+        "email-verification",
+        token,
+      );
+      if (!lookup) return null;
+
+      const current = await prisma.emailVerification.findUnique({
+        where: { tokenHash: lookup.currentHash },
         include: { user: true },
-      }),
+      });
+      if (current) return current;
+
+      // Plaintext is a temporary compatibility fallback for rows created
+      // before tokenHash existed. A current row may never downgrade to it.
+      return prisma.emailVerification.findFirst({
+        where: {
+          token: lookup.legacyPlaintext,
+          tokenHash: null,
+        },
+        include: { user: true },
+      });
+    },
     async getCurrentSessionUserId(request) {
       const currentSession = await getToken({
         req: request,
@@ -161,8 +186,11 @@ function createProductionHandlers(
       });
       return response;
     },
-    commitVerification: (claim, verifiedAt) =>
-      commitEmailVerification(prisma, claim, verifiedAt),
+    commitVerification: (verifiedAt, verification) => {
+      const claim = createStoredEmailVerificationClaim(verification);
+      if (!claim) throw new EmailVerificationConflictError();
+      return commitEmailVerification(prisma, claim, verifiedAt);
+    },
     untrustedWriteResponse: forbiddenResponse,
     invalidTokenResponse: () =>
       createEmailVerificationRedirectResponse(invalidTokenUrl),

@@ -6,6 +6,10 @@ import {
   siteUrl,
 } from "@/lib/config/store";
 import { getStorefrontUrl } from "@/lib/config/storefront-url";
+import {
+  createEmailVerificationUrl,
+  createPasswordResetUrl,
+} from "@/lib/email/auth-email-links";
 
 const FROM_EMAIL = process.env.EMAIL_FROM || `${storeName} <${storeEmail}>`;
 
@@ -60,7 +64,8 @@ export async function sendPasswordResetEmail(
   firstName: string,
   token: string
 ): Promise<void> {
-  const resetUrl = `${siteUrl}/reset-password/${token}`;
+  const resetUrl = createPasswordResetUrl(getStorefrontUrl(), token);
+  if (!resetUrl) throw new Error("Password reset credential is invalid");
 
   const content = `
     <h2 style="color: #4F46E5; font-size: 22px; margin: 0 0 20px;">Resetovanje lozinke</h2>
@@ -180,10 +185,8 @@ export async function sendVerificationEmail(
   firstName: string,
   token: string
 ): Promise<void> {
-  const verifyUrl = new URL(
-    `/verify-email/${encodeURIComponent(token)}`,
-    getStorefrontUrl(),
-  ).toString();
+  const verifyUrl = createEmailVerificationUrl(getStorefrontUrl(), token);
+  if (!verifyUrl) throw new Error("Email verification credential is invalid");
 
   const content = `
     <div style="text-align: center; margin-bottom: 24px;">

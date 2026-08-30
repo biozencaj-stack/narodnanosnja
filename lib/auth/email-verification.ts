@@ -1,9 +1,24 @@
 import type { PrismaClient } from "@prisma/client";
+import {
+  isCurrentCredentialTokenHash,
+  normalizeRawCredentialToken,
+} from "./credential-token";
+
+export type EmailVerificationStoredCredential =
+  | { kind: "hash"; tokenHash: string }
+  | { kind: "legacy"; token: string };
 
 export interface EmailVerificationClaim {
   id: string;
   userId: string;
-  token: string;
+  credential: EmailVerificationStoredCredential;
+}
+
+export interface StoredEmailVerificationClaimSource {
+  id: string;
+  userId: string;
+  token: string | null;
+  tokenHash: string | null;
 }
 
 export class EmailVerificationConflictError extends Error {
@@ -11,6 +26,35 @@ export class EmailVerificationConflictError extends Error {
     super("Email verification token više nije aktivan");
     this.name = "EmailVerificationConflictError";
   }
+}
+
+/**
+ * Builds a claim only from the credential that was actually read from storage.
+ * Current hashes always win over the temporary plaintext compatibility copy.
+ */
+export function createStoredEmailVerificationClaim(
+  verification: StoredEmailVerificationClaimSource,
+): EmailVerificationClaim | null {
+  if (isCurrentCredentialTokenHash(verification.tokenHash)) {
+    return {
+      id: verification.id,
+      userId: verification.userId,
+      credential: { kind: "hash", tokenHash: verification.tokenHash },
+    };
+  }
+
+  // Once a row has any current-column value, never silently accept its
+  // rollback-only plaintext copy when the expected hash lookup did not match.
+  if (verification.tokenHash !== null) return null;
+
+  const legacyToken = normalizeRawCredentialToken(verification.token);
+  if (!legacyToken || verification.token !== legacyToken) return null;
+
+  return {
+    id: verification.id,
+    userId: verification.userId,
+    credential: { kind: "legacy", token: verification.token },
+  };
 }
 
 /**
@@ -39,11 +83,21 @@ export async function commitEmailVerification(
   verifiedAt = new Date(),
 ): Promise<void> {
   await database.$transaction(async (transaction) => {
+    const storedCredential =
+      claim.credential.kind === "hash"
+        ? { tokenHash: claim.credential.tokenHash }
+        : {
+            token: claim.credential.token,
+            // A legacy lookup is valid only while the current hash column is
+            // still empty. Preserve that exact invariant at claim time so a
+            // concurrent backfill cannot turn plaintext into a downgrade path.
+            tokenHash: null,
+          };
     const consumed = await transaction.emailVerification.deleteMany({
       where: {
         id: claim.id,
         userId: claim.userId,
-        token: claim.token,
+        ...storedCredential,
         expires: { gt: verifiedAt },
       },
     });

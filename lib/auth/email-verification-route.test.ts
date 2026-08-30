@@ -266,14 +266,12 @@ test("POST enforces its local trusted-write guard before params and lookup", asy
 test("valid POST prepares session and full response before the commit", async () => {
   const calls: string[] = [];
   const failures: EmailVerificationRouteFailure[] = [];
-  let committedClaim: unknown;
   let committedAt: Date | undefined;
   let committedRecord: TestVerification | undefined;
   const handlers = createEmailVerificationRouteHandlers(
     dependencies(calls, failures, {
-      async commitVerification(claim, verifiedAt, verification) {
+      async commitVerification(verifiedAt, verification) {
         calls.push("commit");
-        committedClaim = claim;
         committedAt = verifiedAt;
         committedRecord = verification;
       },
@@ -299,11 +297,6 @@ test("valid POST prepares session and full response before the commit", async ()
     "prepare-success",
     "commit",
   ]);
-  assert.deepEqual(committedClaim, {
-    id: ACTIVE_VERIFICATION.id,
-    userId: ACTIVE_VERIFICATION.userId,
-    token: TOKEN,
-  });
   assert.equal(committedAt, VERIFIED_AT);
   assert.equal(committedRecord, ACTIVE_VERIFICATION);
   assert.deepEqual(failures, []);
@@ -348,6 +341,42 @@ test("commit remains deferred until asynchronous response preparation finishes",
 
   assert.equal(response.status, 303);
   assert.equal(calls.at(-1), "commit");
+  assertProtected(response);
+  assert.deepEqual(failures, []);
+});
+
+test("a credential expiring during session or response preparation is never committed", async () => {
+  const calls: string[] = [];
+  const failures: EmailVerificationRouteFailure[] = [];
+  let clockReads = 0;
+  const expires = new Date(VERIFIED_AT.getTime() + 30_000);
+  const handlers = createEmailVerificationRouteHandlers(
+    dependencies(calls, failures, {
+      async findVerification(token) {
+        calls.push(`lookup:${token}`);
+        return { ...ACTIVE_VERIFICATION, expires };
+      },
+      now() {
+        clockReads += 1;
+        return clockReads === 1 ? VERIFIED_AT : expires;
+      },
+    }),
+  );
+
+  const response = await handlers.POST(request("POST"), context());
+
+  assert.equal(response.status, 410);
+  assert.deepEqual(await response.json(), { kind: "expired" });
+  assert.deepEqual(calls, [
+    `lookup:${TOKEN}`,
+    "current-session",
+    "issue-session",
+    "prepare-success",
+    "expired",
+  ]);
+  assert.equal(clockReads, 2);
+  assert.equal(calls.includes("commit"), false);
+  assert.equal(response.headers.get("set-cookie"), null);
   assertProtected(response);
   assert.deepEqual(failures, []);
 });
