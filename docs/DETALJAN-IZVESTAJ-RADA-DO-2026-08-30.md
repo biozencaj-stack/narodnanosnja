@@ -3,7 +3,7 @@
 > Datum preseka: 30. avgust 2026.<br>
 > Glavni projekat: `narodnanosnja-prodavnica`<br>
 > V2 grana: `verzija/v2.0-univerzalna-platforma`<br>
-> Aktuelni remote V2 head: `8cf83e56be9cf0775db92ba9319eac5d993994e0`<br>
+> Remote V2 head pri PR #16 post-merge proveri i baza ove docs grane: `8cf83e56be9cf0775db92ba9319eac5d993994e0`<br>
 > P1 auth izvorna grana: `ispravka/v2-auth-secret-verifikacija` — spojena kroz PR #10<br>
 > P1 reset-privacy izvorna grana: `ispravka/v2-reset-privacy` — spojena kroz PR #12<br>
 > P1 prefetch-safe izvorna grana: `ispravka/v2-prefetch-safe-verifikacija` — spojena kroz PR #14<br>
@@ -1918,7 +1918,7 @@ ovog rada:
 | Stavka | Stanje |
 | --- | --- |
 | Remote V2 grana | `origin/verzija/v2.0-univerzalna-platforma` |
-| Aktuelni remote V2 head | `8cf83e56be9cf0775db92ba9319eac5d993994e0` |
+| Remote V2 head pri PR #16 post-merge proveri i baza ove docs grane | `8cf83e56be9cf0775db92ba9319eac5d993994e0` |
 | V2 merge pre prvobitnog izveštaja | `79216213a3ad45d8d3be372aeb5f62dd5371cbe7` |
 | P0 release-granica merge | `6aa506924aa5b95d30e638adffa209c307aed6b0` |
 | P0 release-granica tree | `6a74eb3a1e159fcae2d700ea82a149ceace7e49c` |
@@ -1940,11 +1940,11 @@ ovog rada:
 | Auth-token feature/merge | `b6c7aada0a692b826ff04443308f62584c96fe0a` / `8cf83e56be9cf0775db92ba9319eac5d993994e0` |
 | Auth-token exact-head/post-merge CI | runovi `33313169708`/`33313329660`, attempt 1, SUCCESS; release/deploy poslovi SKIPPED |
 | Auth-token deployment/tag dokaz | 0 V2/production deployment zapisa; nema `prodavnica-v2-*` tagova |
-| Ukupna GitHub deployment evidencija | 5 istorijskih `main`/`github-pages` zapisa; najnoviji `2026-08-30T08:30:02Z`; nijedan V2 SHA/ref ili `production` |
+| GitHub deployment presek 30. avgusta 2026. | 5 istorijskih `main`/`github-pages` zapisa; najnoviji `2026-08-30T08:30:02Z`; nijedan V2 SHA/ref ili `production` |
 | Trenutna docs grana | `dokumentacija/v2-auth-token-ci-dokaz`; samo dokazna dokumentacija |
 
 Radni branch pre pravljenja ovog izveštaja bio je dokumentaciona grana sa istim
-stablom kao završni V2 merge. Sam izveštaj i prateća dopuna indeksa u
+početnim stablom kao PR #16 V2 merge. Sam izveštaj i prateća dopuna indeksa u
 `IZMENE.md` predstavljaju isključivo dokumentacionu izmenu: ne menjaju runtime,
 bazu, capability funkcije niti deployment stanje. Za njihov kasniji Git/PR
 status merodavni su aktuelni branch i GitHub evidencija, a ne ovaj vremenski
@@ -2610,7 +2610,7 @@ specijalizovane detalje:
 - [GitHub Actions run `33282336793`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33282336793)
   — raniji zeleni objedinjeni kodni presek;
 - [GitHub Actions run `33282725051`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33282725051)
-  — zeleni dokumentacioni head sa istim tree-em kao završni V2 merge;
+  — zeleni dokumentacioni head sa istim tree-em kao tadašnji završni V2 merge;
 - [PR #8](https://github.com/biozencaj-stack/narodnanosnja/pull/8) — P0 release
   granica spojena isključivo u kanonsku V2 granu;
 - [GitHub Actions run `33302673497`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33302673497)
@@ -3503,7 +3503,7 @@ ili live sajt.
 | Exact-head | [`33313169708`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33313169708), attempt 1, SUCCESS |
 | Merge | `8cf83e56be9cf0775db92ba9319eac5d993994e0` |
 | Post-merge | [`33313329660`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33313329660), attempt 1, SUCCESS |
-| Remote V2 head | `8cf83e56be9cf0775db92ba9319eac5d993994e0` |
+| Remote V2 head pri PR #16 post-merge proveri | `8cf83e56be9cf0775db92ba9319eac5d993994e0` |
 | Release/deploy poslovi | SKIPPED u oba run-a |
 | Release tagovi | nema `prodavnica-v2-*` tagova |
 
@@ -3512,8 +3512,8 @@ ojačani DB invariant smoke, sva tri DB integration testa, lint, typecheck,
 Chromium COD E2E i build. Time je feature ponovljen na tačnom head-u i merge
 SHA-u, ali samo na praznoj izolovanoj CI bazi.
 
-GitHub deployment lista ukupno ima pet istorijskih zapisa. Svi pripadaju
-presentation `main`/`github-pages` toku, a najnoviji je
+Read-only GitHub provera 30. avgusta 2026. našla je pet istorijskih deployment
+zapisa. Svi pripadaju presentation `main`/`github-pages` toku, a najnoviji je
 `2026-08-30T08:30:02Z`. Nijedan nije vezan za V2 feature/merge SHA ili ref i
 nijedan nije environment `production`. Ispravna tvrdnja je 0 V2/production
 deployment zapisa iz ovog preseka, ne globalno 0 deployments.

@@ -3645,7 +3645,8 @@ kanonskog V2 documentation head-a
 `33313169708`, kroz PR #16 spojena samo u V2 kao
 `8cf83e56be9cf0775db92ba9319eac5d993994e0` i ponovljena zelenim post-merge
 run-om `33313329660`. Probni lokalni build i oba izolovana PostgreSQL CI run-a
-su uspešni; produkcijska baza, migracija, server i live sajt nisu menjani.
+su uspešni; produkcijska baza nije čitana ili menjana, migracija nije primenjena
+na produkciju, a server i live sajt nisu menjani.
 
 Cilj preseka je da se četiri ranije odvojena problema reše jednim doslednim
 ugovorom:
@@ -4143,12 +4144,14 @@ PR je potom spojen samo u kanonsku V2 granu kao merge
 `8cf83e56be9cf0775db92ba9319eac5d993994e0`. Post-merge `push` run
 [`33313329660`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33313329660),
 takođe attempt 1, završio je `SUCCESS` i ponovio isti kompletan job nad merge
-SHA-om. Oba release/deploy posla ponovo su bila `SKIPPED`. Remote V2 head je
-isti merge SHA, a repo nema nijedan `prodavnica-v2-*` release tag.
+SHA-om. Oba release/deploy posla ponovo su bila `SKIPPED`. Remote V2 head pri
+toj post-merge proveri bio je isti merge SHA i baza je ove docs grane, a repo
+nije imao nijedan `prodavnica-v2-*` release tag.
 
-Deployment evidencija mora da se čita precizno. GitHub ima pet istorijskih
-deployment zapisa, svi vezani za presentation `main` i `github-pages`; najnoviji
-je kreiran `2026-08-30T08:30:02Z`. Nijedan zapis ne pripada feature ili merge
+Deployment evidencija mora da se čita precizno. Read-only GitHub provera 30.
+avgusta 2026. našla je pet istorijskih deployment zapisa, od kojih su svi vezani
+za presentation `main` i `github-pages`; najnoviji je kreiran
+`2026-08-30T08:30:02Z`. Nijedan zapis ne pripada feature ili merge
 V2 SHA-u/ref-u i nijedan nije environment `production`. Zato je dokaz ove
 etape: **0 V2/production deployments**, ne globalno 0 deployments.
 

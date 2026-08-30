@@ -1282,7 +1282,7 @@ Auth-token/reset-claim kod je integrisan isključivo u kanonsku V2 granu:
 | V2 merge | `8cf83e56be9cf0775db92ba9319eac5d993994e0` |
 | Post-merge run | [`33313329660`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33313329660), attempt 1, SUCCESS |
 | Post-merge poslovi | `Provera verzije` SUCCESS; `Potvrdi V2 release` SKIPPED; `Objavi na produkciju` SKIPPED |
-| Remote V2 head | `8cf83e56be9cf0775db92ba9319eac5d993994e0` |
+| Remote V2 head pri PR #16 post-merge proveri i baza ove docs grane | `8cf83e56be9cf0775db92ba9319eac5d993994e0` |
 | Release tagovi | nema `prodavnica-v2-*` tagova |
 
 Oba kompletna `Provera verzije` posla podigla su PostgreSQL 16, izvršila
@@ -1292,8 +1292,9 @@ i kompletan test paket, lint, TypeScript, Chromium COD E2E i produkcijski
 build. Migracija je time dokazana na praznoj izolovanoj CI bazi, ali nije
 primenjena na produkcionu bazu.
 
-GitHub trenutno ima pet deployment zapisa, ali svih pet pripada istorijskom
-presentation `main`/`github-pages` toku; najnoviji je iz
+Read-only GitHub provera 30. avgusta 2026. našla je pet deployment zapisa, ali
+svih pet pripada istorijskom presentation `main`/`github-pages` toku; najnoviji
+je iz
 `2026-08-30T08:30:02Z`. Nijedan zapis ne koristi feature/merge V2 SHA ili V2
 ref, niti environment `production`. Tačan zaključak za ovaj presek je zato
 **0 V2/production deployment zapisa**, a ne globalno nula GitHub deploymenta.
