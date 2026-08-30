@@ -180,6 +180,7 @@ test(
     );
 
     const belgradeUser = await createVerifiedUser("belgrade-clock");
+    let observedIssuerTimeZone: string | null = null;
     const belgradeIssuer = createCredentialsSessionIssuer({
       database: {
         transaction: (work) =>
@@ -187,9 +188,16 @@ test(
             await transaction.$executeRaw`
               SET LOCAL TIME ZONE 'Europe/Belgrade'
             `;
-            return work(
+            const result = await work(
               transaction as unknown as CredentialsSessionIssuanceTransaction,
             );
+            const timeZone = await transaction.$queryRaw<
+              Array<{ timeZone: string }>
+            >`
+              SELECT pg_catalog.current_setting('TimeZone') AS "timeZone"
+            `;
+            observedIssuerTimeZone = timeZone[0]?.timeZone ?? null;
+            return result;
           }),
       },
       insertLockedSession: (transaction, input) =>
@@ -207,6 +215,11 @@ test(
       generateAuthSessionSid(),
     );
     assert.ok(belgradeIssued);
+    assert.equal(
+      observedIssuerTimeZone,
+      "UTC",
+      "issuer must normalize a caller-local transaction before its auth reads",
+    );
     assert.equal(
       new Date(belgradeIssued.claims.sat * 1_000).getMilliseconds(),
       0,

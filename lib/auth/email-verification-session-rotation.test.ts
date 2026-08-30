@@ -33,6 +33,7 @@ type HarnessOptions = {
   credential?: Record<string, unknown>;
   clock?: Date;
   policyCount?: number | bigint;
+  timeZoneRows?: unknown[];
   insertError?: boolean;
   consumeCount?: number;
 };
@@ -73,6 +74,14 @@ function createHarness(options: HarnessOptions = {}) {
     async $queryRaw(strings: TemplateStringsArray) {
       const sql = strings.join("?");
       rawSql.push(sql);
+      if (sql.includes("set_config('TimeZone', 'UTC', true)")) {
+        calls.push("timezone");
+        return (
+          options.timeZoneRows ?? [
+            { configuredTimeZone: "UTC", currentTimeZone: "UTC" },
+          ]
+        );
+      }
       if (sql.includes('FROM public."User"')) {
         calls.push("lock:user");
         return [user];
@@ -166,6 +175,7 @@ test("rotation locks User, policy, credential; prepares before writes; stores on
 
   assert.deepEqual(response, { cookie: "prepared" });
   assert.deepEqual(harness.calls, [
+    "timezone",
     "lock:user",
     "lock:policy",
     "lock:credential",
@@ -187,13 +197,21 @@ test("rotation locks User, policy, credential; prepares before writes; stores on
   );
   assert.equal(callbackInput.claims.sae - callbackInput.claims.sat, 86_400);
   assert.equal(callbackInput.user.email, CLAIM.expectedUser.email);
-  assert.match(harness.rawSql[0] ?? "", /FOR UPDATE/);
-  assert.match(harness.rawSql[1] ?? "", /"AuthPolicyState"/);
-  assert.match(harness.rawSql[1] ?? "", /count\(\*\)/);
-  assert.match(harness.rawSql[1] ?? "", /FOR SHARE/);
-  assert.match(harness.rawSql[2] ?? "", /"EmailVerification"/);
   assert.match(
-    harness.rawSql[3] ?? "",
+    harness.rawSql[0] ?? "",
+    /pg_catalog\.set_config\('TimeZone', 'UTC', true\)/,
+  );
+  assert.match(
+    harness.rawSql[0] ?? "",
+    /pg_catalog\.current_setting\('TimeZone'\)/,
+  );
+  assert.match(harness.rawSql[1] ?? "", /FOR UPDATE/);
+  assert.match(harness.rawSql[2] ?? "", /"AuthPolicyState"/);
+  assert.match(harness.rawSql[2] ?? "", /count\(\*\)/);
+  assert.match(harness.rawSql[2] ?? "", /FOR SHARE/);
+  assert.match(harness.rawSql[3] ?? "", /"EmailVerification"/);
+  assert.match(
+    harness.rawSql[4] ?? "",
     /clock_timestamp\(\) AT TIME ZONE 'UTC'\)::timestamp\(3\)/,
   );
 });
@@ -212,6 +230,7 @@ test("preparation failure is coarse and causes no writes", async () => {
     EmailVerificationSessionRotationUnavailableError,
   );
   assert.deepEqual(harness.calls, [
+    "timezone",
     "lock:user",
     "lock:policy",
     "lock:credential",
@@ -232,11 +251,33 @@ test("expired credential remains an explicit expiry and is never written", async
     EmailVerificationExpiredError,
   );
   assert.deepEqual(harness.calls, [
+    "timezone",
     "lock:user",
     "lock:policy",
     "lock:credential",
     "clock",
   ]);
+});
+
+test("transaction-local UTC initialization rejects malformed or non-UTC database responses before User lock", async () => {
+  for (const timeZoneRows of [
+    [],
+    [{ configuredTimeZone: "Europe/Belgrade", currentTimeZone: "UTC" }],
+    [{ configuredTimeZone: "UTC", currentTimeZone: "Europe/Belgrade" }],
+    [{}],
+  ]) {
+    const harness = createHarness({ timeZoneRows });
+    await assert.rejects(
+      commitEmailVerificationSessionRotation(harness.database as never, CLAIM, {
+        secret: SECRET,
+        sid: SID,
+        prepareSuccessResult: () => "never",
+      }),
+      EmailVerificationSessionRotationUnavailableError,
+    );
+    assert.deepEqual(harness.calls, ["timezone"]);
+    assert.equal(harness.rolledBack, true);
+  }
 });
 
 test("malformed DB policy and revision overflow fail closed before preparation", async () => {

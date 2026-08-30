@@ -44,12 +44,16 @@ function createHarness(options: {
   policy?: unknown[];
   count?: unknown[];
   clock?: unknown[];
+  timeZone?: unknown[];
   insertFailure?: boolean;
 } = {}) {
   const events: string[] = [];
   const queries: Array<{ sql: string; values: unknown[] }> = [];
   const inserts: unknown[] = [];
   const responses = [
+    options.timeZone ?? [
+      { configuredTimeZone: "UTC", currentTimeZone: "UTC" },
+    ],
     options.user ?? [lockedUser()],
     options.policy ?? [lockedPolicy()],
     options.count ?? [{ policyCount: BigInt(1) }],
@@ -60,9 +64,13 @@ function createHarness(options: {
   const transaction: CredentialsSessionIssuanceTransaction = {
     async $queryRaw(strings, ...values) {
       queries.push({ sql: strings.join("?"), values });
-      const event = ["lock-user", "lock-policy", "count-policy", "clock"][
-        responseIndex
-      ];
+      const event = [
+        "initialize-timezone",
+        "lock-user",
+        "lock-policy",
+        "count-policy",
+        "clock",
+      ][responseIndex];
       events.push(event ?? "unexpected-query");
       const response = responses[responseIndex++];
       return response as never;
@@ -104,6 +112,7 @@ test("credentials V2 issuer locks the exact bcrypt snapshot, policy and UTC cloc
   assert.deepEqual(harness.events, [
     "generate-sid",
     "transaction",
+    "initialize-timezone",
     "lock-user",
     "lock-policy",
     "count-policy",
@@ -131,15 +140,18 @@ test("credentials V2 issuer locks the exact bcrypt snapshot, policy and UTC cloc
   });
   assert.equal(issued.claims.sae - issued.claims.sat, 86_400);
 
-  assert.match(harness.queries[0]?.sql ?? "", /FOR UPDATE/);
-  assert.match(harness.queries[0]?.sql ?? "", /"passwordHash"/);
-  assert.deepEqual(harness.queries[0]?.values, ["user-1"]);
-  assert.match(harness.queries[1]?.sql ?? "", /AuthPolicyState/);
-  assert.match(harness.queries[1]?.sql ?? "", /FOR SHARE/);
-  assert.doesNotMatch(harness.queries[1]?.sql ?? "", /FOR UPDATE/);
-  assert.match(harness.queries[2]?.sql ?? "", /count\(\*\)/);
-  assert.match(harness.queries[3]?.sql ?? "", /date_trunc\(/);
-  assert.match(harness.queries[3]?.sql ?? "", /TIME ZONE 'UTC'/);
+  assert.match(harness.queries[0]?.sql ?? "", /pg_catalog\.set_config/);
+  assert.match(harness.queries[0]?.sql ?? "", /pg_catalog\.current_setting/);
+  assert.deepEqual(harness.queries[0]?.values, []);
+  assert.match(harness.queries[1]?.sql ?? "", /FOR UPDATE/);
+  assert.match(harness.queries[1]?.sql ?? "", /"passwordHash"/);
+  assert.deepEqual(harness.queries[1]?.values, ["user-1"]);
+  assert.match(harness.queries[2]?.sql ?? "", /AuthPolicyState/);
+  assert.match(harness.queries[2]?.sql ?? "", /FOR SHARE/);
+  assert.doesNotMatch(harness.queries[2]?.sql ?? "", /FOR UPDATE/);
+  assert.match(harness.queries[3]?.sql ?? "", /count\(\*\)/);
+  assert.match(harness.queries[4]?.sql ?? "", /date_trunc\(/);
+  assert.match(harness.queries[4]?.sql ?? "", /TIME ZONE 'UTC'/);
 
   assert.deepEqual(harness.inserts, [
     {
@@ -164,6 +176,7 @@ test("credentials V2 issuer rejects a stale id, canonical email or compared pass
     assert.deepEqual(harness.events, [
       "generate-sid",
       "transaction",
+      "initialize-timezone",
       "lock-user",
     ]);
     assert.deepEqual(harness.inserts, []);
@@ -209,6 +222,30 @@ test("credentials V2 issuer evaluates policy at the precise DB clock while claim
   assert.equal(issued.principal.requiresEmailVerification, false);
   assert.equal(issued.claims.sat, 1_788_091_200);
   assert.equal(issued.claims.sae, 1_788_177_600);
+});
+
+test("credentials V2 issuer initializes a caller non-UTC transaction to UTC and fails closed when that proof is invalid", async () => {
+  const normalized = createHarness({
+    timeZone: [{ configuredTimeZone: "UTC", currentTimeZone: "UTC" }],
+  });
+  const issued = await normalized.issuer.issue(CANDIDATE);
+  assert.ok(issued);
+  assert.equal(normalized.events[2], "initialize-timezone");
+
+  for (const timeZone of [
+    [{ configuredTimeZone: "UTC", currentTimeZone: "Europe/Belgrade" }],
+    [{ configuredTimeZone: "Europe/Belgrade", currentTimeZone: "UTC" }],
+    [],
+  ]) {
+    const invalid = createHarness({ timeZone });
+    assert.equal(await invalid.issuer.issue(CANDIDATE), null);
+    assert.deepEqual(invalid.events, [
+      "generate-sid",
+      "transaction",
+      "initialize-timezone",
+    ]);
+    assert.equal(invalid.inserts.length, 0);
+  }
 });
 
 test("credentials V2 issuer keeps malformed candidate, revision/clock and insert failures coarse and rollback-safe", async () => {

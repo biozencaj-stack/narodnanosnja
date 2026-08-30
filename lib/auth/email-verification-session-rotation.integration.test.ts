@@ -128,6 +128,7 @@ test(
     const claim = createStoredEmailVerificationClaim(verification);
     assert.ok(claim);
     const sid = generateAuthSessionSid();
+    const observedCoreTimeZones: string[] = [];
     const belgradeTransactionDatabase = {
       $transaction: async <T>(
         work: (transaction: Prisma.TransactionClient) => Promise<T>,
@@ -140,7 +141,28 @@ test(
             SELECT current_setting('TimeZone') AS "timeZone"
           `;
           assert.deepEqual(timezone, [{ timeZone: "Europe/Belgrade" }]);
-          return work(transaction);
+          const observingTransaction = new Proxy(transaction, {
+            get(target, property, receiver) {
+              if (property === "$queryRaw") {
+                return async (strings: TemplateStringsArray, ...values: unknown[]) => {
+                  const result = await Reflect.apply(
+                    target.$queryRaw,
+                    target,
+                    [strings, ...values],
+                  );
+                  if (strings.join("?").includes("set_config('TimeZone', 'UTC', true)")) {
+                    const normalized = await target.$queryRaw<Array<{ timeZone: string }>>`
+                      SELECT pg_catalog.current_setting('TimeZone') AS "timeZone"
+                    `;
+                    observedCoreTimeZones.push(normalized[0]?.timeZone ?? "");
+                  }
+                  return result;
+                };
+              }
+              return Reflect.get(target, property, receiver);
+            },
+          });
+          return work(observingTransaction as Prisma.TransactionClient);
         }),
     } as Pick<PrismaClient, "$transaction">;
     const prepared = await commitEmailVerificationSessionRotation(
@@ -156,6 +178,7 @@ test(
     );
 
     assert.equal(prepared.claims.sid, sid);
+    assert.deepEqual(observedCoreTimeZones, ["UTC"]);
     assert.equal(prepared.claims.ur, user.authSessionRevision + 1);
     assert.equal(prepared.claims.pr, policy.revision);
     const [storedUser, storedSessions, remainingCredentials] = await Promise.all([

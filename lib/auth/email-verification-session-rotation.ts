@@ -94,6 +94,11 @@ interface DatabaseVerificationClockRow {
   verifiedAt: Date;
 }
 
+interface DatabaseTimeZoneRow {
+  configuredTimeZone: string;
+  currentTimeZone: string;
+}
+
 function isFiniteDate(value: unknown): value is Date {
   return value instanceof Date && Number.isFinite(value.getTime());
 }
@@ -186,6 +191,28 @@ export async function commitEmailVerificationSessionRotation<TResult>(
 
   try {
     return await database.$transaction(async (transaction) => {
+      // Prisma maps its DateTime columns to timestamp(3) without time zone.
+      // Normalize the transaction before reading such values, rather than
+      // trusting a caller/pool connection's inherited TimeZone. This is a
+      // configuration statement, deliberately outside the row-lock order.
+      const timezoneRows = await transaction.$queryRaw<DatabaseTimeZoneRow[]>`
+        WITH "setUtcTimeZone" AS MATERIALIZED (
+          SELECT pg_catalog.set_config('TimeZone', 'UTC', true)
+            AS "configuredTimeZone"
+        )
+        SELECT
+          "configuredTimeZone",
+          pg_catalog.current_setting('TimeZone') AS "currentTimeZone"
+        FROM "setUtcTimeZone"
+      `;
+      if (
+        timezoneRows.length !== 1 ||
+        timezoneRows[0]?.configuredTimeZone !== "UTC" ||
+        timezoneRows[0]?.currentTimeZone !== "UTC"
+      ) {
+        unavailable();
+      }
+
       const lockedUsers = await transaction.$queryRaw<LockedVerificationUserRow[]>`
         SELECT
           "id",

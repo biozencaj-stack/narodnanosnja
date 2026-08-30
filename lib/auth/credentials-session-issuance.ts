@@ -68,6 +68,11 @@ interface DatabaseClockRow {
   issuedAt: Date;
 }
 
+interface TimeZoneInitializationRow {
+  configuredTimeZone: string;
+  currentTimeZone: string;
+}
+
 export interface CredentialsSessionIssuanceTransaction {
   $queryRaw<T>(
     query: TemplateStringsArray,
@@ -189,6 +194,28 @@ export function createCredentialsSessionIssuer(
 
       try {
         return await dependencies.database.transaction(async (transaction) => {
+          const timeZoneRows = await transaction.$queryRaw<
+            TimeZoneInitializationRow[]
+          >`
+            WITH "timeZoneInitialization" AS MATERIALIZED (
+              SELECT pg_catalog.set_config('TimeZone', 'UTC', true)
+                AS "configuredTimeZone"
+            )
+            SELECT
+              "configuredTimeZone",
+              pg_catalog.current_setting('TimeZone') AS "currentTimeZone"
+            FROM "timeZoneInitialization"
+          `;
+          const timeZone = timeZoneRows[0];
+          if (
+            timeZoneRows.length !== 1 ||
+            !timeZone ||
+            timeZone.configuredTimeZone !== "UTC" ||
+            timeZone.currentTimeZone !== "UTC"
+          ) {
+            throw new Error("Credentials issuance UTC initialization invalid");
+          }
+
           const lockedUsers = await transaction.$queryRaw<LockedUserRow[]>`
             SELECT
               "id",

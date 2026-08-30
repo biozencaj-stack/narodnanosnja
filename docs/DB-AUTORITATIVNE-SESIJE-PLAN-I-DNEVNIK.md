@@ -3,7 +3,7 @@
 Datum početka: 2026-08-30  
 Radna grana: `ispravka/v2-db-authoritative-sessions`  
 Polazni V2 SHA: `d926e152f51f363c66d37f46859fbecffbc634d2`  
-Status: **u radu; faze 1–3 imaju zelen exact-head CI dokaz, a dormantna credentials/verification V2 issuance jezgra su lokalno implementirana; aktivacija nije izvršena**
+Status: **u radu; faze 1–3 imaju zelen exact-head CI dokaz, a dormantna credentials/verification V2 issuance jezgra i transaction-local UTC popravka imaju lokalni dokaz; novi exact-head CI pokušaj čeka, aktivacija nije izvršena**
 
 ## 1. Granica ove sekcije
 
@@ -143,7 +143,7 @@ definisanog ugovora.
 | 1 | Compatibility expand šema, migracija i DB invarijante | završeno; PostgreSQL 16 CI dokaz zelen |
 | 2 | Dormantni claim/HMAC/policy/JWT/DB validator moduli | završeno; exact-head PostgreSQL 16 CI dokaz zelen |
 | 3 | Revocation u reset/change/privileged/demo write tokovima | završeno; exact-head PostgreSQL 16 CI dokaz zelen |
-| 4 | Credentials i verification V2 session issuance/rotation | dormantna jezgra lokalno implementirana; real-PG CI dokaz čeka |
+| 4 | Credentials i verification V2 session issuance/rotation | dormantna jezgra i transaction-local UTC zaštita lokalno implementirane; novi real-PG CI pokušaj čeka |
 | 5 | Pouzdan current-session logout | nije započeto |
 | 6 | Customer/ownership/admin server guard migracija | nije započeto |
 | 7 | Session contract migracija | nije započeto |
@@ -539,19 +539,24 @@ ne prenosi u NextAuth User/JWT/cookie rezultat.
 
 Pre transakcije se generiše canonical 256-bitni SID. Jedna transakcija zatim:
 
-1. zaključava exact `User` sa `FOR UPDATE` i ponovo čita password, email,
+1. poziva isključivo statičke `pg_catalog.set_config('TimeZone', 'UTC', true)`
+   i `pg_catalog.current_setting('TimeZone')`, pa zahteva tačno jedan red u kom
+   su i postavljena i pročitana vrednost `UTC`; to je transaction-local
+   konfiguracija pre prvog `timestamp without time zone` čitanja, a ne row
+   lock niti trajna promena DB role/database podešavanja;
+2. zaključava exact `User` sa `FOR UPDATE` i ponovo čita password, email,
    profil, verification stanje i `authSessionRevision`;
-2. odbija obrisan nalog, promenjen email/hash ili nevalidnu user revision;
-3. čita `AuthPolicyState(id=1)` sa `FOR SHARE`, a zatim zahteva ukupan count
+3. odbija obrisan nalog, promenjen email/hash ili nevalidnu user revision;
+4. čita `AuthPolicyState(id=1)` sa `FOR SHARE`, a zatim zahteva ukupan count
    tačno jedan i strict `parseAuthPolicyState` rezultat;
-4. uzima jedan materialized UTC-normalized PostgreSQL sat: precizni
+5. uzima jedan materialized UTC-normalized PostgreSQL sat: precizni
    `evaluatedAt timestamp(3)` koristi za policy odluku, a iz istog uzorka
    izvodi second-aligned `issuedAt` za claim/Session;
-5. ocenjuje verified-login pravilo isključivo iz zaključanog DB singletona i
+6. ocenjuje verified-login pravilo isključivo iz zaključanog DB singletona i
    svežeg User reda, bez env policy fallback-a;
-6. formira immutable V2 claims sa exact user/policy revision vrednostima i
+7. formira immutable V2 claims sa exact user/policy revision vrednostima i
    `sae - sat = 86400`;
-7. preko postojećeg locked inserta čuva samo purpose-separated HMAC digest,
+8. preko postojećeg locked inserta čuva samo purpose-separated HMAC digest,
    nikada raw SID, i vraća fresh principal+claims tek posle commita.
 
 Policy `FOR SHARE` i dalje blokira konkurentni policy `UPDATE`, ali dozvoljava
@@ -569,21 +574,24 @@ hash-first/legacy-fallback credential claim, ali verification i novu sesiju
 spaja u jednu transakciju. SID se generiše i secret proverava pre transakcije,
 a zatim sledi tačan redosled:
 
-1. `User FOR UPDATE`, sa exact nepromenjenim email/password/role/name snapshotom
+1. ista statička, transaction-local UTC inicijalizacija i exact potvrda iz
+   credentials issuera, pre čitanja Prisma `DateTime` vrednosti; konfiguracioni
+   statement ne menja globalni redosled row lockova;
+2. `User FOR UPDATE`, sa exact nepromenjenim email/password/role/name snapshotom
    i non-overflow `authSessionRevision`;
-2. `AuthPolicyState FOR SHARE`, singleton count i strict DB-only parse;
-3. exact `EmailVerification FOR UPDATE`, uključujući zabranu hash→plaintext
+3. `AuthPolicyState FOR SHARE`, singleton count i strict DB-only parse;
+4. exact `EmailVerification FOR UPDATE`, uključujući zabranu hash→plaintext
    downgrade-a;
-4. precizni UTC-naive PostgreSQL `verifiedAt timestamp(3)` posle sva tri lock
+5. precizni UTC-naive PostgreSQL `verifiedAt timestamp(3)` posle sva tri lock
    wait-a, exact expiry i policy odluka kao upravo verifikovan korisnik;
-5. second-aligned `issuedAt`, `nextRevision` i immutable V2 claims;
-6. JWE/kompletan HTTP rezultat preko callback-a pre prve mutacije, ali bez
+6. second-aligned `issuedAt`, `nextRevision` i immutable V2 claims;
+7. JWE/kompletan HTTP rezultat preko callback-a pre prve mutacije, ali bez
    vraćanja odgovora pre commita;
-7. conditional User verification write i revision `+1`;
-8. brisanje svih legacy/V2 sesija, pa insert tačno jednog novog HMAC-only V2
+8. conditional User verification write i revision `+1`;
+9. brisanje svih legacy/V2 sesija, pa insert tačno jednog novog HMAC-only V2
    Session reda sa zaključanom policy revision;
-9. exact consume pobedničkog credentiala i cleanup svih verification siblinga;
-10. commit, pa tek tada vraćanje unapred pripremljenog rezultata.
+10. exact consume pobedničkog credentiala i cleanup svih verification siblinga;
+11. commit, pa tek tada vraćanje unapred pripremljenog rezultata.
 
 Exact claim konflikt i DB expiry ostaju posebni bezbedni ishodi. Malformed
 policy/clock/revision, invalid secret/SID, response/JWE kvar i persistence kvar
@@ -595,8 +603,8 @@ sesiju i verification credential.
 
 | Provera | Rezultat |
 | --- | --- |
-| Fokus credentials issuer + verification rotation | `14` ukupno / `11` pass / `3` očekivana real-PG skip / `0` fail |
-| Kompletan `npm test` | `375` ukupno / `351` pass / `24` očekivana real-PG skip / `0` fail |
+| Fokus credentials issuer + verification rotation | `16` ukupno / `13` pass / `3` očekivana real-PG skip / `0` fail |
+| Kompletan `npm test` | `377` ukupno / `353` pass / `24` očekivana real-PG skip / `0` fail pre dodavanja naredne dormantne logout sekcije |
 | TypeScript bez emitovanja | PASS |
 | ESLint quiet | PASS |
 | `git diff --check` | PASS |
@@ -610,6 +618,36 @@ legacy+V2 → tačno jedan novi V2 red, revision `+1`, precizni `emailVerified`,
 second-aligned claim/DB vreme pod ne-UTC sesijom i potpuni rollback na
 injected Session-insert i credential-cleanup kvar. Workflow ne dobija novi
 trigger niti novi env prekidač.
+
+### 8.5. Prvi CI pokušaj i transaction-local UTC korekcija
+
+Prvi exact-head pokušaj faze 4, commit
+`098cfcfed53666ab09b408243b2667355800bd80` i PR run `33329700089`, nije
+predstavljen kao zelen. Migracije, schema drift, DB invarijante, lint i
+TypeScript prošli su, ali je real-PG credentials fixture pod
+`SET LOCAL TIME ZONE 'Europe/Belgrade'` dobio coarse `null` umesto izdate
+sesije. Browser smoke i build zato nisu ni pokrenuti; release i produkcijski
+deploy ostali su `SKIPPED`.
+
+Uzrok nije bio claim rok niti HMAC insert, nego granica Prisma/PostgreSQL tipova:
+`DateTime` kolone su `timestamp(3) without time zone`, pa su postojeći User
+timestampi u transakciji koja je nasledila `Europe/Belgrade` deserializovani
+kao drugačiji apsolutni `Date`. Samo `clock_timestamp() AT TIME ZONE 'UTC'` u
+kasnijem clock query-ju zato nije dovoljno da zaštiti ranija čitanja i upise.
+
+Korekcija sada na početku oba jezgra transaction-local postavlja i zatim čita
+`UTC`, preko eksplicitno kvalifikovanih `pg_catalog` funkcija. Missing,
+duplikat, malformed, nepotvrđena ili non-UTC vrednost prekida tok pre User
+locka i pre bilo kog write-a. Unit testovi zaključavaju da je ova konfiguracija
+prva query operacija i da nema interpoliranih vrednosti, a oba real-PG testa
+namerno započinju u `Europe/Belgrade` i proveravaju da je jezgro unutar iste
+transakcije vidi kao `UTC`.
+
+Ovo je dodatna odbrana za ova dva write toka, ali ne zamenjuje runtime readiness
+gate: pre aktivacije DB role i database default i dalje moraju biti provereni
+kao UTC, jer drugi Prisma čitači/upisivači nisu automatski obuhvaćeni ovim
+dormantnim jezgrima. Novi exact-head PostgreSQL 16 CI dokaz biće upisan tek
+nakon stvarno zelenog ponovljenog run-a.
 
 ## 9. Obavezni transakcioni redosledi aktivacije i narednih faza
 
