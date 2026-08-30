@@ -2898,12 +2898,13 @@ stvarne `.env` vrednosti, nisu postavljene/rotirane produkcione tajne, nije
 kontaktiran server, nije menjan GitHub `production` Environment i nije
 napravljen release tag.
 
-Preostali auth rad, preporučenim redosledom, jeste:
+Auth redosled je u međuvremenu napredovao; prve dve stavke ispod integrisane su
+u V2 kroz odeljke 40 i 41, dok stavke 3–8 ostaju otvorene:
 
 1. reset zahtev sa identičnim javnim statusom/telom za nepostojeći nalog, SMTP
-   uspeh i SMTP kvar;
+   uspeh i SMTP kvar — integrisano kroz PR #12;
 2. prefetch-safe korisnička potvrda pre mutacije, umesto GET auto-login toka
-   koji email skener može prerano da aktivira;
+   koji email skener može prerano da aktivira — integrisano kroz PR #14;
 3. hashovanje verification/reset tokena i exactly-once reset confirm;
 4. atomska registracija i stvarni enumeration-safe resend sa cooldown-om i
    jednim aktivnim tokenom;
@@ -3184,9 +3185,11 @@ Treći P1 auth presek urađen je 30. avgusta 2026. na radnoj grani
 documentation head-a `8d22116543c3bf2f2e76080758d9814b0e61c2fe`. Cilj je
 bio usko definisan: sačuvati ranije uvedenu exactly-once DB verifikaciju i
 24-časovni auth cookie ugovor, ali ukloniti mutaciju sa svake GET navigacije.
-Promena je završena i lokalno proverena kao funkcionalni diff. Još nema feature
-commita/PR-a, exact-head GitHub run-a, V2 merge-a ili post-merge CI dokaza; oni
-neće biti upisani retroaktivno ili pretpostavljeni pre stvarnog GitHub događaja.
+Lokalno provereni diff postao je feature commit
+`6ffd173b3eda59815894ea43181543791dba58a0`, spojen isključivo u kanonsku V2
+granu kroz [PR #14](https://github.com/biozencaj-stack/narodnanosnja/pull/14)
+kao merge `c96473c22fb56f8b6c1b5b34570936d526577c10`. Exact-head i
+post-merge GitHub provere završene su uspešno bez release/deploy posledice.
 
 ### 41.1. Zašto je stari GET auto-login bio opasan
 
@@ -3552,9 +3555,10 @@ uključuju samo eksplicitnim flagom i bezbednim PostgreSQL URL-om. Lokalni build
 je koristio eksplicitno zadate lažne CI vrednosti i postojeće safe-default
 grane. Agent nije otvarao, čitao niti ispisivao vrednosti iz `.env`; relevantne
 postavke bile su pregažene lažnim vrednostima, a DB URL je pokazivao na
-nedostupan loopback port 9, pa produkciona baza nije kontaktirana. Ovaj lokalni
-dokaz još nema izolovani GitHub PostgreSQL/Chromium replay za novi feature
-head.
+nedostupan loopback port 9, pa produkciona baza nije kontaktirana. Lokalni dokaz
+je zatim ponovljen u izolovanom GitHub CI-ju nad tačnim feature headom i nad
+kanonskim V2 merge commitom, sa uključenim opt-in PostgreSQL testovima,
+Chromium smoke-om i produkcijskim buildom; detalji su u §41.12.
 
 Canonical-origin helper je direktno unit-testiran, ali production route modul
 nema zaseban import test jer vezuje server-only i Prisma kompoziciju. Njegov
@@ -3590,9 +3594,38 @@ PM2, GitHub Environment, required reviewer, repository/environment
 secrets/variables ili release workflow. Nije napravljen release tag, nije
 pokrenut deploy i ništa nije pušteno live.
 
-PR/CI dokaz za ovu funkcionalnu granu namerno nije dodat u ovom preseku. Posle
-stvarnog feature commita i PR-a treba dopuniti: tačan feature SHA, PR broj i V2
-base, exact-head run, rezultate svih jobova, status release/deploy poslova,
-merge SHA, post-merge run i read-only potvrdu da production deployment zapis i
-dalje nije nastao. Do tada je jedina tačna tvrdnja: funkcionalni slice je
-lokalno završen i proveren, ali još nije integrisan u kanonsku V2 granu.
+### 41.12. PR #14, exact-head i post-merge CI dokaz
+
+Planirani V2-only integracioni redosled završen je stvarnim GitHub dokazima:
+
+1. feature commit `6ffd173b3eda59815894ea43181543791dba58a0`
+   objavljen je na `ispravka/v2-prefetch-safe-verifikacija`;
+2. [PR #14](https://github.com/biozencaj-stack/narodnanosnja/pull/14) imao je
+   base isključivo `verzija/v2.0-univerzalna-platforma`;
+3. exact-head `pull_request` run
+   [`33309850609`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33309850609)
+   na feature SHA-u završio je `SUCCESS` od 11:48:34 do 11:51:13 UTC, oko
+   2 min 39 s;
+4. njegov `Provera verzije` job završio je uspešno, dok su `Potvrdi V2 release`
+   i `Objavi na produkciju` bili `SKIPPED`;
+5. PR je spojen samo u kanonsku V2 granu kao
+   `c96473c22fb56f8b6c1b5b34570936d526577c10`;
+6. post-merge `push` run
+   [`33309984025`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33309984025)
+   na merge SHA-u završio je `SUCCESS` od 11:51:49 do 11:54:39 UTC, oko
+   2 min 50 s;
+7. post-merge `Provera verzije` ponovo je završila uspešno, a oba release posla
+   ponovo su bila `SKIPPED`;
+8. remote `verzija/v2.0-univerzalna-platforma` head potvrđen je kao isti
+   `c96473c22fb56f8b6c1b5b34570936d526577c10`.
+
+Oba CI pipeline-a podigla su izolovani PostgreSQL 16, primenila migracije i DB
+provere, uključila opt-in PostgreSQL testove, izvršila kompletan test paket,
+Chromium smoke, lint, TypeScript i produkcijski build. Time lokalna 145-test
+matrica ima exact-head i post-merge replay nad stvarnim GitHub checkout-ima.
+
+Read-only GitHub provera posle merge-a nalazi 0 deployment zapisa za merge SHA
+i 0 tagova koji pokazuju na taj commit. Presentation `main`, javni/live sajt i
+GitHub `production` Environment ostali su netaknuti. Nije otvoren production
+gate, nije kontaktiran server i integracija nije promenila prethodno
+dokumentovano pravilo da live puštanje ostaje poslednja, posebno odobrena faza.
