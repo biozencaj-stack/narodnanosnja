@@ -2948,3 +2948,218 @@ base, tačan head i navedeni merge commit, kao i da repozitorijum i dalje ima 0
 `production` deployment zapisa. Nisu menjana Environment pravila, required
 reviewer, secrets/variables, server ili produkciona baza. Nije napravljen
 release tag, nije uspostavljen SSH i V2 nije pušten live.
+
+## 40. P1 privatnost password-reset zahteva i asinhrona obrada
+
+Drugi P1 auth presek pokrenut je na grani `ispravka/v2-reset-privacy`, izvedenoj
+direktno iz kanonskog V2 stanja
+`396ab8641d1923bd6f0f5c4b2953a48e103f69cb`. Cilj je ograničen na javni zahtev
+za reset lozinke: ukloniti account-existence signal iz statusa, tela i
+account-dependent latencije, bez promene Prisma šeme i bez dodirivanja reset-
+confirm mutacije. Produkcijski deploy, server, tajne i release ostaju izvan
+ove etape.
+
+### 40.1. Početni SMTP/account oracle
+
+Pre izmene je `app/api/auth/reset-password/request/route.ts` obrađivao ceo tok
+unutar jednog HTTP zahteva:
+
+1. proveravao procesni rate limit;
+2. parsirao email i tražio korisnika;
+3. za nepostojeći nalog odmah vraćao generički HTTP 200;
+4. za postojeći nalog brisao stare tokene, kreirao novi i čekao SMTP;
+5. tek posle isporuke vraćao isti generički tekst;
+6. DB ili SMTP grešku hvatao spoljnim `catch`-om i vraćao HTTP 500 sa
+   specifičnim error telom.
+
+Generička poruka zato nije bila dovoljna zaštita. Kada SMTP ili baza ne rade,
+status i telo su direktno razlikovali postojeći od nepostojećeg naloga. Kada
+sve radi, nepostojeći nalog je čekao samo jedan DB lookup, dok je postojeći
+čekao dodatna dva DB upita i mrežni SMTP poziv. Ta razlika je ostavljala jak
+timing oracle i bez eksplicitnog 500 odgovora.
+
+Početni read-only pregled je otkrio i dve povezane failure granice. Brisanje
+starih i kreiranje novog tokena bili su odvojeni upiti, pa kvar između njih
+ostavlja korisnika bez ijednog reset linka. Takođe, automatski cleanup novog
+tokena na SMTP grešku nije bezbedan: `sendMail()` može prijaviti grešku nakon
+što je udaljeni server već prihvatio poruku, pa bi eventualno isporučen link
+odmah postao nevažeći.
+
+### 40.2. Jedinstveni neposredni 202 ugovor
+
+Nova route logika živi u testabilnom
+`lib/auth/password-reset-request-route.ts` factory-ju. Produkcijska ruta samo
+vezuje stvarne zavisnosti: procesni limiter, Next.js `after()`, Prisma i
+centralni `sendPasswordResetEmail()` SMTP tok.
+
+Za svaki sintaksno validan email važi sledeći javni ugovor kada je background
+callback uspešno registrovan:
+
+| Polje | Vrednost |
+| --- | --- |
+| HTTP status | `202 Accepted` |
+| Telo | ista generička poruka, bez emaila i delivery rezultata |
+| `Content-Type` | JSON |
+| `Cache-Control` | `no-store, max-age=0` |
+| `Pragma` | `no-cache` |
+| Account lookup pre odgovora | ne |
+| Token/SMTP pre odgovora | ne |
+
+Poruka je promenjena iz prošlog vremena „poslali smo” u buduću, uslovnu
+formulaciju: ako nalog postoji, uputstva će biti poslata. Isto je ispravljeno u
+`app/(auth)/reset-password/page.tsx`, tako da UI ne tvrdi da je background
+isporuka već završena.
+
+Nevalidan JSON ili email vraćaju kontrolisani HTTP 400, a iscrpljeni limiter
+HTTP 429. Ti ishodi nisu account oracle zato što nastaju pre svakog lookup-a.
+Ako samo pozivanje scheduler-a sinhrono zakaže, ruta prijavljuje
+`SCHEDULING` i vraća generički HTTP 503 sa retry porukom; privatni posao nije
+pokrenut i rezultat je isti za postojeći i nepostojeći nalog. Ovo je izabrano
+umesto lažnog 202, jer zahtev koji nije ni registrovan za obradu nije stvarno
+prihvaćen.
+
+### 40.3. Next.js `after()` i stage-only observability
+
+`acceptPasswordResetRequest()` prima scheduler kao zavisnost i registruje
+callback oblika `() => processPasswordResetRequest(...)`. Važno je da se
+prosleđuje funkcija, a ne već pokrenut Promise; u suprotnom bi lookup ponovo
+počeo pre javnog odgovora. Produkcijska kompozicija koristi
+`schedule: (task) => after(task)`. Lokalni Next.js 16.1.6 tip i implementacija
+potvrđuju da callback pripada post-response lifecycle-u.
+
+Sve poznate private failure tačke svode se na mali enum:
+
+- `LOOKUP` — DB čitanje korisnika;
+- `TOKEN_REPLACEMENT` — generisanje ili transakcioni upis tokena;
+- `DELIVERY` — SMTP slanje;
+- `SCHEDULING` — callback nije registrovan;
+- `BACKGROUND` — neočekivana greška izvan unutrašnjih kontrolisanih grana.
+
+Produkcijski logger dobija samo `{ stage }`. Submitted email, korisnički ID,
+reset token i originalni exception/message ne prosleđuju se reporteru. I sam
+reporter je iza zaštitnog `try/catch`-a, pa kvar observability sistema ne može
+promeniti odgovor, odbiti validan background tok ili ponovo napraviti account
+oracle.
+
+### 40.4. Atomska zamena tokena i SMTP ambiguity politika
+
+Privatni servis u `lib/auth/password-reset-request.ts` prvo normalizuje javni
+input na trimovan lowercase email, uz maksimalnu dužinu 254 i osnovnu email
+strukturu. Posle background lookup-a nepostojeći nalog tiho završava bez tokena
+i SMTP-a. Postojeći nalog dobija CSPRNG token iz postojećeg
+`generateResetToken()` helpera i rok od jednog sata.
+
+Produkcijska `replaceTokensForRequest` zavisnost sada u jednoj Prisma
+transakciji:
+
+1. briše prethodne `PasswordReset` redove korisnika;
+2. kreira novi red sa `userId`, tokenom i istekom;
+3. commit-uje oba upita zajedno ili ih oba rollback-uje.
+
+Ovo je atomska garancija po jednom zahtevu: korisnik neće ostati bez starog
+tokena samo zato što je sledeći create upit zakačio DB grešku. Naziv i
+dokumentacija namerno ne tvrde da uvek postoji tačno jedan aktivni token.
+`PasswordReset.userId` nema unique ograničenje, a transakcija nema per-user
+advisory lock, Serializable retry ili conditional claim. Dva paralelna zahteva
+zato još mogu oba proći delete/create interleaving i ostaviti dva važeća reda.
+
+SMTP se pokreće tek posle uspešnog DB commita, tako da poslati link nikada ne
+pokazuje na token koji još ne postoji. Ako SMTP zatim prijavi grešku, token se
+ne briše. Razlog je ambivalentna mrežna granica: poruka može biti prihvaćena,
+a odgovor izgubljen. Zadržani token važi najviše jedan sat i sledeći uspešan
+zahtev ga zamenjuje. Potpuna atomska DB+email isporuka nije obećana; zahteva
+transactional outbox i zaseban worker.
+
+### 40.5. UI, testovi i lokalna validacija
+
+Dodato je 11 testova u dva nova test fajla:
+
+- `lib/auth/password-reset-request-route.test.ts` — četiri HTTP-contract testa;
+- `lib/auth/password-reset-request.test.ts` — sedam service/scheduler testova.
+
+Route test koristi pravi `NextRequest`/`NextResponse`, ali injektovani fake
+scheduler. On hvata callback i dokazuje da background processor ima nula poziva
+u trenutku kada je response već vraćen. Tek eksplicitno pokretanje uhvaćenog
+callbacka poziva servis sa normalizovanim `kupac@example.com` inputom.
+
+Raw HTTP snapshot je upoređen za tri private scenarija: nepostojeći nalog,
+uspešna isporuka i background kvar. Sva tri imaju identičan status, sirovo JSON
+telo, content type i cache zaglavlja. Telo ne sadrži email, SMTP tekst ili
+internu fazu. Dodatno su provereni malformed JSON, nevalidan email, rate-limit
+429 i scheduler 503, uz dokaz da nijedan od njih ne zakazuje account-dependent
+posao.
+
+Service testovi proveravaju:
+
+- normalizaciju i odbijanje neispravnog javnog inputa;
+- stop posle lookup-a za nepostojeći nalog;
+- redosled lookup → token → transakciona zamena → SMTP;
+- jednočasovni expiry;
+- stage-only `DELIVERY` bez curenja emaila, tokena ili SMTP poruke;
+- zaustavljanje pre SMTP-a kada lookup ili token upis zakažu;
+- vraćanje javnog odgovora pre početka privatnog rada;
+- kontrolisani scheduler/background/logger failure oblik.
+
+Završni lokalni dokaz na radnoj grani je:
+
+| Provera | Rezultat |
+| --- | --- |
+| ciljani reset testovi | 11/11 prolazi |
+| `npm test` | 126 ukupno; 124 prolaze; 2 postojeća opt-in DB testa preskočena |
+| `npm run lint -- --quiet` | prolazi bez grešaka |
+| `npm run typecheck` | prolazi |
+| `git diff --check` | prolazi |
+| produkcijski build sa lažnim CI vrednostima | prolazi; 91 ruta završena |
+
+Lokalni PostgreSQL nije bio pokrenut. Build je zato ispisao očekivane poruke za
+nedostupan `127.0.0.1:5432` i koristio postojeće safe-default storefront grane,
+ali se završio exit kodom 0. Stvarna produkciona baza i stvarne `.env` vrednosti
+nisu pregledane niti korišćene kao test podaci.
+
+### 40.6. Granice etape i preostali recovery rad
+
+Ova etapa rešava account-dependent HTTP status, telo i DB/SMTP latenciju, ali
+ne tvrdi da je email recovery završen. Preostaju:
+
+1. transactional outbox/worker sa retry-em, deduplikacijom, alertom i
+   shutdown/redeploy dokazom;
+2. shared Redis/DB limiter po IP-u, nalogu/email digestu i akciji;
+3. eksplicitan trusted-proxy hop/client-IP ugovor umesto verovanja celom
+   `x-forwarded-for` headeru;
+4. hashovanje reset tokena u bazi;
+5. concurrency-safe jedan aktivni token po korisniku, uz realni PostgreSQL
+   two-worker test;
+6. exactly-once reset-confirm claim i opoziv postojećih sesija posle promene
+   lozinke;
+7. bezbedno escaped auth-email ime i širi email template hardening;
+8. staging/runtime smoke stvarnog Next `after()` lifecycle-a.
+
+Procesni LRU sada ima još veći operativni značaj jer brz 202 omogućava klijentu
+da ne čeka SMTP. Zbog toga ova promena ne sme biti predstavljena kao abuse
+zaštita. Ona zatvara privacy oracle; shared throttling ostaje zaseban P1.
+
+Nije menjana Prisma šema, nije dodata migracija i nisu dirani produkcioni
+podaci. Nisu kontaktirani VPS/SSH, DNS, TLS, reverse proxy, PM2 ili GitHub
+`production` Environment. Nisu postavljene tajne, nije napravljen release tag,
+kartice nisu uključene i ništa nije pušteno live.
+
+### 40.7. PR, exact-head i post-merge CI dokaz
+
+U trenutku ovog lokalnog zapisa kod i dokumentacija nalaze se samo na feature
+grani `ispravka/v2-reset-privacy`. PR broj, feature commit, exact-head run, V2
+merge SHA i post-merge run namerno nisu izmišljeni niti unapred upisani.
+
+Obavezan sledeći redosled je:
+
+1. commitovati pregledano radno stablo;
+2. pushovati samo feature granu;
+3. otvoriti PR isključivo ka `verzija/v2.0-univerzalna-platforma`;
+4. sačekati kompletan PostgreSQL/Chromium/build CI na tačnom head SHA-u;
+5. potvrditi da su `Potvrdi V2 release` i `Objavi na produkciju` preskočeni;
+6. spojiti samo u kanonsku V2 granu;
+7. ponoviti isti dokaz na post-merge SHA-u;
+8. tek tada dopuniti ovaj odeljak stvarnim linkovima i SHA vrednostima.
+
+Ni jedan od ovih koraka ne pravi release tag i ne pušta sajt live. Produkcijska
+aktivacija ostaje poslednja, posebno odobrena faza posle svih P0/P1, legalnih,
+infrastrukturnih, backup/restore i operativnih gate-ova.

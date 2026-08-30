@@ -11,8 +11,8 @@ Zapisa ima više i lako je otvoriti pogrešan. Poređano po dubini:
 
 | Dokument | Obim | Šta pokriva |
 | --- | --- | --- |
-| **`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-08-30.md`** | 31 glavni odeljak | **Konsolidovan presek svega urađenog.** Implementirano stanje, razlozi, Git/PR/CI dokazi, ključni fajlovi, P0/P1/P2 dug, preporučeni redosled i produkcioni checklist |
-| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 39 odeljaka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
+| **`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-08-30.md`** | 32 glavna odeljka | **Konsolidovan presek svega urađenog.** Implementirano stanje, razlozi, Git/PR/CI dokazi, ključni fajlovi, P0/P1/P2 dug, preporučeni redosled i produkcioni checklist |
+| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 40 odeljaka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
 | Ovaj fajl (`IZMENE.md`) | sažeti dnevnik | Hronologija i odluke — zašto je nešto urađeno tako |
 | `docs/ARCHITECTURE-V2.md` | 4 KB | Arhitektonske granice platforme |
 | `docs/CATALOG-MIGRATION-PLAN.md` | 10 KB | Redosled prelaska na generički katalog |
@@ -787,11 +787,11 @@ tokena. GitHub CI sada taj test obavezno uključuje preko
 Ova etapa nema Prisma migraciju i ne menja produkcione podatke, server, tajne,
 GitHub Environment, release tag ili live sajt. Takođe još ne uključuje globalni
 `emailVerified` login uslov, jer bi bez audita/backfill-a i resend toka mogao da
-zaključa postojeće legitimne naloge. Slede redom: reset enumeration/SMTP
-uniformnost, prefetch-safe POST potvrda umesto GET auto-login mutacije,
-hashovani jednokratni tokeni, atomska registracija i resend, kontrolisani
-verified-login rollout, session revocation/sveža role provera i shared login
-limiter. Live puštanje ostaje poslednja faza.
+zaključa postojeće legitimne naloge. Reset privacy je zatvoren narednom etapom
+iz odeljka XVIII; zatim slede prefetch-safe POST potvrda umesto GET auto-login
+mutacije, hashovani jednokratni tokeni, atomska registracija i resend,
+kontrolisani verified-login rollout, session revocation/sveža role provera i
+shared login limiter. Live puštanje ostaje poslednja faza.
 
 Promena je potom spojena isključivo u kanonsku V2 granu kroz
 [PR #10](https://github.com/biozencaj-stack/narodnanosnja/pull/10). Feature
@@ -803,3 +803,58 @@ i post-merge run
 završili su uspešno; u oba su release potvrda i produkcijski deploy preskočeni.
 Read-only GitHub provera posle merge-a i dalje nalazi 0 production deployment
 zapisa.
+
+---
+
+## XVIII. P1 privatnost zahteva za reset lozinke — 30. avgust 2026.
+
+Druga P1 auth etapa zatvara account-enumeration signal u
+`POST /api/auth/reset-password/request`. Ranija ruta je za nepostojeći nalog
+brzo vraćala generički HTTP 200, dok je postojeći nalog čekao DB upise i SMTP.
+Ako DB ili SMTP zakažu, samo postojeći nalog dobijao je HTTP 500 sa drugačijim
+telom. Status, telo i naročito vreme odgovora zato su mogli da otkriju da li je
+email registrovan.
+
+Novi javni ugovor razdvaja HTTP odgovor od account-dependent rada. Svaki
+sintaksno validan email, kada je zahtev uspešno zakazan, odmah dobija isti HTTP
+202, istu buduće-formulisanu poruku i zaglavlja
+`Cache-Control: no-store, max-age=0` i `Pragma: no-cache`. Lookup naloga,
+jednočasovni token i SMTP pokreću se tek kroz Next.js `after()` callback, posle
+zatvaranja odgovora. Nevalidan JSON/email i rate-limit 429 ostaju različiti jer
+nastaju pre lookup-a i ne zavise od toga da li nalog postoji. Ako samo
+zakazivanje `after()` callbacka sinhrono zakaže, ruta vraća generički HTTP 503
+sa retry porukom; ni tada lookup nije pokrenut i nema account oracle-a.
+
+Privatni pipeline prijavljuje samo fazu `LOOKUP`, `TOKEN_REPLACEMENT`,
+`DELIVERY`, `SCHEDULING` ili `BACKGROUND`. Email, reset token i originalni DB/
+SMTP tekst greške ne ulaze u ovaj log. Brisanje prethodnih tokena i kreiranje
+novog rade u jednoj Prisma transakciji, pa jedan zahtev ne može da obriše staro
+stanje bez uspešnog upisa novog tokena. Novi token se ne briše automatski kada
+SMTP prijavi grešku: udaljeni server je možda već prihvatio poruku pre gubitka
+odgovora, pa bi cleanup pretvorio eventualno isporučen link u nevažeći.
+
+UI sada više ne tvrdi da je email već sigurno poslat. Prikazuje samo da će
+uputstva biti poslata ako nalog postoji. Logika rute izdvojena je u testabilni
+factory, pa testovi proveravaju sirovi HTTP status, tačno telo, content type,
+cache zaglavlja, normalizovan email i činjenicu da se privatni posao ne pokreće
+pre vraćanja odgovora. Ukupno je dodato 11 testova: četiri route-contract i
+sedam service/scheduler testova. Završni lokalni paket ima 126 testova: 124
+prolaze, a dva postojeća opt-in PostgreSQL testa očekivano su preskočena bez
+bezbedne lokalne test baze. `lint --quiet`, TypeScript, `git diff --check`,
+ciljani testovi i produkcijski build sa lažnim CI vrednostima takođe prolaze.
+
+Granice ove etape ostaju namerno eksplicitne. `after()` nije durable queue:
+pad/redeploy procesa posle 202 može izgubiti posao, pa su transactional outbox,
+alert i runtime smoke obavezni pre produkcije. Transakcija je atomska po jednom
+zahtevu, ali bez unique/CAS/Serializable zaštite dva paralelna zahteva još mogu
+ostaviti dva važeća tokena. Tokeni su i dalje čitljivi u bazi, reset-confirm još
+nema exactly-once claim, a procesni LRU i ceo `x-forwarded-for` nisu shared
+limiter/trusted-proxy ugovor.
+
+Promena je trenutno lokalno završena na grani `ispravka/v2-reset-privacy`.
+GitHub PR, exact-head CI, V2 merge i post-merge dokaz biće upisani tek kada
+zaista postoje. Nema Prisma migracije, produkcionih podataka, servera, tajni,
+GitHub Environment promene, release taga ili live deploya. Sledeći auth koraci
+su prefetch-safe POST potvrda, hashovani jednokratni tokeni, exactly-once reset
+confirm, atomska registracija/resend, session revocation i shared limiter. Live
+puštanje ostaje poslednja, posebno odobrena faza.
