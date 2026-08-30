@@ -3,7 +3,7 @@
 Datum početka: 2026-08-30  
 Radna grana: `ispravka/v2-db-authoritative-sessions`  
 Polazni V2 SHA: `d926e152f51f363c66d37f46859fbecffbc634d2`  
-Status: **u radu; faze 1–4 imaju zelen exact-head PostgreSQL/browser/build CI dokaz; dormantni pouzdani logout paket faze 5 ima lokalni dokaz i čeka svoj exact-head CI, aktivacija nije izvršena**
+Status: **u radu; faze 1–5 imaju zelen exact-head PostgreSQL/browser/build CI dokaz; prvi dormantni server-guard paket faze 6 ima lokalni dokaz i čeka exact-head CI, aktivacija nije izvršena**
 
 ## 1. Granica ove sekcije
 
@@ -144,8 +144,8 @@ definisanog ugovora.
 | 2 | Dormantni claim/HMAC/policy/JWT/DB validator moduli | završeno; exact-head PostgreSQL 16 CI dokaz zelen |
 | 3 | Revocation u reset/change/privileged/demo write tokovima | završeno; exact-head PostgreSQL 16 CI dokaz zelen |
 | 4 | Credentials i verification V2 session issuance/rotation | završeno kao dormantni paket; exact-head run `33330847915` zelen |
-| 5 | Pouzdan current-session logout | dormantni core, bounded cookie cleanup i two-session real-PG fixture lokalno završeni; CI čeka |
-| 6 | Customer/ownership/admin server guard migracija | nije započeto |
+| 5 | Pouzdan current-session logout | završen kao dormantni paket; exact-head run `33331632579` zelen |
+| 6 | Customer/ownership/admin server guard migracija | strogi dormantni Node guard/access ugovor lokalno završen; call-site migracija i CI slede |
 | 7 | Session contract migracija | nije započeto |
 | 8 | Real-PG race/E2E matrica i uklanjanje preflight blockera | nije započeto |
 | 9 | Završna dokumentacija, exact-head i post-merge V2 dokaz | nije započeto |
@@ -177,7 +177,7 @@ postavlja i `SET LOCAL TIME ZONE 'UTC'`, jer Prisma `DateTime` kolone koriste
 `timestamp(3) without time zone` i taj migracioni upis ne sme naslediti
 operatorov lokalni zidni sat. `SET LOCAL` važi samo u migracionoj transakciji:
 ne podešava buduće runtime konekcije, DB role niti database default. Zato
-poseban runtime UTC readiness gate iz odeljka 12 ostaje obavezan pre aktivacije.
+poseban runtime UTC readiness gate iz odeljka 13 ostaje obavezan pre aktivacije.
 Ako potrebni lock nije brzo dostupan, rollout treba da stane i bude ponovljen u
 pregledanom prozoru umesto da neograničeno blokira aplikaciju.
 
@@ -791,7 +791,7 @@ identitet, ne poziva revoke i može bezbedno da dobije migracioni cleanup plan.
 | TypeScript bez emitovanja | PASS |
 | ESLint quiet | PASS |
 | `git diff --check` | PASS |
-| Two-session current logout real-PG fixture | čeka GitHub PostgreSQL 16 CI |
+| Two-session current logout real-PG fixture | PASS u run-u `33331632579` |
 
 Novi fixture koristi postojeći `RUN_AUTH_SESSION_DB_TESTS=true`, pa workflow ne
 dobija nov env prekidač. U lokalno zaštićenoj opt-in PostgreSQL bazi pravi dva
@@ -801,6 +801,13 @@ tačno HMAC-adresirani sibling B red; replay A mora da vrati `invalid` i i dalje
 bezbedan `clear`, dok B red ostaje netaknut. Direktna sibling-row provera je
 namerno nezavisna od drugih paralelnih CI fixture-a koji kratko menjaju globalnu
 policy revision. Fixture email je eksplicitno kratak i canonical.
+
+Commit `6af8114b6b255c6f99886794d148c9251e59e936` i exact-head PR run
+`33331632579`, attempt 1, potvrdili su i ovaj paket na PostgreSQL-u 16. Fresh
+migracije, drift, DB invarijante, svi real-PG/security testovi, lint,
+TypeScript, Chromium, mobilni smoke i probni production build završili su sa
+`SUCCESS`. Draft PR je ostao clean i usmeren na kanonsku V2 granu, dok su
+`Potvrdi V2 release` i `Objavi na produkciju` završili kao `SKIPPED`.
 
 ### 9.6. Šta namerno ostaje za activation paket
 
@@ -816,7 +823,130 @@ novi POST ugovor tek u istom preseku sa V2 `authOptions` codec/cookie wiring-om
 i centralnim DB guardovima. Do tada su svi moduli ove faze dormantni i preflight
 JWT/session blocker ostaje aktivan.
 
-## 10. Obavezni transakcioni redosledi aktivacije i narednih faza
+## 10. Dnevnik — faza 6: strogi Node guard i server access ugovor
+
+### 10.1. Potpuni inventar aktivnih potrošača
+
+Pre izmene call-site-ova urađen je novi statički inventar. Aktivna aplikacija
+ima `99` poziva `getServerSession(authOptions)` u `56` fajlova, još dva
+`getToken` poziva i osam klijentskih `useSession` potrošača. Server pozivi su
+podeljeni ovako:
+
+| Grupa | Poziva | Fajlova/napomena |
+| --- | ---: | --- |
+| Account/admin stranice i layout-i | `7` | user layout, admin layout/dashboard i četiri account stranice |
+| Order/payment ownership stranice | `3` | session je alternativa guest order-access tokenu |
+| Admin API | `68` | `30` route fajlova, uz postojeći deny-by-default OPERATOR allowlist |
+| Customer/ownership/checkout API | `19` | `16` route/handler fajlova |
+| Opciona personalizacija | `1` | promotions quote koristi optional user ID |
+| Privileged machine endpoint | `1` | wishlist cron ima admin-session fallback uz machine secret |
+
+Od dva `getToken` mesta, `proxy.ts` donosi Edge role odluke, dok email
+verification ruta čita current legacy user i izdaje legacy cookie. Klijentski
+`useSession` ostaje u Header/NavBar/checkout/product/review komponentama i na
+account adresama/podešavanjima. Ovaj broj je razlog da se V2 issuer ne uključi
+pre nego što centralni guard i svi enforcement potrošači budu spremni za isti
+cutover.
+
+### 10.2. Zašto se NextAuth `getToken` ne koristi
+
+Pregled lokalno instaliranog NextAuth v4 pokazuje dve nedovoljno stroge
+osobine za autoritativni dokaz:
+
+1. `getToken` prihvata `Authorization: Bearer` kada session cookie nedostaje;
+2. interni `SessionStore` skuplja svako ime koje samo počinje zadatim base-om,
+   zatim ga sortira i spaja.
+
+Novi Node guard zato uopšte ne prima request/header objekat. Prima samo listu
+cookie parova, bira exact aktivni V2 base i nema kod kojim bi Bearer, legacy
+cookie ili JWT profile/role mogao postati fallback.
+
+### 10.3. Strogi i bounded V2 cookie reader
+
+`lib/auth/auth-session-cookie-reader.ts` prihvata samo insecure ili secure V2
+base iz runtime-frozen config ugovora. Dozvoljen je ili jedan exact base cookie
+ili kompletan neprekinut chunk niz `.0`–`.N`; base+chunk miks, duplikat, rupa,
+zero-pad i višedelni/alfanumerički suffix ispod exact aktivnog base-a daju
+`invalid` pre kriptografije i baze. Drugi canonical secure režim, legacy ime i
+base-lookalike nisu credential source, pa se ignorišu i sami daju `missing`;
+ne mogu da se spoje sa aktivnim V2 tokenom.
+
+Reader ima tvrde granice: najviše `8` chunkova, `4096` karaktera po vrednosti i
+`32768` ukupno. Unrelated i legacy cookie imena nisu token source. Rezultat je
+frozen `missing`, `invalid` ili `present`; raw token živi samo u kratkom
+unutrašnjem prelazu ka decoderu i nikada ne ulazi u javni guard rezultat.
+
+### 10.4. Kripto → DB → svež principal, bez cache-a
+
+`lib/auth/authoritative-session-guard.ts` primenjuje fiksni redosled:
+
+```text
+exact V2 cookie
+  → strict decodeAuthSessionJwt i ponovna seven-claim ekstrakcija
+  → HMAC-backed AuthoritativeSessionDatabase.validate
+  → samo normalizovan svež DB principal
+```
+
+Ishod je tačno jedan od:
+
+- `authenticated` — frozen principal sa exact ID/email/name/role/verification
+  poljima iz svežeg Session+User+policy+DB-clock upita;
+- `anonymous/missing` ili `anonymous/invalid` — nema credentiala, JWE/claims su
+  nevalidni, red je opozvan/istekao ili se revision/policy više ne poklapa;
+- `unavailable` — DB validator, persisted invariant ili adapter nisu pouzdano
+  dostupni; ovaj ishod nikad ne postaje anonymous ili JWT fallback.
+
+Guard nikada ne vraća JWE, claims, SID, HMAC digest, DB red ili sirovu grešku.
+Dependency/report exception ostaje coarse, a pozitivni cross-request cache se
+ne uvodi.
+
+### 10.5. Centralna access semantika i dormantni server adapter
+
+`lib/auth/authoritative-session-access.ts` mapira customer API na
+`ok/unauthenticated/unavailable`. Admin API i page mapa koriste postojeći
+`getAdminApiAccess`/`getAdminPageAccess`, pa ADMIN, CUSTOMER i OPERATOR ne dobijaju
+novu paralelnu role logiku: OPERATOR i dalje prolazi samo kroz centralnu
+deny-by-default allowlistu. Budući HTTP adapter mapira anonymous na `401`,
+validnog ali nedozvoljenog principal-a na `403`, a unavailable na coarse `503`.
+
+`lib/auth/authoritative-session-server.ts` je `server-only` production wiring:
+čita isključivo `cookies().getAll()`, jednom deli isti provereni secret između
+V2 decodera i HMAC DB validatora i vraća `unavailable` ako request context ili
+konfiguracija nisu dostupni. Statički safety test zabranjuje pozive
+`getToken`, `getServerSession`, NextAuth import, Authorization čitanje i legacy
+cookie resolver u tom adapteru.
+
+Ovi moduli su još dormantni: nijedan aktivni layout, route, `authOptions` ili
+`proxy.ts` ih ne uvozi. Zbog toga ovaj presek ne menja login, sesiju, response,
+cookie ili ponašanje korisnika.
+
+### 10.6. Dokaz i sledeći podkorak
+
+| Provera | Rezultat |
+| --- | --- |
+| Fokus reader + guard + access + server safety + real-PG | `18` ukupno / `17` pass / `1` očekivani real-PG skip / `0` fail |
+| Kompletan `npm test` | `411` ukupno / `385` pass / `26` očekivanih real-PG skip / `0` fail |
+| TypeScript bez emitovanja | PASS |
+| ESLint quiet | PASS |
+| `git diff --check` | PASS |
+| Cookie→JWE→DB-fresh-profile→exact-revoke fixture | čeka GitHub PostgreSQL 16 CI |
+
+Opt-in fixture koristi isti `RUN_AUTH_SESSION_DB_TESTS=true` prekidač. U jednoj
+interactive transakciji inicijalizuje UTC, drži `User FOR UPDATE` i policy
+singleton `FOR SHARE`, upisuje HMAC Session, pravi stvarni V2 JWE i validira ga
+iz exact cookie-ja. Zatim menja samo profil bez revision bump-a i dokazuje da
+naredni guard read odmah vraća sveže ime; exact current-session revoke u istoj
+zaključanoj transakciji pretvara isti JWE u `anonymous/invalid`. Time fixture
+ne pušta globalni policy lock između ključnih asercija i ne uvodi paralelni CI
+race. Dve nezavisne revizije nisu našle blokator; getter/Proxy totality minori
+su zatvoreni dodatnim fail-closed testovima.
+
+Sledeći podkorak Faze 6 je migracija call-site-ova po grupama na zajednički
+tri-state ugovor, ali bez parcijalnog V2 izdavanja. Aktivni credentials issuer,
+email-verification rotation, NextAuth codec/cookie, logout HTTP/UI i uklanjanje
+Edge JWT autorizacije ostaju jedan kasniji funkcionalni cutover.
+
+## 11. Obavezni transakcioni redosledi aktivacije i narednih faza
 
 Faze 4 i 5 prvo grade i testiraju dormantne orkestracione jezgre. One se ne
 povezuju parcijalno na aktivni `authOptions`, verification route, `signOut()`
@@ -881,7 +1011,7 @@ same-origin POST
 Ako DB revoke zakaže, endpoint vraća coarse retryable 503; ne tvrdi da je
 sesija opozvana samo zato što je browser cookie obrisan.
 
-## 11. Test matrica
+## 12. Test matrica
 
 Faza 2 već zaključava canonical 32-byte SID, stabilan domain-separated HMAC,
 odsustvo raw SID-a u DB-u, strict claim oblik, exact expiry, revision mismatch,
@@ -891,6 +1021,8 @@ legacy reserved-namespace preflight.
 Faza 4 je lokalno dodala izolovane real-PG fixture-e za HMAC-only credentials
 insert, stale bcrypt CAS, non-UTC clock, verification rotation i rollback.
 Faza 5 dodaje exact current-session revoke, replay i očuvanje sibling sesije.
+Faza 6 dodaje strict V2-only cookie reassembly, decode→DB guard, fresh profile
+projekciju, exact revoke i centralnu customer/admin tri-state access semantiku.
 Activation/race faze još moraju dodati sledeće integrisane dokaze:
 
 - immutable `sae` kroz proizvoljno mnogo session refresh zahteva;
@@ -907,7 +1039,7 @@ Activation/race faze još moraju dodati sledeće integrisane dokaze:
   call-site-ova;
 - schema expand→contract prelaz i fail-closed invalid fixture-e.
 
-## 12. Rollout i rollback rizici
+## 13. Rollout i rollback rizici
 
 1. **Mešani old/new app pool nije dozvoljen pri aktivaciji.** Stari proces može
    izdati JWT koji nema DB allowlist red. Budući rollout mora koristiti drain,
@@ -931,7 +1063,7 @@ Activation/race faze još moraju dodati sledeće integrisane dokaze:
    zidni sat. Aktivacija zato čeka eksplicitan UTC DB role/database readiness
    gate i real-PG write test.
 
-## 13. Preostali redosled posle ove sekcije
+## 14. Preostali redosled posle ove sekcije
 
 Kada DB-authoritative session paket dobije exact-head i post-merge V2 dokaz,
 redosled ukupnog projekta ostaje:
@@ -943,7 +1075,7 @@ redosled ukupnog projekta ostaje:
 5. sadržaj, pravni, payment, observability i ostali live checklist gate-ovi;
 6. tek na kraju main-push GitHub workflow i stvarno live puštanje.
 
-## 14. Git/CI evidencija ove sekcije
+## 15. Git/CI evidencija ove sekcije
 
 Ova tabela se popunjava isključivo stvarnim dokazima. Trenutno nijedan pending
 red nije tvrdnja o uspehu.
@@ -971,7 +1103,9 @@ red nije tvrdnja o uspehu.
 | Faza 4 treći real-PG pokušaj | [run `33330591629`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33330591629), `FAIL` pre transakcije; coarse faze `[]` otkrile predug fixture email; release/deploy `SKIPPED` |
 | Faza 4 canonical-fixture commit | `6a42e49226f85e4c0c185d136878529dc17dc1b9` |
 | Faza 4 zeleni exact-head dokaz | [run `33330847915`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33330847915), attempt 1, PostgreSQL/session/E2E/build `SUCCESS`; release/deploy `SKIPPED` |
-| Faza 5 logout commit/CI | čeka stabilan commit i exact-head run |
+| Faza 5 logout commit | `6af8114b6b255c6f99886794d148c9251e59e936` |
+| Faza 5 zeleni exact-head dokaz | [run `33331632579`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33331632579), attempt 1, PostgreSQL/session/E2E/build `SUCCESS`; release/deploy `SKIPPED` |
+| Faza 6 dormantni guard commit/CI | čeka stabilan commit i exact-head run |
 | Feature merge SHA | nije izvršen |
 | Post-merge V2 run | nije izvršen |
 | Release/deploy jobs | moraju ostati `SKIPPED` |
