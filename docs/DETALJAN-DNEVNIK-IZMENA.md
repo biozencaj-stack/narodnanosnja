@@ -1180,11 +1180,15 @@ Pre aktivacije su obavezni:
 - admin `REVIEW` inbox;
 - reconciliation tok;
 - refund tok;
-- cleanup napuštenih `PENDING/PROCESSING` rezervacija;
+- reservation-cleanup kod je u V2; svaka njegova izmena mora proći opt-in
+  PostgreSQL race/prefilter test u CI-ju, a produkcija zatim zahteva zasebno
+  odobren secret, dry-run/apply smoke i VPS timer;
 - multi-tab, refresh, 429/5xx i network-loss testovi;
 - trajan idempotentni email outbox.
 
-Bez cleanup-a napušten payment može zadržati zalihu i kupon rezervisanim.
+Implementacija zatvara rupu u aplikacionoj politici, ali sama prisutnost koda
+ne čini cleanup operativnim. Kartice ostaju isključene dok scheduler,
+monitoring, `REVIEW`/reconciliation/refund i bankarski staging nisu dokazani.
 
 ## 25. Ostale nedovršene tačke — commerce i admin
 
@@ -1372,11 +1376,15 @@ Stara lokalna Git istorija i dalje sadrži raniju demo vrednost. Zbog toga nije 
 ### Faza 5 — payment aktivacija i produkcija
 
 1. Bankarska sertifikacija i staging HPP E2E.
-2. REVIEW inbox, reconciliation, refund i reservation cleanup.
-3. Email outbox.
-4. Staging deploy/rollback vežba.
-5. Produkcioni secrets/vars i HTTPS provera.
-6. Tek zatim uključiti card capability.
+2. Završiti i pushovati reservation-cleanup granu i zahtevati prolaz opt-in
+   PostgreSQL concurrency testa u CI-ju.
+3. Postaviti zaseban cleanup secret, uraditi eksplicitan dry-run pa kontrolisan
+   apply smoke i tek zatim instalirati nadgledani VPS timer.
+4. Završiti `REVIEW` inbox, reconciliation i refund tok.
+5. Uvesti email outbox.
+6. Uvežbati staging deploy/rollback i kompletan HPP/callback scenario.
+7. Potvrditi produkcione secrets/vars, domen i HTTPS.
+8. Tek zatim uključiti card capability.
 
 ## 29. Novi fajlovi dodati u ovom preseku
 
@@ -1688,13 +1696,16 @@ Najveći preostali posao nije još jedno površinsko UI proširenje, već završ
 - stabilan generički variant identitet od opcija do OrderItem snapshot-a;
 - kompletan content/media sistem za menjanje branše;
 - operativni admin moduli;
-- payment reconciliation/refund/cleanup;
+- produkciona operacionalizacija reservation cleanup-a, payment
+  reconciliation i refund;
 - integracioni, E2E i accessibility testovi;
 - pregled i merge GitHub PR-a, pa tek potom aktivacija deployment workflow-a.
 
 Drugim rečima: produkciona baza je sada bezbedno proširena i spremna za V2 kod,
 ali javna aplikacija još nije V2. Kartice su isključene, GitHub/server tajne i
-HTTPS nisu završeni, a `main` nije spojen niti deployovan.
+HTTPS nisu završeni, a Draft PR #1 ka `main` nije spojen niti deployovan.
+Reservation-cleanup kod je u V2, ali nije deployovan; VPS timer i prvi
+dry-run/apply smoke nisu izvršeni.
 
 ## 32. Production-readiness rad — 29. avgust 2026.
 
@@ -1985,11 +1996,16 @@ DB šema je spremna, ali aplikacioni deploy ostaje blokiran sledećim stavkama:
    radi fail-closed bez ove konfiguracije.
 8. **SMTP** — host, port, nalog, credential, sender identitet i TLS validacija
    moraju biti potvrđeni stvarnim kontrolisanim testom.
-9. **Capability/feature flagovi** — COD, wishlist, reviews, newsletter, chat,
+9. **Reservation cleanup operativa** — svaka promena cleanup koda mora proći
+   opt-in PostgreSQL race/prefilter test u CI-ju. Produkcijski server zatim
+   zahteva zaseban `ORDER_RESERVATION_CLEANUP_SECRET`, prvi eksplicitan dry-run,
+   kontrolisani apply smoke, nadgledani systemd timer i proveru agregatnih
+   rezultata. Nijedna od tih server radnji nije izvršena ovom izmenom.
+10. **Capability/feature flagovi** — COD, wishlist, reviews, newsletter, chat,
    locations i druge javne funkcije treba eksplicitno potvrditi za ovu
    prodavnicu. Kartično plaćanje ostaje `false` do bankarske sertifikacije,
-   REVIEW/reconciliation/refund i reservation-cleanup tokova.
-10. **Git merge i deploy odluka** — production-readiness promene su sačuvane na
+   operativnog cleanup timera i završenih REVIEW/reconciliation/refund tokova.
+11. **Git merge i deploy odluka** — production-readiness promene su sačuvane na
     V2 feature grani; remote `main` nije promenjen i javna aplikacija nije V2.
     Merge u `main` automatski aktivira workflow, pa se ne radi pre završetka
     svih prethodnih stavki.
@@ -2289,3 +2305,175 @@ slanja. `lib/email/smtp.test.ts` proverava STARTTLS/implicitni TLS, validaciju
 sertifikata, lokalni self-signed izuzetak, portove, obaveznu konfiguraciju,
 legacy alias-e i eksplicitni SMTP nalog bez otvaranja mrežne veze.
 Promena nema Prisma migraciju, ne menja podatke i ne aktivira deploy.
+
+## 36. Cleanup napuštenih kartičnih rezervacija
+
+Na grani `ispravka/v2-istek-rezervacija` implementiran je P1 cleanup za
+rezervacije koje nastanu pre odlaska kupca na kartično plaćanje. Uklapanje u V2
+ne predstavlja produkcijski deploy. Promena je aplikaciona i ne uvodi novu
+Prisma migraciju; produkcijski server i podaci nisu menjani.
+
+### 36.1. Bezbednosna granica politike
+
+Centralna čista politika u `lib/orders/reservation-policy.ts` razlikuje
+`EXPIRE`, `REVIEW` i `SKIP`. Automatski `EXPIRE` je dozvoljen samo kada su
+istovremeno ispunjeni svi uslovi:
+
+- payment metod je `CARD`;
+- order status je `PENDING`;
+- payment status je `PENDING`;
+- `inventoryAllocated=true`;
+- prošao je pending/recovery rok;
+- ne postoji `Transaction`;
+- ne postoji nijedan `PaymentEvent`.
+
+Samo ovaj netaknuti pre-provider slučaj prelazi u `CANCELLED/FAILED` i može da
+oslobodi stock i kupon. `CASH` porudžbina, zatvoren order, terminalni payment,
+već oslobođena rezervacija ili svež pokušaj ostaju bez izmene.
+
+Svaka stara rezervacija sa transaction/event tragom i svaki stari
+`PROCESSING` prelaze u `REVIEW` bez oslobađanja zalihe ili kupona. Isti oprez
+važi za `PROCESSING` bez transaction-a i anomaliju u kojoj je Order aktivan, a
+Transaction već terminalan. Najnoviji timestamp između ordera, transaction-a
+i payment događaja produžava REVIEW sat, pa star order ne proglašava noviji
+provider pokušaj zastarelim.
+
+### 36.2. Centralni rokovi i payment-start zaštita
+
+`lib/config/order-reservations.ts` zamenjuje ranije odvojene dvočasovne rokove
+jednim izvorom istine. Fiksni `ORDER_PENDING_RECOVERY_WINDOW_MS` od dva sata
+sada dele:
+
+- checkout idempotency replay;
+- pending-card recovery/autorizacija nastavka;
+- istek netaknute kartične rezervacije.
+
+Payment-activity/processing REVIEW rok je konzervativno 24 sata. Opciona
+`ORDER_PROCESSING_REVIEW_MINUTES` vrednost mora biti kanonski ceo broj od 120
+do 10080 minuta. Nedostajuća vrednost koristi 1440, dok prisutna prazna,
+razmaknuta, decimalna, potpisana ili vrednost van granica radi fail-closed.
+
+`beginCardPayment` pre postojeće payment state machine-e učitava Transaction i
+poslednji/broj PaymentEvent redova i primenjuje istu politiku:
+
+- netaknuta rezervacija starija od dva sata vraća HTTP 410 kod
+  `PAYMENT_RESERVATION_EXPIRED` i ne pravi provider payload;
+- order sa `inventoryAllocated=false` vraća
+  `PAYMENT_INVENTORY_NOT_RESERVED` i ne može oživeti oslobođenu rezervaciju;
+- stari payment pokušaj atomarno prebacuje aktivnu Transaction projekciju i
+  Order payment status u `REVIEW`, bez novog ili replayovanog HPP payload-a.
+
+Postojeća callback politika ostaje poslednja sigurnosna mreža: naknadni
+approval ne oživljava otkazan order i ne re-alocira već oslobođenu zalihu, već
+nejasan konflikt ostavlja za `REVIEW`.
+
+### 36.3. Serializable per-order obrada i poison fallback
+
+`lib/orders/reservation-cleanup.ts` koristi ograničen i deterministički DB
+prefilter samo da pronađe kandidatske ID-eve. Podrazumevani batch je 50, a
+interni maksimum 200; HTTP pozivalac ne bira cutoff, order ID ili batch.
+
+Svaki kandidat se obrađuje odvojeno:
+
+1. otvara se Prisma Serializable transakcija;
+2. Order, Transaction i poslednji/broj PaymentEvent redova ponovo se učitavaju;
+3. čista politika se ponovo izvršava nad svežim snapshotom;
+4. stanje se preuzima uskim compare-and-set `updateMany` uslovom;
+5. za `EXPIRE`, promena statusa i postojeći exactly-once inventory/coupon
+   helperi završavaju u istoj transakciji;
+6. tipični `P2034`/CAS konflikti dobijaju najviše tri pokušaja sa novim
+   snapshotom.
+
+Payment start i callback koriste kompatibilan Transaction → Order redosled
+upisa, što smanjuje Transaction/Order deadlock rizik. Coupon release dodatno
+sortira promotion ID-eve pre uslovnog smanjenja `usedCount`.
+
+Greška jednog ordera ne prekida batch. Ako tačan inventory snapshot ne može da
+se preuzme ili coupon marker/count nije dosledan, originalni expire pokušaj se
+rollback-uje. Zatim zasebna Serializable transakcija ponovo proverava isti
+order i pokušava uski CAS u `REVIEW`, bez vraćanja zalihe ili kupona. Ako i taj
+poison fallback izgubi trku ili padne, kandidat se broji kao `failed`, a petlja
+nastavlja sledećim ID-em.
+
+Dry-run prolazi istu kandidatsku pretragu, per-order re-read i politiku, ali ne
+izvršava order/transaction upise niti inventory/coupon helper-e. Javni rezultat
+sadrži samo `scanned`, `expired`, `reviewed`, `skipped`, `failed` i `dryRun`,
+bez ID-eva porudžbina, PII-ja ili provider payload-a. Ako makar jedan kandidat
+ostane `failed`, HTTP odgovor je 500 sa `success:false` i istim agregatima, pa
+scheduler ne može da tretira parcijalni kvar kao uspešan prolaz.
+
+### 36.4. POST/Bearer/Origin maintenance endpoint
+
+Nova ruta `POST /api/cron/order-reservations` je Node-only, dinamička i
+`no-store`. Nema `GET` handler i nema admin-session/cookie fallback.
+
+Autorizacija zahteva tačan `Authorization: Bearer <secret>` format i zaseban
+`ORDER_RESERVATION_CLEANUP_SECRET` od najmanje 32 znaka. Bearer helper radi
+constant-time poređenje fiksnih SHA-256 digestova i odbija neispravnu šemu,
+whitespace i nevalidan token oblik. Nepodešen/slab server secret vraća `503`,
+a pogrešna autorizacija `401` sa Bearer challenge-om.
+
+Postojeća fail-closed unsafe-API provera u `proxy.ts` nije oslabljena niti ruta
+izuzeta. VPS poziv mora poslati `Origin` koji odgovara kanonskom
+`NEXT_PUBLIC_SITE_URL`; nedostajući ili neusklađen Origin vraća `403` pre same
+rute.
+
+Prazno telo i izostavljen `apply` namerno znače dry-run. Dozvoljeni operativni
+oblici su `{"apply":false}` i `{"apply":true}`; dodatna polja, pogrešan tip,
+nevalidan JSON ili telo preko 256 bajtova se odbijaju. Promena stanja zato
+zahteva i validan Bearer i eksplicitni `apply: true`.
+
+### 36.5. Automatske i PostgreSQL concurrency provere
+
+Dodati focused testovi pokrivaju:
+
+- granice oba roka i fail-closed parsiranje konfiguracije;
+- `EXPIRE` samo bez ikakvog payment traga;
+- `REVIEW` za stare/anomalne payment projekcije uz zadržanu rezervaciju;
+- strogi Bearer format, minimalnu dužinu i timing-safe proveru;
+- default dry-run bez upisa ili release poziva;
+- exactly-once CAS, individualni serialization retry i izgubljenu trku;
+- izolaciju greške jednog kandidata;
+- inventory/coupon poison rollback i zaseban `REVIEW` fallback;
+- payment-start istek, inactive-inventory zabranu i REVIEW prelaz;
+- route body/auth/status/no-store ugovor i alerting HTTP 500 za `failed > 0`.
+
+`lib/orders/reservation-cleanup.integration.test.ts` je opt-in test nad pravim
+PostgreSQL-om. Najpre proverava da realni Prisma prefilter bira netaknutu staru
+rezervaciju, ali isključuje star order sa svežom payment aktivnošću. Zatim dva
+paralelna cleanup radnika ciljaju isti stari order sa stock i coupon fixture-om;
+očekivanje je jedan `EXPIRED`, jedan `SKIPPED`, jedan povrat stock-a i jedno
+uklanjanje coupon usage-a. Test se sam odbija ako naziv baze jasno ne sadrži
+`test`, `e2e` ili `provera`, a fixture briše u `finally`.
+
+Lokalno ovaj race test nije izvršen jer na radnoj stanici nema dostupne
+bezbedne PostgreSQL test baze; bez eksplicitnog
+`RUN_RESERVATION_CLEANUP_DB_TESTS=true` ostaje skipovan i ne otvara Prisma
+klijent. GitHub verify job ga obavezno uključuje nad svojim izolovanim
+PostgreSQL 16 servisom pre browser smoke-a i builda.
+
+Završna lokalna provera kombinovanog stabla 30. avgusta nalazi 103 testa: 102
+prolaze, a jedini PostgreSQL test je očekivano preskočen bez bezbedne test baze.
+`lint --quiet` završava sa 0 grešaka, TypeScript, produkcijski build sa lažnim
+test podešavanjima i `git diff --check` prolaze. GitHub verify job uključuje DB
+test nad izolovanim PostgreSQL 16 servisom; istorijske brojke iz prethodnih
+odeljaka nisu prepisivane.
+
+### 36.6. Operativno stanje i preostale granice
+
+Implementacija i dokumentacija su uklopljene u V2 istoriju, ali nisu
+deployovane. Produkcijski `.env` nije dobio
+`ORDER_RESERVATION_CLEANUP_SECRET`, VPS nije menjan, a systemd oneshot/timer
+nije instaliran. GitHub workflow takođe namerno ne upravlja server timerom.
+
+Prvi produkcioni koraci ostaju zasebno odobren rollout: deploy sa card
+capability-jem i dalje na `false`, secret-safe `{"apply":false}` poziv sa
+matching Origin-om, pregled agregata, kontrolisani `{"apply":true}` smoke,
+ponovni dry-run, monitoring i tek zatim uključivanje periodičnog timera.
+
+Ovaj cleanup ne rešava admin `REVIEW` inbox, reconciliation sa bankom, refund,
+email outbox, bankarski staging/HPP sertifikaciju niti multi-tab/network-loss
+scenario. Kartice ostaju isključene dok svi ti tokovi, timer i produkcioni
+smoke nisu završeni. PostgreSQL test trenutno dokazuje cleanup-vs-cleanup
+exactly-once trku; zasebna real-DB cleanup-vs-payment-start/callback trka ostaje
+dodatna P2 verifikacija pre uključivanja kartica.

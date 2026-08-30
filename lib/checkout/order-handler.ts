@@ -27,8 +27,7 @@ import type { CartItem } from "@/types/cart";
 import { storeCapabilities } from "@/lib/config/capabilities";
 import { verifyRecaptchaToken } from "@/lib/security/recaptcha";
 import { prisma } from "@/lib/db";
-
-const IDEMPOTENCY_REPLAY_WINDOW_MS = 2 * 60 * 60 * 1000;
+import { ORDER_PENDING_RECOVERY_WINDOW_MS } from "@/lib/config/order-reservations";
 
 interface OrderForm {
   email: string;
@@ -162,7 +161,7 @@ function isUniqueConstraintError(error: unknown): boolean {
 
 function isWithinIdempotencyReplayWindow(createdAt: Date): boolean {
   const age = Date.now() - createdAt.getTime();
-  return age >= 0 && age <= IDEMPOTENCY_REPLAY_WINDOW_MS;
+  return age >= 0 && age <= ORDER_PENDING_RECOVERY_WINDOW_MS;
 }
 
 export async function POST(request: NextRequest) {

@@ -152,6 +152,21 @@ se ne poziva pre eksplicitne expand migracije baze.
   `Order.checkoutIdempotencyKey` je unique. Ne uklanjaj ga: izgubljen odgovor
   inače pravi duple porudžbine i rezervacije.
 - Otkazivanje/decline vraća zalihu i rezervisani kupon najviše jednom.
+- Cleanup rezervacija automatski otkazuje i oslobađa zalihu/kupon samo za
+  istekao `CARD` order koji je i dalje `PENDING`, ima payment `PENDING`,
+  `inventoryAllocated=true` i nema ni `Transaction` ni `PaymentEvent` trag.
+  `CASH` porudžbine se nikada ne otkazuju ovim tokom.
+- Stara rezervacija sa bilo kakvom payment aktivnošću, kao i stari
+  `PROCESSING`, prelazi u `REVIEW` i zadržava zalihu i kupon do ručnog
+  reconciliation-a. Pending/recovery prozor je dva sata; processing review
+  prozor je podrazumevano 24 sata i može se ograničeno podesiti kroz
+  `ORDER_PROCESSING_REVIEW_MINUTES`.
+- Maintenance endpoint je isključivo `POST /api/cron/order-reservations`,
+  zahteva zaseban Bearer secret od najmanje 32 znaka i podrazumevano radi
+  dry-run. Serverski poziv mora poslati i `Origin` jednak javnom origin-u jer
+  unsafe API rute ostaju iza fail-closed same-origin provere. Svaki kandidat
+  koji ostane `failed` obara poziv sa HTTP 500 da scheduler ne prijavi lažan
+  uspeh.
 - Gost pristupa detaljima porudžbine kratkotrajnim HMAC tokenom u zasebnom
   HttpOnly/SameSite cookie-ju po porudžbini; CUID nije autentifikacija.
   Recovery idempotency ključ je ograničen na minimalni CARD PENDING/PROCESSING
@@ -247,6 +262,10 @@ baza: narodnanosnja_db, korisnik nosnja
 Na istom serveru rade i `shopdemo`, `kore` i `kockica` — **ne diraj ih.**
 
 `.env` postoji samo na serveru i nije u gitu. Šablon je `.env.example`.
+GitHub deploy workflow ne instalira niti menja VPS systemd timer za cleanup
+rezervacija. Timer, njegov Bearer secret, prvi dry-run i prvi apply smoke su
+zasebna operativna radnja koja zahteva eksplicitno odobrenje. U ovoj izmeni
+VPS nije menjan.
 
 ## Šta još nije urađeno
 
@@ -259,7 +278,9 @@ Na istom serveru rade i `shopdemo`, `kore` i `kockica` — **ne diraj ih.**
 - [ ] Page builder za početnu, zajednička medijateka i redirect/404 SEO centar
 - [ ] Zone/težinska pravila i integracija kurirske službe
 - [ ] NestPay kartice — tek kad postoji ugovor sa bankom; do tada radi pouzeće
-- [ ] Cleanup napuštenih payment rezervacija, REVIEW reconciliation i email outbox
+- [ ] Instalacija i provera VPS cleanup timera; kod endpointa postoji, ali još
+      nije operativno zakazan niti smoke-testiran na serveru
+- [ ] REVIEW reconciliation, refund tok i email outbox
 
 ## Bezbedno objavljivanje šeme
 

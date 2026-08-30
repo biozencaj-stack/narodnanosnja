@@ -5,12 +5,17 @@ import {
   type PaymentStatus,
 } from "@prisma/client";
 import {
+  ORDER_RESERVATION_WINDOWS,
+  type OrderReservationWindows,
+} from "@/lib/config/order-reservations";
+import {
   decidePaymentCallback,
   decidePaymentStart,
   type PaymentCallbackOutcome,
   type PaymentState,
   type OrderState,
 } from "./payment-policy";
+import { decideInventoryReservation } from "./reservation-policy";
 import {
   InventoryReleaseError,
   releaseOrderInventoryInTransaction,
@@ -60,6 +65,15 @@ export type PaymentStartResult =
       payload: StoredPaymentStartPayload;
     }
   | { kind: "REVIEW"; orderId: string; reason: string };
+
+/** Internal seam used to exercise payment-start state changes without a DB. */
+export interface BeginCardPaymentDependencies {
+  now(): Date;
+  windows: OrderReservationWindows;
+  transaction<T>(
+    operation: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T>;
+}
 
 export interface ProcessPaymentCallbackInput {
   provider: "NESTPAY";
@@ -144,16 +158,25 @@ function parseStoredStartPayload(value: unknown): StoredPaymentStartPayload | nu
   };
 }
 
-export async function beginCardPayment(
+export async function beginCardPaymentWithDependencies(
   orderId: string,
   buildPayload: (
     order: PaymentStartOrderSnapshot,
   ) => StoredPaymentStartPayload,
+  dependencies: BeginCardPaymentDependencies,
 ): Promise<PaymentStartResult> {
-  return serializableWithRetry(async (tx) => {
+  return dependencies.transaction(async (tx) => {
     const order = await tx.order.findUnique({
       where: { id: orderId },
-      include: { transaction: true },
+      include: {
+        transaction: true,
+        paymentEvents: {
+          orderBy: { createdAt: "desc" },
+          select: { createdAt: true },
+          take: 1,
+        },
+        _count: { select: { paymentEvents: true } },
+      },
     });
     if (!order) {
       throw new PaymentStateError(
@@ -161,6 +184,79 @@ export async function beginCardPayment(
         "ORDER_NOT_FOUND",
         404,
       );
+    }
+
+    const reservationDecision = decideInventoryReservation(
+      {
+        paymentMethod: order.paymentMethod,
+        paymentStatus: order.paymentStatus as PaymentState,
+        orderStatus: order.status as OrderState,
+        inventoryAllocated: order.inventoryAllocated,
+        orderCreatedAt: order.createdAt,
+        transaction: order.transaction
+          ? {
+              status: order.transaction.status,
+              createdAt: order.transaction.createdAt,
+            }
+          : null,
+        paymentEventCount: order._count.paymentEvents,
+        latestPaymentEventAt: order.paymentEvents[0]?.createdAt ?? null,
+      },
+      dependencies.now(),
+      dependencies.windows,
+    );
+
+    if (reservationDecision.action === "EXPIRE") {
+      throw new PaymentStateError(
+        "Rezervacija porudžbine je istekla",
+        "PAYMENT_RESERVATION_EXPIRED",
+        410,
+      );
+    }
+
+    if (reservationDecision.action === "REVIEW") {
+      if (
+        order.transaction &&
+        !TERMINAL_TRANSACTION_STATES.has(order.transaction.status)
+      ) {
+        const reviewedTransaction = await tx.transaction.updateMany({
+          where: {
+            id: order.transaction.id,
+            orderId: order.id,
+            status: order.transaction.status,
+          },
+          data: { status: "REVIEW" },
+        });
+        if (reviewedTransaction.count !== 1) {
+          throw new PaymentStateError(
+            "Stanje pokušaja plaćanja je paralelno promenjeno",
+            "PAYMENT_START_CONFLICT",
+          );
+        }
+      }
+
+      const reviewedOrder = await tx.order.updateMany({
+        where: {
+          id: order.id,
+          paymentMethod: "CARD",
+          paymentStatus: order.paymentStatus,
+          status: "PENDING",
+          inventoryAllocated: true,
+        },
+        data: { paymentStatus: "REVIEW" as PaymentStatus },
+      });
+      if (reviewedOrder.count !== 1) {
+        throw new PaymentStateError(
+          "Stanje plaćanja je paralelno promenjeno",
+          "PAYMENT_START_CONFLICT",
+        );
+      }
+
+      return {
+        kind: "REVIEW",
+        orderId: order.id,
+        reason: reservationDecision.reason,
+      };
     }
 
     const decision = decidePaymentStart({
@@ -173,6 +269,14 @@ export async function beginCardPayment(
       throw new PaymentStateError(
         "Porudžbina nije dostupna za novo plaćanje",
         decision.reason,
+      );
+    }
+
+    if (!order.inventoryAllocated) {
+      throw new PaymentStateError(
+        "Rezervacija zalihe za porudžbinu više nije aktivna",
+        "PAYMENT_INVENTORY_NOT_RESERVED",
+        410,
       );
     }
 
@@ -285,6 +389,19 @@ export async function beginCardPayment(
     }
 
     return { kind: "STARTED", orderId: order.id, payload };
+  });
+}
+
+export async function beginCardPayment(
+  orderId: string,
+  buildPayload: (
+    order: PaymentStartOrderSnapshot,
+  ) => StoredPaymentStartPayload,
+): Promise<PaymentStartResult> {
+  return beginCardPaymentWithDependencies(orderId, buildPayload, {
+    now: () => new Date(),
+    windows: ORDER_RESERVATION_WINDOWS,
+    transaction: serializableWithRetry,
   });
 }
 
