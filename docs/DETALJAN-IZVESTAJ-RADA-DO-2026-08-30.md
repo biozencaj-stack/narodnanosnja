@@ -3816,10 +3816,10 @@ strict enforcement sme da se uključi. Naprotiv: staged preflight u ovoj verziji
 ima namerni hard blocker za nepostojeću JWT session revalidaciju, pa je tačan
 operativni status **audit-only**.
 
-Radna grana je `ispravka/v2-verified-login-audit-grace`. Feature još nije dobio
-konačan commit/PR/merge/run dokaz u trenutku ovog dokumentacionog preseka.
-Zbog toga §36.12 koristi literal `PENDING_FINAL_EVIDENCE`, bez pretpostavljanja
-broja testa, PR-a ili GitHub Actions run-a.
+Radna grana je `ispravka/v2-verified-login-audit-grace`. Završni feature head,
+V2-only PR, exact-head CI, merge i post-merge CI sada su stvarno završeni i
+upisani u §36.12. Tabela razlikuje lokalni test zbir od merodavnog GitHub
+PostgreSQL 16 rezultata i ne pretvara lokalne DB skipove u prolaz.
 
 ### 36.1. Problem koji se rešava i granica poverenja
 
@@ -4262,16 +4262,16 @@ Sledeći bezbedan redosled je:
 | Stavka | Konačan dokaz/status |
 | --- | --- |
 | Feature grana | `ispravka/v2-verified-login-audit-grace` |
-| Feature commit | `PENDING_FINAL_EVIDENCE` |
-| PR sa base granom samo `verzija/v2.0-univerzalna-platforma` | `PENDING_FINAL_EVIDENCE` |
-| Exact-head PR run, attempt i tačan SHA | `PENDING_FINAL_EVIDENCE` |
-| V2 merge SHA/vreme | `PENDING_FINAL_EVIDENCE` |
-| Post-merge V2 run, attempt i tačan SHA | `PENDING_FINAL_EVIDENCE` |
-| Konačan lokalni test zbir/pass/skip/fail | `PENDING_FINAL_EVIDENCE` |
-| Final lint/typecheck/Prisma validate/diff-check/build | `PENDING_FINAL_EVIDENCE` |
-| SQL fixture i real-PostgreSQL auth testovi u CI-ju | `PENDING_FINAL_EVIDENCE` |
-| Release confirmation/deploy job u oba run-a | `PENDING_FINAL_EVIDENCE` — mora biti `SKIPPED` |
-| V2 release tagovi/deployment evidencija | `PENDING_FINAL_EVIDENCE` — očekivano bez novih zapisa |
+| Feature commit | `aa1afdb3de3cc8b9df15fa3576242f5445adbca0` |
+| PR sa base granom samo `verzija/v2.0-univerzalna-platforma` | [PR #20](https://github.com/biozencaj-stack/narodnanosnja/pull/20), potvrđen i merged |
+| Exact-head PR run, attempt i tačan SHA | [run `33324304744`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33324304744), attempt `1`, SHA `aa1afdb3de3cc8b9df15fa3576242f5445adbca0`, `SUCCESS` |
+| V2 merge SHA/vreme | `3ceb1f3915ad63d45a30758254966d3904d1a86f`, `2026-08-30T17:11:08Z` |
+| Post-merge V2 run, attempt i tačan SHA | [run `33324541873`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33324541873), attempt `1`, SHA `3ceb1f3915ad63d45a30758254966d3904d1a86f`, `SUCCESS` |
+| Konačan lokalni test zbir/pass/skip/fail | `316 / 299 / 17 / 0`; svih 17 skipova su eksplicitno gated real-PostgreSQL testovi |
+| Final lint/typecheck/Prisma validate/diff-check/build | Lokalni lint/typecheck/diff-check `PASS`; exact-head CI Prisma validate, migrations, drift, DB invariants i production build `PASS` |
+| SQL fixture i real-PostgreSQL auth testovi u CI-ju | Fixture runner `PASS`; PostgreSQL 16 `316` tests / `316` pass / `0` skip / `0` fail |
+| Release confirmation/deploy job u oba run-a | `Potvrdi V2 release` i `Objavi na produkciju` oba puta `SKIPPED` |
+| V2 release tagovi/deployment evidencija | `0` `prodavnica-v2-*` tagova; `0` merge-SHA, V2-ref i `production` deployment zapisa |
 | Produkcijska baza, audit, migracija i backfill | **NIJE RAĐENO** |
 | Produkcijski policy/server/live | **NIJE RAĐENO**; audit-only |
 
@@ -4290,10 +4290,11 @@ exact-head i post-merge real-DB CI; njegova dual-write faza ipak nije završni
 hash-only contract niti produkcijska migracija.
 Peti atomska-registracija/resend presek spojen je kroz PR #18 i ima zeleni
 exact-head/post-merge CI; ni on nije produkcijska migracija ili live aktivacija.
-Šesti verified-login audit/grace presek je u radnom stanju sa finalnim dokazima
-označenim `PENDING_FINAL_EVIDENCE`; njegova staged/strict capability ne menja
-audit-only status dok nema JWT session revalidacije, shared abuse zaštite,
-durable outbox/hash-only završetka i kontrolisanog produkcionog audita.
+Šesti verified-login audit/grace presek spojen je kroz PR #20 i ima zelene
+exact-head i post-merge PostgreSQL/browser/build dokaze bez release/deploy
+poslova; njegova staged/strict capability ipak ne menja audit-only status dok
+nema JWT session revalidacije, shared abuse zaštite, durable outbox/hash-only
+završetka i kontrolisanog produkcionog audita.
 Spoljašnja GitHub/live zaštita namerno još nije aktivirana. Najveći preostali
 rizik nije jedna izolovana funkcija, već poslednji kilometar: critical/high
 dependency i auth hardening, abuse/consent/email zaštita, pravni podaci i

@@ -1572,10 +1572,11 @@ ojačane sve auth write granice koje mogu promeniti lozinku, verifikaciju, ulogu
 ili sesiju.
 
 Kod je razvijan na grani
-`ispravka/v2-verified-login-audit-grace`. Završni feature SHA, PR, exact-head
-run, V2 merge SHA i post-merge run još nisu deo ovog radnog preseka; zato su u
-§XXII.12 namerno označeni sa `PENDING_FINAL_EVIDENCE`. Ni jedna privremena
-lokalna vrednost ne sme se naknadno predstaviti kao konačan GitHub dokaz.
+`ispravka/v2-verified-login-audit-grace`. Završni feature SHA, V2-only PR,
+exact-head run, merge SHA i post-merge run sada su potvrđeni GitHub dokazima i
+upisani u §XXII.12. Lokalni rezultat i GitHub PostgreSQL rezultat ostaju
+odvojeno označeni, tako da nijedan očekivani lokalni DB skip nije predstavljen
+kao CI prolaz.
 
 Ova etapa je trenutno **audit-only**. Runtime sadrži staged i strict odluke, ali
 staged preflight namerno ostaje blokiran dok se ne uvede DB revalidacija ili
@@ -1961,7 +1962,7 @@ Drugi obavezni blokatori su:
    dependency, legalni, proxy, backup i monitoring gate-ovi;
 9. zaseban strict preflight posle isteka grace perioda i recovery dokaza.
 
-### XXII.12. Šta nije rađeno i `PENDING_FINAL_EVIDENCE`
+### XXII.12. Šta nije rađeno i završni Git/CI dokaz
 
 U ovoj etapi nije čitana produkcijska baza niti stvarni `.env`, nisu dobijeni
 realni audit counts, nije izvršena migracija, backfill ili izmena
@@ -1973,16 +1974,16 @@ presentation `main`.
 | Stavka | Dokaz/status |
 | --- | --- |
 | Feature grana | `ispravka/v2-verified-login-audit-grace` |
-| Završni feature commit | `PENDING_FINAL_EVIDENCE` |
-| V2-only PR | `PENDING_FINAL_EVIDENCE` |
-| Exact-head CI run/attempt/SHA | `PENDING_FINAL_EVIDENCE` |
-| V2 merge SHA i vreme | `PENDING_FINAL_EVIDENCE` |
-| Post-merge V2 run/attempt/SHA | `PENDING_FINAL_EVIDENCE` |
-| Konačan lokalni `npm test` zbir | `PENDING_FINAL_EVIDENCE` |
-| Final lint/typecheck/Prisma/diff/build | `PENDING_FINAL_EVIDENCE` |
-| Audit fixture-i i real-PostgreSQL auth scenariji u CI-ju | `PENDING_FINAL_EVIDENCE` |
-| Release/deploy poslovi u oba run-a | `PENDING_FINAL_EVIDENCE` — moraju ostati `SKIPPED` |
-| `prodavnica-v2-*` tagovi i V2/production deployment zapisi | `PENDING_FINAL_EVIDENCE` — očekivano 0 |
+| Završni feature commit | `aa1afdb3de3cc8b9df15fa3576242f5445adbca0` |
+| V2-only PR | [PR #20](https://github.com/biozencaj-stack/narodnanosnja/pull/20), base `verzija/v2.0-univerzalna-platforma`, merged |
+| Exact-head CI run/attempt/SHA | [run `33324304744`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33324304744), attempt `1`, `aa1afdb3de3cc8b9df15fa3576242f5445adbca0`, `SUCCESS`, 17:06:17Z–17:09:25Z |
+| V2 merge SHA i vreme | `3ceb1f3915ad63d45a30758254966d3904d1a86f`, `2026-08-30T17:11:08Z` |
+| Post-merge V2 run/attempt/SHA | [run `33324541873`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33324541873), attempt `1`, merge SHA `3ceb1f3915ad63d45a30758254966d3904d1a86f`, `SUCCESS`, 17:11:15Z–17:14:03Z |
+| Konačan lokalni `npm test` zbir | `316` ukupno / `299` pass / `17` očekivanih real-PG skip / `0` fail |
+| Final lint/typecheck/Prisma/diff/build | Lokalni lint, typecheck i diff-check `PASS`; exact-head CI Prisma validate, migration deploy, drift i production build `PASS` |
+| Audit fixture-i i real-PostgreSQL auth scenariji u CI-ju | `PASS: isolated aggregate auth audit fixtures`; PostgreSQL 16 test zbir `316/316 PASS`, `0` skip, `0` fail |
+| Release/deploy poslovi u oba run-a | `Potvrdi V2 release = SKIPPED`; `Objavi na produkciju = SKIPPED` u exact-head i post-merge run-u |
+| `prodavnica-v2-*` tagovi i V2/production deployment zapisi | `0` tagova; `0` deploymenta za merge SHA; `0` za V2 ref; `0` za `production` Environment |
 | Produkcioni audit/migracija/backfill | **NIJE RAĐENO** |
 | Produkcijski policy/live aktivacija | **NIJE RAĐENO**; audit-only razvojni presek |
 

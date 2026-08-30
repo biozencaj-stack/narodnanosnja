@@ -5267,25 +5267,26 @@ Dokumentacija:
 
 ### 44.20. Završni Git/CI/deployment dokaz
 
-Dok stvarni commit/PR/run ne postoji, polje ostaje doslovno
-`PENDING_FINAL_EVIDENCE`; procena se ne zapisuje kao dokaz.
+Sva polja ispod popunjena su tek nakon zelenog exact-head run-a, V2-only
+merge-a i zelenog post-merge run-a. Lokalni rezultat je odvojen od CI
+PostgreSQL rezultata; 17 lokalnih DB skipova nisu predstavljeni kao prolaz.
 
 | Dokaz | Vrednost |
 | --- | --- |
 | Feature grana | `ispravka/v2-verified-login-audit-grace` |
-| Feature SHA | `PENDING_FINAL_EVIDENCE` |
-| Lokalni full test/pass/skip/fail | `PENDING_FINAL_EVIDENCE` |
-| Lint/typecheck/Prisma/diff/build | `PENDING_FINAL_EVIDENCE` |
-| Audit fixture runner | `PENDING_FINAL_EVIDENCE` |
-| PR i V2-only base | `PENDING_FINAL_EVIDENCE` |
-| Exact-head run/attempt/jobs | `PENDING_FINAL_EVIDENCE` |
-| V2 merge SHA/vreme | `PENDING_FINAL_EVIDENCE` |
-| Post-merge run/attempt/jobs | `PENDING_FINAL_EVIDENCE` |
-| Remote V2 head | `PENDING_FINAL_EVIDENCE` |
-| Release/deploy poslovi | `PENDING_FINAL_EVIDENCE` |
-| V2 tagovi/deploymenti | `PENDING_FINAL_EVIDENCE` |
+| Feature SHA | `aa1afdb3de3cc8b9df15fa3576242f5445adbca0` |
+| Lokalni full test/pass/skip/fail | `316 / 299 / 17 / 0`; skipovi su samo opt-in real-PG scenariji |
+| Lint/typecheck/Prisma/diff/build | Lokalni lint/typecheck/diff-check `PASS`; exact-head CI Prisma validate, migration deploy, drift, DB invariant i production build `PASS` |
+| Audit fixture runner | `PASS: isolated aggregate auth audit fixtures`; CI test zbir `316/316 PASS`, bez skip/fail |
+| PR i V2-only base | [PR #20](https://github.com/biozencaj-stack/narodnanosnja/pull/20), base `verzija/v2.0-univerzalna-platforma`, merged |
+| Exact-head run/attempt/jobs | [run `33324304744`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33324304744), attempt `1`, `SUCCESS`, SHA `aa1afdb3de3cc8b9df15fa3576242f5445adbca0`, 17:06:17Z–17:09:25Z |
+| V2 merge SHA/vreme | `3ceb1f3915ad63d45a30758254966d3904d1a86f`, `2026-08-30T17:11:08Z` |
+| Post-merge run/attempt/jobs | [run `33324541873`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33324541873), attempt `1`, `SUCCESS`, SHA `3ceb1f3915ad63d45a30758254966d3904d1a86f`, 17:11:15Z–17:14:03Z |
+| Remote V2 head | `3ceb1f3915ad63d45a30758254966d3904d1a86f` u trenutku feature post-merge verifikacije |
+| Release/deploy poslovi | `Potvrdi V2 release = SKIPPED`; `Objavi na produkciju = SKIPPED` u oba merodavna run-a |
+| V2 tagovi/deploymenti | `0` `prodavnica-v2-*` tagova; `0` deploymenta za merge SHA, V2 ref i `production` Environment |
 
-Ovaj dokaz se popunjava tek posle zelenog exact-head CI-ja, V2-only merge-a i
-zelenog post-merge run-a u kom release i deploy poslovi ostanu `SKIPPED`.
-Main-push live workflow se time i dalje ne aktivira; on ostaje poslednja,
-posebno odobrena etapa nakon svih bezbednosnih i operativnih gate-ova.
+Exact-head i post-merge run imaju zelen `Provera verzije` posao, dok su release
+i deploy poslovi ostali `SKIPPED`. Main-push live workflow se time i dalje ne
+aktivira; on ostaje poslednja, posebno odobrena etapa nakon svih bezbednosnih i
+operativnih gate-ova.
