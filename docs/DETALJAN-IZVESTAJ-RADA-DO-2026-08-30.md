@@ -120,8 +120,9 @@ Repo trenutno sadrži dve različite celine:
 
 Aktuelno operativno pravilo je strogo: **ne spajati V2 u `main`**. Push na
 `main` objavljuje prezentacioni sajt, dok V2 ima drugačiju aplikacionu strukturu
-i produkcioni tok. Postojeći Draft PR #1 ka `main` je konfliktan i ne sme se
-spajati u trenutnom obliku. Trajno najčistije rešenje je razdvajanje u dva
+i produkcioni tok. Istorijski Draft PR #1 ka `main` zatvoren je 30. avgusta
+2026. bez merge-a, jer je predstavljao pogrešan release put. Trajno najčistije
+rešenje je razdvajanje u dva
 repozitorijuma ili eksplicitno odobrena migracija sa potpuno novim rollout
 planom.
 
@@ -974,7 +975,7 @@ izvršava:
 11. seed i mobilni COD Playwright E2E;
 12. produkcijski Next build.
 
-U aktuelnoj P0 radnoj grani verify job se automatski pokreće za PR ka
+U integrisanom P0 workflow-u verify job se automatski pokreće za PR ka
 `verzija/v2.0-univerzalna-platforma`, push na tu kanonsku V2 granu i push taga
 sa prefiksom `prodavnica-v2-`; `workflow_dispatch` ostaje ručna
 verification-only provera. Push na prezentacioni `main` više nije V2 okidač.
@@ -1042,10 +1043,11 @@ baza nije dostupna.
 
 ### 16.5. Operativno stanje
 
-U ovoj radnoj grani implementiran je repository-side, fail-closed release
-gate: `main` nije V2 trigger, dispatch ne deployuje, a produkcijski job prihvata
-samo namenski V2 tag, strogi naziv taga, V2 stablo i commit iz kanonske V2
-istorije. To je stanje koda, a ne tvrdnja da je GitHub ili server već
+Kroz PR #8 u kanonsku V2 granu integrisan je repository-side, fail-closed
+release gate: `main` nije V2 trigger, dispatch ne deployuje, a produkcijski job
+prihvata samo namenski V2 tag, strogi naziv taga, V2 stablo i commit iz
+kanonske V2 istorije. Exact-head i post-merge CI su zeleni uz preskočene
+release poslove. To je stanje koda, a ne tvrdnja da je GitHub ili server već
 konfigurisan.
 
 Read-only audit od 30. avgusta 2026. potvrdio je da spoljašnji GitHub
@@ -1754,10 +1756,11 @@ odvojeno.
 ### 22.10. Ne spajati V2 u prezentacioni `main`
 
 Najnovija odluka ima prednost nad starijim dnevnicima. `main` trenutno objavljuje
-drugu aplikaciju preko GitHub Pages. Draft PR #1 je ostao istorijski trag, ali
-nije bezbedan release mehanizam. Za aktuelnu implementaciju izabrana je
-kanonska V2 grana kao CI/integracioni target, uz produkcijski deploy isključivo
-preko namenskog, strogo proverenog V2 release taga. Time `main` ostaje izvan V2
+drugu aplikaciju preko GitHub Pages. Draft PR #1 ostaje istorijski trag i
+zatvoren je bez merge-a; nije bezbedan release mehanizam. Za aktuelnu
+implementaciju izabrana je kanonska V2 grana kao CI/integracioni target, uz
+produkcijski deploy isključivo preko namenskog, strogo proverenog V2 release
+taga. Time `main` ostaje izvan V2
 workflow-a i nastavlja da služi prezentacionom sajtu.
 
 ---
@@ -1851,7 +1854,7 @@ Sledeće nije propust predstavljanja rezultata, već svesno zadržana granica
 ovog rada:
 
 - V2 nije spojen u prezentacioni `main`;
-- Draft PR #1 nije nasilno razrešen ili merge-ovan;
+- Draft PR #1 nije nasilno razrešen ili merge-ovan; zatvoren je bez merge-a;
 - produkcijski V2 aplikacioni deploy nije pokrenut;
 - server, PM2, nginx, DNS, TLS i firewall nisu menjani bez posebnog rollout
   odobrenja;
@@ -1882,16 +1885,19 @@ ovog rada:
 | Stavka | Stanje |
 | --- | --- |
 | Remote V2 grana | `origin/verzija/v2.0-univerzalna-platforma` |
-| Završni V2 merge | `79216213a3ad45d8d3be372aeb5f62dd5371cbe7` |
-| Završni V2 tree | `762f004ce8774ef24f61b9231394b4afb8b84331` |
+| V2 merge pre prvobitnog izveštaja | `79216213a3ad45d8d3be372aeb5f62dd5371cbe7` |
+| P0 release-granica merge | `6aa506924aa5b95d30e638adffa209c307aed6b0` |
+| P0 release-granica tree | `6a74eb3a1e159fcae2d700ea82a149ceace7e49c` |
 | Lokalni docs head pre ovog izveštaja | `4816b9319b376e741577536edea62d886a68665c` |
 | Lokalni docs tree | isti `762f004c...` |
-| `origin/main` | `200d8042987d32179465be4919565efea2892fd6` |
-| PR #2–#6 | MERGED u V2 |
-| PR #1 | OPEN, DRAFT, `CONFLICTING/DIRTY`, bez attached checkova |
+| Aktuelni presentation `main` | `0d28f8773272ccabb94ba0554c576ea810fdfd9a` |
+| PR #2–#6 i #8 | MERGED u V2 |
+| PR #1 | CLOSED bez merge-a; istorijski pogrešan V2 → `main` put |
 | Poslednji objedinjeni kodni CI | run `33282336793`, SUCCESS |
 | Poslednji exact-tree docs CI | run `33282725051`, SUCCESS |
-| Deployment job | preskočen |
+| P0 exact-head PR CI | run `33302673497`, SUCCESS; oba release posla SKIPPED |
+| P0 post-merge V2 CI | run `33302806208`, SUCCESS; oba release posla SKIPPED |
+| Production deployments | 0 prema read-only auditu posle merge-a |
 
 Radni branch pre pravljenja ovog izveštaja bio je dokumentaciona grana sa istim
 stablom kao završni V2 merge. Sam izveštaj i prateća dopuna indeksa u
@@ -1936,15 +1942,15 @@ Prioriteti u ovom odeljku znače:
 
 ### 26.1. P0 — release i capability blokatori
 
-#### P0.1. Odvojiti V2 release od prezentacionog `main`
+#### P0.1. Odvojiti V2 release od prezentacionog `main` — repository deo završen
 
-PR #1 je OPEN/DRAFT, konfliktan prema `main` i nema attached checks. Još važnije,
-njegov cilj je sada arhitektonski pogrešan: `main` objavljuje prezentacioni
-GitHub Pages sajt. Ne treba samo „rešiti konflikte” i merge-ovati.
+PR #1 je bio OPEN/DRAFT i konfliktan prema `main`. Još važnije, njegov cilj je
+arhitektonski pogrešan: `main` objavljuje prezentacioni GitHub Pages sajt. Zato
+je 30. avgusta 2026. zatvoren bez merge-a, uz upućivanje na validni V2 PR #8.
 
 Izabrano je drugo rešenje: kanonska V2 grana je trajni CI/integracioni target,
-a namenski tag je jedini repository-side ulaz u produkcijski job. U aktuelnoj
-radnoj grani implementirano je:
+a namenski tag je jedini repository-side ulaz u produkcijski job. Kroz PR #8
+implementirano je i integrisano u kanonsku V2 granu:
 
 1. PR i push CI vezan za `verzija/v2.0-univerzalna-platforma`;
 2. uklanjanje prezentacionog `main` iz V2 workflow okidača;
@@ -1952,12 +1958,15 @@ radnoj grani implementirano je:
 4. tag-only production job sa strogim nazivom i V2 ancestry proverom;
 5. V2 tree guard i odvojene CI/production concurrency grupe.
 
-Repository-side P0 granica je zato implementirana u kodu, ali njeno prihvatanje
-još zahteva zeleni CI na tačnom head SHA-u i integraciju u kanonsku V2 granu.
+Repository-side P0 granica je prihvaćena uz zeleni exact-head PR run
+`33302673497` na `471e395ba09a67505c03a68af01f66520924efc8` i zeleni
+post-merge push run `33302806208` na
+`6aa506924aa5b95d30e638adffa209c307aed6b0`. U oba run-a
+`Potvrdi V2 release` i `Objavi na produkciju` bili su preskočeni.
+
 Spoljašnji GitHub Environment allowed-tag policy/ruleset, obavezni reviewer,
-secrets/variables, zatvaranje ili arhiviranje PR-a #1 i samo kreiranje release
-taga ostaju odvojeni koraci. Release tag, environment izmena i live deploy
-namerno se ne rade do poslednje, posebno odobrene faze.
+secrets/variables i samo kreiranje release taga ostaju odvojeni završni koraci.
+Release tag, Environment izmena i live deploy namerno nisu urađeni.
 
 #### P0.2. Kartice moraju ostati isključene
 
@@ -2253,14 +2262,14 @@ privlačnosti funkcije.
 
 ### Faza 1 — zaključati release granicu
 
-1. Potvrđeno u kodu i dokumentaciji: `main` ostaje prezentacioni sajt.
-2. Izabrano i implementirano u radnoj grani: V2 CI target plus tag-only release
-   workflow, bez deploya sa dispatch-a ili push-a grane.
-3. Sledeće: otvoriti PR ka kanonskoj V2 grani i dobiti zeleni CI na tačnom
-   head SHA-u, zatim potvrditi zeleni push run posle integracije.
-4. Zatvoriti/arhivirati Draft PR #1 da ne postane slučajan merge put.
-5. Vratiti licencu, dovršiti README usklađivanje i označiti legacy skripte kao
-   neupotrebljive.
+1. Završeno: `main` ostaje prezentacioni sajt.
+2. Završeno kroz PR #8: V2 CI target plus tag-only release workflow, bez
+   deploya sa dispatch-a ili push-a grane.
+3. Završeno: exact-head PR i post-merge push CI su zeleni, a oba release posla
+   preskočena.
+4. Završeno: Draft PR #1 zatvoren je bez merge-a.
+5. Sledeće: vratiti licencu, dovršiti README usklađivanje i označiti legacy
+   skripte kao neupotrebljive.
 6. Podesiti required CI/dependency/security gate za pravi V2 target.
 7. GitHub Environment tag policy, reviewer, secrets, release tag i live
    aktivaciju ostaviti za završnu, posebno odobrenu fazu.
@@ -2343,9 +2352,10 @@ pretpostavke ili postojanja koda.
   produkcijski job.
 - [x] Produkcijski job zahteva namenski tag, strogi format, V2 identitet stabla
   i commit iz kanonske V2 istorije.
-- [ ] P0 workflow izmena je integrisana u kanonsku V2 granu uz zeleni PR i
+- [x] P0 workflow izmena je integrisana u kanonsku V2 granu uz zeleni PR i
   post-merge push CI na tačnim SHA vrednostima.
-- [ ] Draft PR #1 je zatvoren/arhiviran ili zamenjen validnim release PR-om.
+- [x] Draft PR #1 je zatvoren bez merge-a; validni release-boundary PR #8 je
+  spojen isključivo u V2.
 - [ ] GitHub Environment/ruleset dozvoljava samo `prodavnica-v2-*` tagove i
   zahteva review pre produkcijskog job-a.
 - [ ] Namenski release tag je napravljen tek u odobrenoj završnoj live fazi.
@@ -2474,18 +2484,25 @@ specijalizovane detalje:
   — poslednji zeleni objedinjeni kodni presek;
 - [GitHub Actions run `33282725051`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33282725051)
   — zeleni dokumentacioni head sa istim tree-em kao završni V2 merge;
+- [PR #8](https://github.com/biozencaj-stack/narodnanosnja/pull/8) — P0 release
+  granica spojena isključivo u kanonsku V2 granu;
+- [GitHub Actions run `33302673497`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33302673497)
+  — zeleni exact-head PR CI; release potvrda i deploy su preskočeni;
+- [GitHub Actions run `33302806208`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33302806208)
+  — zeleni post-merge V2 push CI na `6aa5069`; oba release posla su preskočena;
 - [PR #6](https://github.com/biozencaj-stack/narodnanosnja/pull/6) — završna
   integraciona dokumentacija;
 - [PR #1](https://github.com/biozencaj-stack/narodnanosnja/pull/1) — istorijski
-  Draft ka `main`, trenutno konfliktan i nije operativni release put.
+  Draft ka `main`, zatvoren bez merge-a i nije operativni release put.
 
 ---
 
 ## 30. P0 release granica za V2
 
 Ovaj odeljak je operativna dopuna vremenskom preseku iz ostatka izveštaja. On
-beleži repository-side P0 izmenu implementiranu u radnoj grani
-`ispravka/v2-release-granica`. Ne menja istorijske tvrdnje o ranijim PR-ovima,
+beleži repository-side P0 izmenu uvedenu na grani
+`ispravka/v2-release-granica` i spojenu kroz PR #8 u kanonsku V2 granu. Ne
+menja istorijske tvrdnje o ranijim PR-ovima,
 commitovima i CI runovima, već zamenjuje ranije operativno pravilo po kojem su
 `main` ili ručni dispatch mogli da budu produkcijski deploy ulaz.
 
@@ -2565,14 +2582,14 @@ v7 izdanja, uz zadržanu minimalnu workflow dozvolu `contents: read`.
 
 | Sloj | Stanje u ovoj fazi |
 | --- | --- |
-| V2 workflow triggeri | implementirani u radnoj grani |
+| V2 workflow triggeri | integrisani u kanonsku V2 granu kroz PR #8 |
 | Dispatch kao verification-only | implementirano u uslovu produkcijskog job-a |
 | Tag format i V2 ancestry guard | implementirani u workflow kodu |
 | Pre-Environment release-gate job | implementiran posle CI-ja, pre production Environment-a |
 | V2 naspram presentation tree guard | implementiran pre verifikacije/deploya |
 | CI naspram production concurrency | implementirano u workflow kodu |
-| Zeleni exact-head PR CI | obavezan sledeći dokaz; nije pretpostavljen |
-| Zeleni post-merge V2 push CI | obavezan posle integracije; nije pretpostavljen |
+| Zeleni exact-head PR CI | run `33302673497`, SUCCESS na `471e395`; release poslovi SKIPPED |
+| Zeleni post-merge V2 push CI | run `33302806208`, SUCCESS na `6aa5069`; release poslovi SKIPPED |
 | GitHub Environment allowed-tag policy/ruleset | spoljašnja postavka, ostavljena za završnu fazu |
 | Obavezni production reviewer | spoljašnja postavka, ostavljena za završnu fazu |
 | Production secrets i variables | nisu popunjavani ovom izmenom |
@@ -2615,6 +2632,9 @@ SHA vrednostima: `actions/checkout@v7.0.1` na
 
 ### 30.7. Obavezan redosled pre prvog live V2 release-a
 
+Koraci 1–6 završeni su 30. avgusta 2026. bez live deploya. Koraci 7–10 ostaju
+budući rollout gate-ovi:
+
 1. Lokalno validirati workflow sintaksu i kompletan V2 test paket.
 2. Otvoriti PR isključivo ka kanonskoj V2 grani.
 3. Potvrditi zeleni CI na tačnom PR head SHA-u i preskočen production job.
@@ -2642,11 +2662,11 @@ posebnu spoljnu zaštitu i eksplicitno odobren poslednji korak.
 Najveći deo tehničke osnove je urađen: postoji ozbiljan V2 commerce sloj,
 kontrolisana DB evolucija, kompletan CI, bezbedniji payment/order model, četiri
 naknadna P1 hotfixa i release mehanizam sa rollbackom. Repository-side V2
-release granica je implementirana u radnoj grani, ali njeni exact-SHA CI dokazi
-i spoljašnja GitHub/live zaštita još nisu završeni. Najveći preostali rizik nije
-jedna izolovana funkcija, već poslednji kilometar: prihvatanje release granice,
-critical/high dependency i auth hardening, abuse/consent/email zaštita, pravni
-podaci i stvarna produkciona operativa.
+release granica je integrisana i ima zelene exact-head i post-merge CI dokaze.
+Spoljašnja GitHub/live zaštita namerno još nije aktivirana. Najveći preostali
+rizik nije jedna izolovana funkcija, već poslednji kilometar: critical/high
+dependency i auth hardening, abuse/consent/email zaštita, pravni podaci i
+stvarna produkciona operativa.
 
 Dok se ti gate-ovi ne zatvore, tačna tvrdnja je: **V2 je razvijen i proveravan
 kao odvojena platforma, ali nije produkcijski pušten; kartice ostaju

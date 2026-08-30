@@ -2660,8 +2660,8 @@ Uz workflow su usklađeni izvori operativne istine:
   navode spoljašnje korake koji još nisu završeni.
 
 Dokumentacija zato razlikuje tri stanja: implementirano u kodu, provereno kroz
-CI i stvarno aktivirano u produkcionom okruženju. Samo prvo stanje je predmet
-ove sekcije dok se ne završe provere i zasebno odobren rollout.
+CI i stvarno aktivirano u produkcionom okruženju. Sekcije 38.7 i 38.8 beleže
+lokalni i GitHub CI dokaz; produkciona aktivacija ostaje zasebno odobren rollout.
 
 ### 38.6. Šta namerno nije promenjeno
 
@@ -2708,3 +2708,35 @@ Read-only provera zvaničnih Action tag ref-ova potvrdila je da pinovi u
 workflow-u tačno odgovaraju `actions/checkout@v7.0.1` i
 `actions/setup-node@v7.0.0`. Ta provera, kao ni lokalni testovi, nije menjala
 GitHub ili produkciono stanje.
+
+### 38.8. PR, merge i post-merge CI dokaz
+
+Repository-side P0 granica je zatim integrisana bez dodirivanja presentation
+`main` grane:
+
+1. feature commit `471e395ba09a67505c03a68af01f66520924efc8`
+   pushovan je bez release taga;
+2. [PR #8](https://github.com/biozencaj-stack/narodnanosnja/pull/8) otvoren je
+   isključivo ka `verzija/v2.0-univerzalna-platforma` i bio je mergeable;
+3. exact-head PR run
+   [`33302673497`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33302673497)
+   završio je uspešno za 2 min 41 s;
+4. `Provera verzije` prošla je PostgreSQL migracije/drift/invarijante, lint,
+   typecheck, kompletan test paket sa uključenim opt-in DB testom, Chromium
+   mobilni E2E i production build;
+5. `Potvrdi V2 release` i `Objavi na produkciju` bili su `SKIPPED`, svaki za
+   0 s;
+6. PR je merge-ovan samo u V2 kao
+   `6aa506924aa5b95d30e638adffa209c307aed6b0`;
+7. post-merge push run
+   [`33302806208`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33302806208)
+   ponovio je kompletan CI uspešno za 2 min 28 s, dok su oba release posla
+   ponovo bila `SKIPPED`;
+8. istorijski Draft PR #1 ka `main` zatvoren je bez merge-a uz objašnjenje da
+   ga je zamenio V2-only release put.
+
+Read-only provera posle merge-a našla je 0 production deployment zapisa.
+`production` Environment ostao je nepromenjen sa starom `main` branch
+politikom, bez required reviewera, secrets i variables. Nije napravljen V2
+release tag, nije uspostavljen SSH, server i baza nisu menjani i ništa nije
+pušteno live.
