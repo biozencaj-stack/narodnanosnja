@@ -3,7 +3,7 @@
 Datum početka: 2026-08-30  
 Radna grana: `ispravka/v2-db-authoritative-sessions`  
 Polazni V2 SHA: `d926e152f51f363c66d37f46859fbecffbc634d2`  
-Status: **u radu; faze 1–5 imaju zelen exact-head PostgreSQL/browser/build CI dokaz; prvi dormantni server-guard paket faze 6 ima lokalni dokaz i čeka exact-head CI, aktivacija nije izvršena**
+Status: **u radu; faze 1–5 i prvi dormantni server-guard paket faze 6 imaju zelen exact-head PostgreSQL/browser/build CI dokaz; tranzicioni legacy-only facade ima lokalni dokaz, call-site migracija i V2 aktivacija nisu izvršene**
 
 ## 1. Granica ove sekcije
 
@@ -145,7 +145,7 @@ definisanog ugovora.
 | 3 | Revocation u reset/change/privileged/demo write tokovima | završeno; exact-head PostgreSQL 16 CI dokaz zelen |
 | 4 | Credentials i verification V2 session issuance/rotation | završeno kao dormantni paket; exact-head run `33330847915` zelen |
 | 5 | Pouzdan current-session logout | završen kao dormantni paket; exact-head run `33331632579` zelen |
-| 6 | Customer/ownership/admin server guard migracija | strogi dormantni Node guard/access ugovor lokalno završen; call-site migracija i CI slede |
+| 6 | Customer/ownership/admin server guard migracija | dormantni Node guard/access ugovor ima zelen exact-head CI; neutralni legacy-only facade lokalno završen, call-site migracija sledi |
 | 7 | Session contract migracija | nije započeto |
 | 8 | Real-PG race/E2E matrica i uklanjanje preflight blockera | nije započeto |
 | 9 | Završna dokumentacija, exact-head i post-merge V2 dokaz | nije započeto |
@@ -827,21 +827,29 @@ JWT/session blocker ostaje aktivan.
 
 ### 10.1. Potpuni inventar aktivnih potrošača
 
-Pre izmene call-site-ova urađen je novi statički inventar. Aktivna aplikacija
-ima `99` poziva `getServerSession(authOptions)` u `56` fajlova, još dva
-`getToken` poziva i osam klijentskih `useSession` potrošača. Server pozivi su
-podeljeni ovako:
+Pre izmene call-site-ova urađen je novi statički inventar. Polazni production
+source ima `99` literalnih poziva `getServerSession(authOptions)` u `56`
+fajlova, ali dva pripadaju neizvezenim `legacyPOST` funkcijama u order route
+fajlovima koji stvarno samo re-eksportuju zajednički handler. Aktivna migraciona
+površina je zato `97` poziva u `54` fajla. Postoje još dva posebna `getToken`
+poziva i osam klijentskih `useSession` potrošača. Novi tranzicioni facade dodaje
+jednu namernu centralnu `getServerSession` tačku; ona nije aplikacioni call-site
+i postaje jedini dozvoljeni direktni poziv kada migracija bude završena.
+
+Aktivni server pozivi podeljeni su ovako:
 
 | Grupa | Poziva | Fajlova/napomena |
 | --- | ---: | --- |
-| Account/admin stranice i layout-i | `7` | user layout, admin layout/dashboard i četiri account stranice |
-| Order/payment ownership stranice | `3` | session je alternativa guest order-access tokenu |
+| Jednostavni customer API | `11` | `7` fajlova: adrese, checkout-data, password, profile i wishlist |
+| Ownership/mixed customer API | `4` | `3` fajla: reviews i pojedinačna order ruta |
 | Admin API | `68` | `30` route fajlova, uz postojeći deny-by-default OPERATOR allowlist |
-| Customer/ownership/checkout API | `19` | `16` route/handler fajlova |
-| Opciona personalizacija | `1` | promotions quote koristi optional user ID |
+| Account layout i stranice | `5` | user layout i četiri account stranice |
+| Admin layout i dashboard | `2` | poseban staff/layout i dashboard redirect ugovor |
+| Order/payment result stranice | `3` | session je alternativa scoped order-access tokenu |
+| Optional-auth commerce | `3` | checkout handler, promotions quote i NestPay start |
 | Privileged machine endpoint | `1` | wishlist cron ima admin-session fallback uz machine secret |
 
-Od dva `getToken` mesta, `proxy.ts` donosi Edge role odluke, dok email
+Od dva `getToken` mesta, `proxy.ts` donosi request/path role odluke, dok email
 verification ruta čita current legacy user i izdaje legacy cookie. Klijentski
 `useSession` ostaje u Header/NavBar/checkout/product/review komponentama i na
 account adresama/podešavanjima. Ovaj broj je razlog da se V2 issuer ne uključi
@@ -929,7 +937,7 @@ cookie ili ponašanje korisnika.
 | TypeScript bez emitovanja | PASS |
 | ESLint quiet | PASS |
 | `git diff --check` | PASS |
-| Cookie→JWE→DB-fresh-profile→exact-revoke fixture | čeka GitHub PostgreSQL 16 CI |
+| Cookie→JWE→DB-fresh-profile→exact-revoke fixture | PASS u run-u `33333262290` |
 
 Opt-in fixture koristi isti `RUN_AUTH_SESSION_DB_TESTS=true` prekidač. U jednoj
 interactive transakciji inicijalizuje UTC, drži `User FOR UPDATE` i policy
@@ -941,10 +949,93 @@ ne pušta globalni policy lock između ključnih asercija i ne uvodi paralelni C
 race. Dve nezavisne revizije nisu našle blokator; getter/Proxy totality minori
 su zatvoreni dodatnim fail-closed testovima.
 
+Commit `c9f7849691fbeee1922d40c5d3959454961d5aab` i exact-head PR run
+`33333262290`, attempt 1, potvrdili su ovaj dormantni guard paket na
+PostgreSQL-u 16. Fresh migracije, drift, DB invarijante, svi opt-in real-PG i
+security testovi, lint, TypeScript, Chromium, mobilni smoke i probni production
+build završili su sa `SUCCESS`. Draft PR je ostao clean prema kanonskoj V2
+grani; `Potvrdi V2 release` i `Objavi na produkciju` ostali su `SKIPPED`.
+
 Sledeći podkorak Faze 6 je migracija call-site-ova po grupama na zajednički
 tri-state ugovor, ali bez parcijalnog V2 izdavanja. Aktivni credentials issuer,
 email-verification rotation, NextAuth codec/cookie, logout HTTP/UI i uklanjanje
-Edge JWT autorizacije ostaju jedan kasniji funkcionalni cutover.
+proxy JWT autorizacije ostaju jedan kasniji funkcionalni cutover.
+
+### 10.7. Neutralni tranzicioni server-session facade
+
+Pre mehaničke izmene `97` aktivnih potrošača dodat je stabilan neutralni ugovor
+u `lib/auth/server-session-contract.ts`. Javni rezultat ima tačno tri grane:
+
+- `authenticated` sa minimalnim frozen principal-om;
+- `anonymous` bez optional principal-a;
+- `unavailable`, koji budući HTTP adapter mora da mapira na coarse `503`, a ne
+  na guest, login redirect ili staru JWT dozvolu.
+
+Production ulaz `lib/auth/server-session.ts` je `server-only` i eksplicitno
+označen kao `LEGACY_TRANSITIONAL_IMPLEMENTATION`. U ovoj etapi koristi isključivo
+jedan `getServerSession(authOptions)` credential source. Ne čita V2 cookie,
+`Authorization`, `getToken`, request headers ni autoritativni DB guard. Nema env
+prekidač, runtime dual-mode niti „probaj V2 pa se vrati na legacy“ ponašanje.
+Na atomskom V2 cutoveru implementacija ovog jednog ulaza mora fizički da bude
+zamenjena V2-only resolverom, a legacy adapter obrisan; oba resolvera nikada ne
+smeju da budu deo istog request puta.
+
+`authOptions` se učitava lenjo unutar zaštićenog legacy `read()` poziva. To je
+bitno zato što trenutni auth modul validira policy, URL i secret pri evaluaciji
+modula: konfiguracioni/import kvar sada postaje frozen `unavailable`, umesto da
+probije trostanjni facade ugovor pre samog poziva. Facade se namerno ne
+re-eksportuje iz `lib/auth/index.ts`, jer bi povratna import ivica napravila
+ciklus i zamaglila server-only granicu.
+
+Čisti adapter `lib/auth/legacy-server-session.ts` za svaki `resolve()` radi
+tačno jedno novo čitanje i nema pozitivan ni anonymous cross-request cache.
+Samo exact `null` iz NextAuth-a mapira na `anonymous`; spoljašnji throw/reject i
+svaki non-null malformed profil daju `unavailable`. Važno ograničenje je da
+NextAuth v4 interno može da pretvori deo decode/session-callback kvarova u
+`null`, pa tranzicioni `anonymous` znači samo „legacy NextAuth nije vratio
+sesiju“. On još nije dokaz fizički nedostajućeg cookie-ja niti puna V2 outage
+semantika; to ograničenje se uklanja tek autoritativnim cutoverom.
+
+Principal prihvata samo sopstvena data polja `id`, `email`, `firstName`,
+`lastName`, `role` i `requiresEmailVerification`. Accessor i inherited polja se
+odbijaju bez izvršavanja; Proxy/descriptor kvar ostaje fail-closed. Role mora
+biti tačno `CUSTOMER`, `OPERATOR` ili `ADMIN`, stringovi su neprazni, trimovani
+i bez C0/DEL kontrolnih znakova, a verification flag je strogi boolean. `name`
+se izvodi iz proverenog imena i prezimena; legacy display name, `expires`, SID,
+token, secret i sva dodatna polja se odbacuju. Spoljašnji rezultat i novi plain
+principal su runtime frozen. Reporter prima samo `LEGACY_SESSION_READ` ili
+`LEGACY_SESSION_SHAPE`; sync throw i async rejection reportera ne menjaju ishod.
+
+Statički test zaključava tačno jednu legacy credential tačku, dozvoljene
+importe, odsustvo V2/header/env fallbacka i zabranu ciklusa kroz auth index.
+Production-wiring test sa izolovanim Node module hookovima dokazuje da facade
+prosleđuje tačno production `authOptions` objekat jedinom legacy readeru i
+ponovo čita na sledećem zahtevu. Poseban test dokazuje da lazy auth konfiguracija
+koja pada vraća `unavailable` bez poziva legacy readera. Compile-time dokaz
+zaključava obostranu strukturnu kompatibilnost neutralnog principal-a sa
+autoritativnim V2 principal-om.
+
+| Lokalna provera tranzicionog facade-a | Rezultat |
+| --- | --- |
+| Fokus adapter + wiring + config-failure + static/type contract | `15` ukupno / `15` pass / `0` fail |
+| Kompletan `npm test` | `426` ukupno / `400` pass / `26` očekivanih real-PG skip / `0` fail |
+| TypeScript bez emitovanja | PASS |
+| Kompletan ESLint quiet | PASS |
+| `git diff --check` | PASS |
+
+Facade još nema nijedan aplikacioni potrošač, pa ova izmena ne menja login,
+cookie, autorizaciju, response ni korisničko ponašanje. Sledeći redosled je:
+
+1. ukloniti dve neizvezene `legacyPOST` funkcije i zaključati tranzicioni
+   repo-wide allowlist test;
+2. migrirati jednostavne customer API-je, pa ownership/mixed tokove;
+3. migrirati admin API isključivo kroz centralni `admin-policy`, uključujući
+   postojeća uža OPERATOR ograničenja;
+4. rešiti eksplicitni HTML unavailable/error ugovor pre account/admin layout-a;
+5. migrirati alternativne capability tokove tako da validan order/cron dokaz
+   može da autorizuje, ali session outage bez validne alternative ostaje `503`;
+6. tek sa nulom direktnih aktivnih call-site-ova pripremiti jedan V2-only
+   cookie/codec/issuance/verification/logout/proxy cutover bez downgrade puta.
 
 ## 11. Obavezni transakcioni redosledi aktivacije i narednih faza
 
@@ -1026,7 +1117,7 @@ projekciju, exact revoke i centralnu customer/admin tri-state access semantiku.
 Activation/race faze još moraju dodati sledeće integrisane dokaze:
 
 - immutable `sae` kroz proizvoljno mnogo session refresh zahteva;
-- stvarni Next 16 Proxy/Edge production bundle sa custom decoderom;
+- stvarni Next 16 Proxy production bundle/runtime sa custom decoderom;
 - Credentials sign-in → refresh → exact expiry sa atomski upisanim DB redom;
 - DB role/database UTC readiness za default/runtime write putanje;
 - login-vs-reset/change/role race;
@@ -1105,7 +1196,9 @@ red nije tvrdnja o uspehu.
 | Faza 4 zeleni exact-head dokaz | [run `33330847915`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33330847915), attempt 1, PostgreSQL/session/E2E/build `SUCCESS`; release/deploy `SKIPPED` |
 | Faza 5 logout commit | `6af8114b6b255c6f99886794d148c9251e59e936` |
 | Faza 5 zeleni exact-head dokaz | [run `33331632579`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33331632579), attempt 1, PostgreSQL/session/E2E/build `SUCCESS`; release/deploy `SKIPPED` |
-| Faza 6 dormantni guard commit/CI | čeka stabilan commit i exact-head run |
+| Faza 6 dormantni guard commit | `c9f7849691fbeee1922d40c5d3959454961d5aab` |
+| Faza 6 dormantni guard exact-head dokaz | [run `33333262290`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33333262290), attempt 1, PostgreSQL/session/E2E/build `SUCCESS`; release/deploy `SKIPPED` |
+| Faza 6 tranzicioni legacy-only facade commit/CI | lokalni paket završen; čeka stabilan commit i exact-head run |
 | Feature merge SHA | nije izvršen |
 | Post-merge V2 run | nije izvršen |
 | Release/deploy jobs | moraju ostati `SKIPPED` |
