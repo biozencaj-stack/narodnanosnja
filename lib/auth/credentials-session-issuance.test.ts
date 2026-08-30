@@ -46,10 +46,12 @@ function createHarness(options: {
   clock?: unknown[];
   timeZone?: unknown[];
   insertFailure?: boolean;
+  reportFailure?: boolean;
 } = {}) {
   const events: string[] = [];
   const queries: Array<{ sql: string; values: unknown[] }> = [];
   const inserts: unknown[] = [];
+  const reports: unknown[] = [];
   const responses = [
     options.timeZone ?? [
       { configuredTimeZone: "UTC", currentTimeZone: "UTC" },
@@ -57,7 +59,7 @@ function createHarness(options: {
     options.user ?? [lockedUser()],
     options.policy ?? [lockedPolicy()],
     options.count ?? [{ policyCount: BigInt(1) }],
-    options.clock ?? [{ evaluatedAt: ISSUED_AT, issuedAt: ISSUED_AT }],
+    options.clock ?? [{ evaluatedAt: ISSUED_AT }],
   ];
   let responseIndex = 0;
 
@@ -93,9 +95,13 @@ function createHarness(options: {
       inserts.push(input);
       if (options.insertFailure) throw new Error("injected insert failure");
     },
+    report(event) {
+      reports.push(event);
+      if (options.reportFailure) throw new Error("private reporter failure");
+    },
   });
 
-  return { issuer, events, queries, inserts };
+  return { issuer, events, queries, inserts, reports };
 }
 
 const CANDIDATE = {
@@ -145,13 +151,19 @@ test("credentials V2 issuer locks the exact bcrypt snapshot, policy and UTC cloc
   assert.deepEqual(harness.queries[0]?.values, []);
   assert.match(harness.queries[1]?.sql ?? "", /FOR UPDATE/);
   assert.match(harness.queries[1]?.sql ?? "", /"passwordHash"/);
+  assert.match(harness.queries[1]?.sql ?? "", /"createdAt" AT TIME ZONE 'UTC'/);
+  assert.match(harness.queries[1]?.sql ?? "", /"emailVerified" AT TIME ZONE 'UTC'/);
   assert.deepEqual(harness.queries[1]?.values, ["user-1"]);
   assert.match(harness.queries[2]?.sql ?? "", /AuthPolicyState/);
   assert.match(harness.queries[2]?.sql ?? "", /FOR SHARE/);
   assert.doesNotMatch(harness.queries[2]?.sql ?? "", /FOR UPDATE/);
+  assert.match(
+    harness.queries[2]?.sql ?? "",
+    /"stagedGraceDeadline" AT TIME ZONE 'UTC'/,
+  );
   assert.match(harness.queries[3]?.sql ?? "", /count\(\*\)/);
-  assert.match(harness.queries[4]?.sql ?? "", /date_trunc\(/);
-  assert.match(harness.queries[4]?.sql ?? "", /TIME ZONE 'UTC'/);
+  assert.match(harness.queries[4]?.sql ?? "", /clock_timestamp\(\)::timestamptz\(3\)/);
+  assert.doesNotMatch(harness.queries[4]?.sql ?? "", /date_trunc\(/);
 
   assert.deepEqual(harness.inserts, [
     {
@@ -163,6 +175,7 @@ test("credentials V2 issuer locks the exact bcrypt snapshot, policy and UTC cloc
       expires: new Date("2026-08-31T12:00:00.000Z"),
     },
   ]);
+  assert.deepEqual(harness.reports, []);
 });
 
 test("credentials V2 issuer rejects a stale id, canonical email or compared password hash before policy/session work", async () => {
@@ -211,7 +224,6 @@ test("credentials V2 issuer evaluates policy at the precise DB clock while claim
     clock: [
       {
         evaluatedAt: new Date("2026-08-30T12:00:00.950Z"),
-        issuedAt: ISSUED_AT,
       },
     ],
   });
@@ -294,8 +306,7 @@ test("credentials V2 issuer keeps malformed candidate, revision/clock and insert
   const invalidClock = createHarness({
     clock: [
       {
-        evaluatedAt: new Date("2026-08-30T12:00:00.500Z"),
-        issuedAt: new Date("2026-08-30T12:00:00.500Z"),
+        evaluatedAt: new Date(Number.NaN),
       },
     ],
   });
@@ -305,4 +316,12 @@ test("credentials V2 issuer keeps malformed candidate, revision/clock and insert
   const insertFailure = createHarness({ insertFailure: true });
   assert.equal(await insertFailure.issuer.issue(CANDIDATE), null);
   assert.deepEqual(insertFailure.events.slice(-2), ["clock", "insert"]);
+  assert.deepEqual(insertFailure.reports, [{ stage: "SESSION_INSERT" }]);
+
+  const reportingFailure = createHarness({
+    insertFailure: true,
+    reportFailure: true,
+  });
+  assert.equal(await reportingFailure.issuer.issue(CANDIDATE), null);
+  assert.deepEqual(reportingFailure.reports, [{ stage: "SESSION_INSERT" }]);
 });

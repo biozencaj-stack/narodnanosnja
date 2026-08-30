@@ -181,6 +181,7 @@ test(
 
     const belgradeUser = await createVerifiedUser("belgrade-clock");
     let observedIssuerTimeZone: string | null = null;
+    const belgradeFailureReports: unknown[] = [];
     const belgradeIssuer = createCredentialsSessionIssuer({
       database: {
         transaction: (work) =>
@@ -205,6 +206,7 @@ test(
           transaction as unknown as Prisma.TransactionClient,
           input,
         ),
+      report: (event) => belgradeFailureReports.push(event),
     });
     const belgradeIssued = await belgradeIssuer.issue(
       {
@@ -214,7 +216,13 @@ test(
       },
       generateAuthSessionSid(),
     );
-    assert.ok(belgradeIssued);
+    assert.ok(
+      belgradeIssued,
+      `Belgrade issuer failed at coarse stage: ${JSON.stringify(
+        belgradeFailureReports,
+      )}`,
+    );
+    assert.deepEqual(belgradeFailureReports, []);
     assert.equal(
       observedIssuerTimeZone,
       "UTC",

@@ -37,6 +37,21 @@ export interface CredentialsSessionIssuance {
   claims: Readonly<AuthSessionClaimsV2>;
 }
 
+export type CredentialsSessionIssuanceFailureStage =
+  | "TRANSACTION"
+  | "TIME_ZONE"
+  | "USER_SNAPSHOT"
+  | "POLICY_SNAPSHOT"
+  | "DATABASE_CLOCK"
+  | "POLICY_DECISION"
+  | "SESSION_INSERT"
+  | "COMMIT";
+
+/** Deliberately excludes credentials, IDs, claims, database rows and errors. */
+export interface CredentialsSessionIssuanceFailureReport {
+  stage: CredentialsSessionIssuanceFailureStage;
+}
+
 interface LockedUserRow {
   id: string;
   email: string;
@@ -65,7 +80,6 @@ interface PolicyCountRow {
 
 interface DatabaseClockRow {
   evaluatedAt: Date;
-  issuedAt: Date;
 }
 
 interface TimeZoneInitializationRow {
@@ -93,6 +107,7 @@ export interface CredentialsSessionIssuerDependencies {
     input: InsertLockedAuthoritativeSessionInput,
   ) => Promise<void>;
   generateSid?: () => string;
+  report?: (event: CredentialsSessionIssuanceFailureReport) => void;
 }
 
 function isFiniteDate(value: unknown): value is Date {
@@ -110,6 +125,17 @@ function isSafeNonNegativeInteger(value: unknown): value is number {
 
 function isExactlyOne(value: number | bigint | undefined): boolean {
   return value === 1 || value === BigInt(1);
+}
+
+function safelyReportIssuanceFailure(
+  reporter: CredentialsSessionIssuerDependencies["report"],
+  stage: CredentialsSessionIssuanceFailureStage,
+): void {
+  try {
+    reporter?.({ stage });
+  } catch {
+    // Observability must never change the coarse, fail-closed login outcome.
+  }
 }
 
 function isCandidate(value: unknown): value is CredentialsSessionIssuanceCandidate {
@@ -192,8 +218,10 @@ export function createCredentialsSessionIssuer(
       }
       if (normalizeAuthSessionSid(sid) !== sid) return null;
 
+      let failureStage: CredentialsSessionIssuanceFailureStage = "TRANSACTION";
       try {
         return await dependencies.database.transaction(async (transaction) => {
+          failureStage = "TIME_ZONE";
           const timeZoneRows = await transaction.$queryRaw<
             TimeZoneInitializationRow[]
           >`
@@ -216,6 +244,7 @@ export function createCredentialsSessionIssuer(
             throw new Error("Credentials issuance UTC initialization invalid");
           }
 
+          failureStage = "USER_SNAPSHOT";
           const lockedUsers = await transaction.$queryRaw<LockedUserRow[]>`
             SELECT
               "id",
@@ -224,9 +253,10 @@ export function createCredentialsSessionIssuer(
               "firstName",
               "lastName",
               "role"::text AS "role",
-              "createdAt",
-              "emailVerified",
-              "emailVerificationLoginGraceUntil",
+              "createdAt" AT TIME ZONE 'UTC' AS "createdAt",
+              "emailVerified" AT TIME ZONE 'UTC' AS "emailVerified",
+              "emailVerificationLoginGraceUntil" AT TIME ZONE 'UTC'
+                AS "emailVerificationLoginGraceUntil",
               "authSessionRevision"
             FROM public."User"
             WHERE "id" = ${candidate.id}
@@ -244,14 +274,16 @@ export function createCredentialsSessionIssuer(
             throw new Error("Credentials issuance snapshot mismatch");
           }
 
+          failureStage = "POLICY_SNAPSHOT";
           const lockedPolicies = await transaction.$queryRaw<LockedPolicyRow[]>`
             SELECT
               "id",
               "revision",
               "policy",
-              "stagedGraceDeadline",
-              "createdAt",
-              "updatedAt"
+              "stagedGraceDeadline" AT TIME ZONE 'UTC'
+                AS "stagedGraceDeadline",
+              "createdAt" AT TIME ZONE 'UTC' AS "createdAt",
+              "updatedAt" AT TIME ZONE 'UTC' AS "updatedAt"
             FROM public."AuthPolicyState"
             WHERE "id" = 1
             FOR SHARE
@@ -272,28 +304,26 @@ export function createCredentialsSessionIssuer(
             throw new Error("Credentials issuance policy count mismatch");
           }
 
+          failureStage = "DATABASE_CLOCK";
           const clockRows = await transaction.$queryRaw<DatabaseClockRow[]>`
             WITH "databaseClock" AS MATERIALIZED (
-              SELECT (clock_timestamp() AT TIME ZONE 'UTC')::timestamp(3)
-                AS "evaluatedAt"
+              SELECT clock_timestamp()::timestamptz(3) AS "evaluatedAt"
             )
-            SELECT
-              "evaluatedAt",
-              date_trunc('second', "evaluatedAt")::timestamp(3) AS "issuedAt"
+            SELECT "evaluatedAt"
             FROM "databaseClock"
           `;
           const evaluatedAt = clockRows[0]?.evaluatedAt;
-          const issuedAt = clockRows[0]?.issuedAt;
           if (
             clockRows.length !== 1 ||
-            !isFiniteDate(evaluatedAt) ||
-            !isFiniteDate(issuedAt) ||
-            issuedAt.getMilliseconds() !== 0 ||
-            issuedAt.getTime() > evaluatedAt.getTime()
+            !isFiniteDate(evaluatedAt)
           ) {
             throw new Error("Credentials issuance database clock invalid");
           }
+          const issuedAt = new Date(
+            Math.floor(evaluatedAt.getTime() / 1_000) * 1_000,
+          );
 
+          failureStage = "POLICY_DECISION";
           const policyState = parseAuthPolicyState(policyRow);
           if (policyState.revision > MAX_POSTGRES_INTEGER) {
             throw new Error("Credentials issuance policy revision out of bounds");
@@ -325,6 +355,7 @@ export function createCredentialsSessionIssuer(
             absoluteExpiresAt,
           });
 
+          failureStage = "SESSION_INSERT";
           await dependencies.insertLockedSession(transaction, {
             sid: claims.sid,
             userId: user.id,
@@ -334,6 +365,7 @@ export function createCredentialsSessionIssuer(
             expires: absoluteExpiresAt,
           });
 
+          failureStage = "COMMIT";
           return {
             principal: asPrincipal(
               user,
@@ -345,7 +377,9 @@ export function createCredentialsSessionIssuer(
         });
       } catch {
         // Credentials failures intentionally have one coarse, fail-closed
-        // outcome. Callers may log a non-sensitive stage outside this module.
+        // outcome. The optional report is stage-only and carries no private
+        // credential, claim, identifier, row or adapter-error detail.
+        safelyReportIssuanceFailure(dependencies.report, failureStage);
         return null;
       }
     },
@@ -357,7 +391,10 @@ export function createPrismaCredentialsSessionIssuer(
   prisma: PrismaClient,
   secret: string,
   overrides: Partial<
-    Pick<CredentialsSessionIssuerDependencies, "generateSid" | "insertLockedSession">
+    Pick<
+      CredentialsSessionIssuerDependencies,
+      "generateSid" | "insertLockedSession" | "report"
+    >
   > = {},
 ) {
   const authoritative = createAuthoritativeSessionDatabase(prisma, secret);
@@ -370,6 +407,7 @@ export function createPrismaCredentialsSessionIssuer(
         ),
     },
     generateSid: overrides.generateSid,
+    report: overrides.report,
     insertLockedSession:
       overrides.insertLockedSession ??
       ((transaction, input) =>

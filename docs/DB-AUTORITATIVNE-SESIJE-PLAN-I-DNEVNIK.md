@@ -549,8 +549,8 @@ Pre transakcije se generiše canonical 256-bitni SID. Jedna transakcija zatim:
 3. odbija obrisan nalog, promenjen email/hash ili nevalidnu user revision;
 4. čita `AuthPolicyState(id=1)` sa `FOR SHARE`, a zatim zahteva ukupan count
    tačno jedan i strict `parseAuthPolicyState` rezultat;
-5. uzima jedan materialized UTC-normalized PostgreSQL sat: precizni
-   `evaluatedAt timestamp(3)` koristi za policy odluku, a iz istog uzorka
+5. uzima jedan materialized apsolutni PostgreSQL sat kao
+   `evaluatedAt timestamptz(3)` za policy odluku, a iz istog JS `Date` uzorka
    izvodi second-aligned `issuedAt` za claim/Session;
 6. ocenjuje verified-login pravilo isključivo iz zaključanog DB singletona i
    svežeg User reda, bez env policy fallback-a;
@@ -648,6 +648,31 @@ gate: pre aktivacije DB role i database default i dalje moraju biti provereni
 kao UTC, jer drugi Prisma čitači/upisivači nisu automatski obuhvaćeni ovim
 dormantnim jezgrima. Novi exact-head PostgreSQL 16 CI dokaz biće upisan tek
 nakon stvarno zelenog ponovljenog run-a.
+
+Commit `027b806950fc768cc9fa5ec9a83f1689e226b651` je zatim kroz PR run
+`33330178183` potvrdio da transaction-local UTC SQL, migracije, drift,
+invarijante, lint i TypeScript prolaze, ali je isti credentials Belgrade
+fixture i dalje dobio coarse `null`. Verification-rotation real-PG fixture-i
+nisu pali. Browser/build su ponovo pravilno preskočeni posle testa, a release i
+deploy poslovi ostali su `SKIPPED`. Zbog namerno jedinstvenog javnog `null`
+ishoda ovaj run nije mogao da pokaže unutrašnju tačku prekida.
+
+Naredni dijagnostički presek zato ne izlaže DB exception niti privatne podatke,
+već dodaje optional, best-effort reporter sa zatvorenim skupom coarse faza:
+transaction, timezone, User snapshot, policy snapshot, DB clock, policy
+decision, Session insert i commit. Reporter nema polje za email, User ID,
+password hash, SID, claims, DB red ili sirovu grešku; i njegov sopstveni kvar
+ne menja `null`. Real-PG assertion ispisuje samo tu coarse fazu ako fixture
+ponovo padne. Ovaj signal služi da sledeća korekcija bude zasnovana na dokazu,
+a ne na slabljenju ne-UTC testa.
+
+Isti presek uklanja i credentials-only dvosmislenost tipova bez menjanja auth
+politike: UTC-naive User/policy kolone se u lock query-jima eksplicitno tumače
+kao UTC i projektuju u apsolutni `timestamptz`, dok materialized clock query
+vraća samo jedan `clock_timestamp()::timestamptz(3)`. `issuedAt` se zatim
+floor-uje na ceo sekund iz tog istog `Date` uzorka. Time nema drugog
+`timestamp without time zone` clock polja koje Prisma može drugačije mapirati,
+a `sae - sat = 86400`, HMAC insert i policy hronologija ostaju nepromenjeni.
 
 ## 9. Obavezni transakcioni redosledi aktivacije i narednih faza
 
@@ -796,7 +821,11 @@ red nije tvrdnja o uspehu.
 | Faza 3 revocation commit | `0790ccdb8e686b3a7e2358e8aecf11b2255bdbdc` |
 | Faza 3 exact-head CI | [run `33328617960`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33328617960), attempt 1, `SUCCESS` |
 | Faza 3 PostgreSQL/session/E2E/build | `PASS`; release i deploy poslovi `SKIPPED` |
-| Faza 4 dormant issuance/rotation commit/CI | čeka stabilan commit i novi exact-head GitHub run |
+| Faza 4 dormant issuance/rotation commit | `098cfcfed53666ab09b408243b2667355800bd80` |
+| Faza 4 prvi real-PG pokušaj | [run `33329700089`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33329700089), credentials Belgrade fixture `FAIL`; release/deploy `SKIPPED` |
+| Faza 4 transaction-local UTC commit | `027b806950fc768cc9fa5ec9a83f1689e226b651` |
+| Faza 4 drugi real-PG pokušaj | [run `33330178183`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33330178183), isti coarse credentials ishod `FAIL`; ostali pre-test gate-ovi `PASS`, release/deploy `SKIPPED` |
+| Faza 4 zeleni exact-head dokaz | čeka sledeći dokazani korektivni presek |
 | Feature merge SHA | nije izvršen |
 | Post-merge V2 run | nije izvršen |
 | Release/deploy jobs | moraju ostati `SKIPPED` |
