@@ -434,9 +434,10 @@ Sve što je jednom pojelo vreme, na jednom mestu:
 
 **Ne radi / nedostaje:**
 
-- Draft PR #1 ka `main` ostaje pogrešan release put i ne sme se spojiti;
-  tag-gated V2 release granica postoji u kodu, ali production Environment,
-  release tag i live objava namerno ostaju za poslednju rollout fazu
+- Draft PR #1 ka `main` zatvoren je bez merge-a jer je bio pogrešan release
+  put; tag-gated V2 release granica spojena je kroz PR #8, ali production
+  Environment, release tag i live objava namerno ostaju za poslednju rollout
+  fazu
 - Fotografije proizvoda — sve prazne, stoje tkane šare
 - Pravi domen i HTTPS (sada samo adresa servera i port)
 - Filteri su nasleđeni iz prodavnice obuće („Vrsta obuće“, „Pol“, brendovi)
@@ -738,3 +739,13 @@ Spoljni `production` Environment mora pred live fazu biti promenjen sa starog
 poželjno zaštićeni tag ruleset. Dok to nije urađeno, novi deploy ostaje dodatno
 blokiran. Ovom izmenom nije napravljen ili pushovan release tag, nisu postavljene
 tajne, server nije menjan i aplikacija nije puštena uživo.
+
+Granica je spojena isključivo u kanonsku V2 granu kroz
+[PR #8](https://github.com/biozencaj-stack/narodnanosnja/pull/8), merge
+`6aa506924aa5b95d30e638adffa209c307aed6b0`. Exact-head PR run
+[`33302673497`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33302673497)
+i post-merge V2 push run
+[`33302806208`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33302806208)
+završeni su uspešno; u oba su release potvrda i produkcijski deploy preskočeni.
+Stari Draft PR #1 zatvoren je bez merge-a. Read-only provera posle svega i
+dalje nalazi 0 production deployment zapisa.
