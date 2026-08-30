@@ -2740,3 +2740,180 @@ Read-only provera posle merge-a našla je 0 production deployment zapisa.
 politikom, bez required reviewera, secrets i variables. Nije napravljen V2
 release tag, nije uspostavljen SSH, server i baza nisu menjani i ništa nije
 pušteno live.
+
+## 39. P1 auth secret, cookie ugovor i atomska email verifikacija
+
+Posle zatvaranja P0 release granice rad je nastavljen prvom P1 auth sekcijom na
+grani `ispravka/v2-auth-secret-verifikacija`, izvedenoj direktno iz kanonskog
+V2 merge-a `328b4027f1ed3f357ced86564f52dfefa36b85a1`. Ova etapa je namerno
+ograničena na konfiguracionu granicu autentifikacije i exactly-once
+verification tok. Ne uvodi novu Prisma migraciju i ne uključuje live release.
+
+### 39.1. Početni nalazi i izabrana granica
+
+Pre izmene su postojala četiri međusobno povezana problema:
+
+1. `app/api/auth/verify-email/[token]/route.ts` je koristio javni
+   `fallback-secret` ako `NEXTAUTH_SECRET` nije podešen;
+2. ruta je prvo menjala `User.emailVerified` i brisala token, a tek zatim
+   pokušavala JWT encode, redirect i cookie pripremu;
+3. regularna NextAuth sesija trajala je 24 sata, dok je ručno izdata
+   verification sesija/cookie trajala 30 dana;
+4. NextAuth, proxy i verification ruta nisu imali jedan zajednički ugovor za
+   secret, secure-cookie odluku i ime session cookie-ja.
+
+Nezavisni read-only review radne izmene otkrio je još dve važne ivice pre
+commita. NextAuth `getToken()` bi bez eksplicitnog cookie imena koristio svoju
+HTTPS heuristiku, koja ne mora da bude ista kao centralna politika. Takođe je
+prvobitna verzija pripremala redirect response tek posle DB commita. Oba nalaza
+su ispravljena pre dokumentovanja i završne lokalne provere.
+
+Globalni login deny za svaki `emailVerified = NULL` namerno nije uveden.
+Postojeći nalozi nisu prethodno auditovani/backfill-ovani, registracija još nema
+pouzdan resend posle SMTP greške, a neposredna zabrana bi mogla da zaključa
+legitimne legacy korisnike.
+
+### 39.2. Centralna fail-closed auth konfiguracija
+
+Novi `lib/auth/config.ts` definiše:
+
+- `AUTH_SESSION_MAX_AGE_SECONDS = 86_400` kao jedini rok za session, JWT i
+  verification cookie;
+- `resolveAuthSecret()` kao jedini način čitanja `NEXTAUTH_SECRET`;
+- `shouldUseSecureAuthCookies()` kao jedinu HTTPS/cookie odluku;
+- `authSessionCookieName()` kao jedini izbor između
+  `__Secure-next-auth.session-token` i `next-auth.session-token`;
+- `AuthConfigurationError` za eksplicitne konfiguracione greške.
+
+Secret resolver odbija:
+
+- nedostajuću, praznu ili whitespace-only vrednost;
+- manje od 32 UTF-8 bajta;
+- početne ili završne razmake, koji mogu napraviti različite ključeve u
+  različitim procesima;
+- poznate javne placeholder vrednosti iz primera dokumentacije.
+
+Dužina nije predstavljena kao dokaz entropije. `.env.example` zato jasno kaže
+da je javni primer namerno neupotrebljiv dok ga operater ne zameni zasebno
+generisanim CSPRNG ključem, na primer `openssl rand -base64 32` rezultatom.
+
+Cookie/URL resolver u produkciji zahteva eksplicitni HTTPS `NEXTAUTH_URL`.
+Nedostajući URL, produkcijski HTTP, okolni razmaci, nevalidan URL i protokol van
+HTTP(S) rade fail-closed. Lokalni development/test HTTP ostaje dozvoljen.
+
+`lib/auth/index.ts` sada koristi centralni secret, eksplicitni session i JWT
+`maxAge` i centralni secure-cookie izbor. `proxy.ts` prosleđuje `getToken()` i
+isti secret i eksplicitni `secureCookie` i tačno centralno ime cookie-ja, pa
+proxy ne zavisi od odvojene NextAuth URL heuristike. Playwright dobija zasebnu,
+dovoljno dugu neprodukcijsku test vrednost.
+
+### 39.3. Redosled bez parcijalne verifikacije
+
+Verification ruta sada sprovodi sledeći redosled:
+
+1. `getStorefrontUrl()` validira kanonski storefront URL; produkcija zahteva
+   javni HTTPS URL;
+2. pre DB čitanja nastaju sve četiri redirect mete: invalid, expired, success
+   i failure;
+3. centralni helperi validiraju auth secret i cookie konfiguraciju;
+4. ruta tek tada čita verification token i pripadajućeg korisnika;
+5. za još važeći token NextAuth `encode()` potpisuje sesiju sa rokom od 24
+   sata;
+6. uspešni redirect response i HttpOnly/SameSite cookie potpuno se pripremaju
+   u memoriji;
+7. tek nakon toga DB helper pokušava atomski commit;
+8. pripremljeni odgovor vraća se samo ako je commit uspeo.
+
+Generički `prepareVerificationSuccessBeforeCommit()` čini ovu granicu
+testabilnom. Greška JWT encode-a ne poziva ni pripremu odgovora ni DB commit.
+Greška redirect/cookie pripreme ne poziva commit. Greška commita ne vraća već
+pripremljeni uspešan odgovor. Time token ostaje ponovljiv kad infrastruktura
+zakaže pre mutacije, a klijent ne dobija lažni uspeh kada transakcija ne uspe.
+
+Expired token se i dalje uklanja conditional `deleteMany` upitom i vodi na
+neutralni expired rezultat. Nevalidan ili već iskorišćen token ne menja bazu.
+Neobrađene greške se loguju bez samog tokena i vraćaju failure redirect; ako je
+kanonski URL toliko neispravan da se redirect ne može ni konstruisati, vraća se
+HTTP 500 JSON bez prethodne token/user mutacije.
+
+### 39.4. Atomski claim i konkurentni replay
+
+Novi `lib/auth/email-verification.ts` prima minimalni claim:
+
+- verification red ID;
+- user ID;
+- originalni token.
+
+U jednoj Prisma transakciji prvi `deleteMany` zahteva istovremeno isti ID,
+user, token i `expires > verifiedAt`. Samo `count === 1` znači da je ovaj radnik
+claim-ovao aktivni token. Svaki replay, paralelni gubitnik, promenjen token ili
+istekao claim baca `EmailVerificationConflictError` pre izmene korisnika.
+
+Pobednička transakcija zatim:
+
+1. postavlja `User.emailVerified` na istu referentnu vrednost `verifiedAt`;
+2. briše sve preostale `EmailVerification` redove tog korisnika;
+3. commit-uje claim, user promenu i sibling invalidaciju kao jednu celinu.
+
+PostgreSQL zaključavanje reda obezbeđuje da dva konkurentna conditional delete
+upita ne mogu oba prijaviti `count = 1`. Ako bilo koji kasniji upit u
+transakciji zakaže, prvobitno brisanje claim-a se rollback-uje.
+
+### 39.5. Testovi i CI ugovor
+
+Dodati testovi su podeljeni po odgovornosti:
+
+- `lib/auth/config.test.ts` pokriva missing/blank/short secret, okolne razmake,
+  UTF-8 broj bajtova, poznati placeholder, tačan 24h rok, HTTPS/HTTP cookie
+  matricu i produkcijske URL greške;
+- `lib/auth/email-verification.test.ts` pokriva strogi redosled session encode →
+  kompletna response priprema → commit, plus failure na svakoj granici;
+- `lib/auth/email-verification.integration.test.ts` proverava stvarnu Prisma/
+  PostgreSQL transakciju.
+
+DB test je opt-in preko `RUN_AUTH_VERIFICATION_DB_TESTS=true`. Pored tog
+eksplicitnog flaga odbija ne-PostgreSQL URL, udaljeni host i bazu čiji naziv ne
+sadrži jasno odvojeno `test`, `e2e` ili `provera`. UUID izoluje podatke, cleanup
+briše tačno kreiranog korisnika po ID-u, a FK cascade uklanja njegove tokene.
+
+Test uvodi two-worker barijeru unutar dve već otvorene interaktivne
+transakcije. Zato nije samo serijski replay test: oba radnika moraju stići do
+claim granice pre nego što bilo koji nastavi. Očekivani rezultat je tačno jedan
+fulfilled, tačno jedan `EmailVerificationConflictError`, postavljen
+`emailVerified` i nula verification tokena korisnika.
+
+`.github/workflows/objavi.yml` uključuje flag samo u CI test koraku, posle
+podizanja PostgreSQL 16 i primene migracija. Lokalno bez bezbedne test baze oba
+opt-in DB testa ostaju namerno preskočena. Aktuelni lokalni paket ima 115
+testova: 113 prolazi, 2 DB testa su očekivano preskočena, a nema padova.
+`actionlint`, `git diff --check`, ciljani auth testovi, ESLint i TypeScript
+takođe prolaze. GitHub PostgreSQL/Chromium CI dokaz ostaje obavezan pre merge-a.
+
+### 39.6. Granice etape i sledeći auth koraci
+
+Ova promena ne menja Prisma šemu, istorijske migracije, registracioni model,
+password-reset modele ili postojeće korisničke redove. Tokom rada nisu čitane
+stvarne `.env` vrednosti, nisu postavljene/rotirane produkcione tajne, nije
+kontaktiran server, nije menjan GitHub `production` Environment i nije
+napravljen release tag.
+
+Preostali auth rad, preporučenim redosledom, jeste:
+
+1. reset zahtev sa identičnim javnim statusom/telom za nepostojeći nalog, SMTP
+   uspeh i SMTP kvar;
+2. prefetch-safe korisnička potvrda pre mutacije, umesto GET auto-login toka
+   koji email skener može prerano da aktivira;
+3. hashovanje verification/reset tokena i exactly-once reset confirm;
+4. atomska registracija i stvarni enumeration-safe resend sa cooldown-om i
+   jednim aktivnim tokenom;
+5. audit postojećeg `emailVerified` stanja i kontrolisani backfill;
+6. tek zatim verified-login enforcement;
+7. `sessionVersion` ili ekvivalentna server-side revokacija posle promene/
+   resetovanja lozinke i promene role;
+8. shared login limiter, trusted-proxy/client-IP ugovor, bezbedna lockout
+   politika i kasnije MFA za administratore.
+
+PR mora biti otvoren isključivo ka kanonskoj V2 grani. Običan push i ručni
+workflow ostaju verification-only; produkcijski poslovi moraju biti preskočeni.
+Live release, Environment pravila, tajne, server i kartice ostaju poslednja,
+posebno odobrena faza.

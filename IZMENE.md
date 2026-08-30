@@ -11,8 +11,8 @@ Zapisa ima više i lako je otvoriti pogrešan. Poređano po dubini:
 
 | Dokument | Obim | Šta pokriva |
 | --- | --- | --- |
-| **`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-08-30.md`** | 30 glavnih odeljaka | **Konsolidovan presek svega urađenog.** Implementirano stanje, razlozi, Git/PR/CI dokazi, ključni fajlovi, P0/P1/P2 dug, preporučeni redosled i produkcioni checklist |
-| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 38 odeljaka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
+| **`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-08-30.md`** | 31 glavni odeljak | **Konsolidovan presek svega urađenog.** Implementirano stanje, razlozi, Git/PR/CI dokazi, ključni fajlovi, P0/P1/P2 dug, preporučeni redosled i produkcioni checklist |
+| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 39 odeljaka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
 | Ovaj fajl (`IZMENE.md`) | sažeti dnevnik | Hronologija i odluke — zašto je nešto urađeno tako |
 | `docs/ARCHITECTURE-V2.md` | 4 KB | Arhitektonske granice platforme |
 | `docs/CATALOG-MIGRATION-PLAN.md` | 10 KB | Redosled prelaska na generički katalog |
@@ -749,3 +749,46 @@ i post-merge V2 push run
 završeni su uspešno; u oba su release potvrda i produkcijski deploy preskočeni.
 Stari Draft PR #1 zatvoren je bez merge-a. Read-only provera posle svega i
 dalje nalazi 0 production deployment zapisa.
+
+---
+
+## XVII. P1 auth secret i atomska email verifikacija — 30. avgust 2026.
+
+Prva P1 auth sekcija zatvara javni fallback ključ i nedeterministički
+verification/session tok. Novi `lib/auth/config.ts` centralizuje auth secret,
+rok sesije i izbor cookie-ja. Nedostajući, prazan, kraći od 32 UTF-8 bajta,
+razmacima okružen ili poznati javni placeholder secret sada se odbija. U
+produkciji je `NEXTAUTH_URL` obavezan i mora biti HTTPS; razvojni HTTP ostaje
+dozvoljen. NextAuth, proxy i verification ruta koriste isti resolver, isto ime
+cookie-ja i isti secure-cookie kriterijum.
+
+Session, JWT i verification cookie sada dele jedan rok od 24 sata. Pre bilo
+kakve verification mutacije ruta validira kanonski storefront URL, auth
+konfiguraciju i sve redirect mete, zatim potpisuje JWT i potpuno priprema
+uspešan odgovor sa HttpOnly/SameSite cookie-jem. Ako encode ili priprema
+odgovora zakažu, korisnik i token ostaju netaknuti i zahtev može bezbedno da se
+ponovi.
+
+Tek posle uspešne pripreme odgovora `commitEmailVerification()` otvara jednu
+Prisma transakciju. Conditional `deleteMany` claim prihvata tačno jedan isti,
+još važeći token; zatim ista transakcija postavlja `emailVerified` i briše sve
+ostale verification tokene korisnika. Paralelni replay zato može imati samo
+jednog pobednika, dok drugi dobija kontrolisani konflikt bez parcijalnog
+stanja.
+
+Dodati su unit testovi za secret/URL/cookie matricu, jedinstveni 24-časovni rok
+i redosled session encode → response priprema → DB commit, uključujući svaku
+failure granicu. Opt-in PostgreSQL test koristi dve preklopljene interaktivne
+transakcije, zahteva lokalnu bazu sa jasnim test nazivom i proverava jednog
+uspešnog radnika, jednog konfliktnog, verifikovanog korisnika i nula sibling
+tokena. GitHub CI sada taj test obavezno uključuje preko
+`RUN_AUTH_VERIFICATION_DB_TESTS=true`.
+
+Ova etapa nema Prisma migraciju i ne menja produkcione podatke, server, tajne,
+GitHub Environment, release tag ili live sajt. Takođe još ne uključuje globalni
+`emailVerified` login uslov, jer bi bez audita/backfill-a i resend toka mogao da
+zaključa postojeće legitimne naloge. Slede redom: reset enumeration/SMTP
+uniformnost, prefetch-safe POST potvrda umesto GET auto-login mutacije,
+hashovani jednokratni tokeni, atomska registracija i resend, kontrolisani
+verified-login rollout, session revocation/sveža role provera i shared login
+limiter. Live puštanje ostaje poslednja faza.

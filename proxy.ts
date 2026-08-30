@@ -7,6 +7,11 @@ import {
   isAdminApiPath,
   isAdminPagePath,
 } from "@/lib/auth/admin-policy";
+import {
+  authSessionCookieName,
+  resolveAuthSecret,
+  shouldUseSecureAuthCookies,
+} from "@/lib/auth/config";
 import { isTrustedWriteRequest } from "@/lib/security/origin";
 
 // Paths that require authentication
@@ -47,7 +52,9 @@ export async function proxy(request: NextRequest) {
   // Get the token
   const token = await getToken({
     req: request,
-    secret: process.env.NEXTAUTH_SECRET,
+    secret: resolveAuthSecret(),
+    secureCookie: shouldUseSecureAuthCookies(),
+    cookieName: authSessionCookieName(),
   });
 
   // Check if trying to access auth pages while logged in

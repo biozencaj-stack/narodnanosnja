@@ -2,6 +2,11 @@ import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { prisma } from "@/lib/db";
 import { verifyPassword } from "./password";
+import {
+  AUTH_SESSION_MAX_AGE_SECONDS,
+  resolveAuthSecret,
+  shouldUseSecureAuthCookies,
+} from "./config";
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -70,9 +75,13 @@ export const authOptions: NextAuthOptions = {
   },
   session: {
     strategy: "jwt",
-    maxAge: 24 * 60 * 60, // 24 hours
+    maxAge: AUTH_SESSION_MAX_AGE_SECONDS,
   },
-  secret: process.env.NEXTAUTH_SECRET,
+  jwt: {
+    maxAge: AUTH_SESSION_MAX_AGE_SECONDS,
+  },
+  useSecureCookies: shouldUseSecureAuthCookies(),
+  secret: resolveAuthSecret(),
 };
 
 // Type extensions for NextAuth
