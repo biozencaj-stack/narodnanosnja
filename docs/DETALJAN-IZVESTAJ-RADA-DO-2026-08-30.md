@@ -4165,6 +4165,20 @@ Repository sadrži sledeće nove/proširene dokazne slojeve:
     `created` i drugi `exists`, DB clock posle User lock wait-a i rollback/
     uspešan retry kada PasswordReset cleanup zakaže posle stvarnih mutacija.
 
+Realni PostgreSQL 16 izvršaj je dodatno ojačao same dokaze. Test email fixture-i
+sada eksplicitno prolaze produkcijski 64-character local-part ugovor. DB-clock
+race assertion-i koriste measured PostgreSQL lower/upper granice, a ne jednakost
+sa ranije ubrizganim resend vremenom. Svi bound backend PID parametri kastuju se
+na `integer`, što odgovara potpisu `pg_blocking_pids(integer)` umesto Prisma
+podrazumevanog `bigint` bind-a.
+
+Privileged missing-row create zadržava blocking transaction-level advisory
+lock. Njegov PostgreSQL `void` rezultat više se ne projektuje direktno prema
+Prismi: `MATERIALIZED` CTE izvršava i drži lock, a spoljašnji SELECT vraća samo
+jedan proverljiv boolean red. Time realni adapter dokazuje serialization bez
+unsupported pseudo-type deserijalizacije i pada fail-closed ako rezultat nije
+tačno jedan `true`.
+
 GitHub Actions `Provera verzije` na PostgreSQL 16 servisu sada ima poseban
 korak za izolovane audit fixture-e. Glavni test korak uključuje
 `RUN_VERIFIED_LOGIN_DB_TESTS=true` uz ranije opt-in registration,

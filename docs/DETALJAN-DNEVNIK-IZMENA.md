@@ -4819,6 +4819,42 @@ status `3`, stderr ne sadrži podatke naloga, a aggregate blocker izveštaj osta
 na stdout-u pre završnog rollback-a i greške. Runner sada zasebno dokazuje i da
 oba current fixture-a odbijaju nedostajuće obavezne promenljive.
 
+Prvi neuspešni run bio je `33323438924` na feature SHA
+`8cccdaaf8143d5a150cf9a239f56ed6ad2f4e7c8`; zaustavljen je upravo na fixture
+koraku. Korekcija je commitovana kao
+`e99cb3f5d53e9b8d5ca85e5ed8dcb9e4e6c146df`. Sledeći exact-head run
+`33323841820` potvrdio je da migration deploy, drift, DB invariant smoke,
+izolovani audit fixture-i, lint i typecheck prolaze. Zatim je puni real-DB paket
+prijavio pet zasebnih regresija dokaza; release i production deploy poslovi u
+oba run-a ostali su `SKIPPED`.
+
+Tih pet nalaza razloženo je ovako:
+
+1. Credentials fixture prefix `verified-login-password-mutation-<UUID>` imao
+   je local-part od 69 znakova, iznad runtime granice 64. Login ga je ispravno
+   odbio pre bcrypt-a. Fixture-i su skraćeni na `vl-...` i sada sami potvrđuju
+   da prolaze isti `normalizeEmailAddress` ugovor kao produkcijski unos.
+2. Resend/verify race test je očekivao da `emailVerified` bude tačno jednak
+   ubrizganom resend satu. Verification commit namerno čita novi PostgreSQL sat
+   tek posle User i token lock-a, pa je kasniji timestamp ispravan. Equality je
+   zamenjen donjom i gornjom granicom merenom isključivo DB satom.
+3. Prisma JS `number` parametar šalje kao PostgreSQL `bigint`, dok
+   `pg_blocking_pids` prima `integer`. Sva tri interpolirana PID lock-observer
+   testa sada eksplicitno kastuju bound PID na `integer`; runtime query-ji nisu
+   menjani.
+4. `pg_advisory_xact_lock(bigint)` vraća PostgreSQL pseudo-tip `void` koji
+   Prisma ne može da deserijalizuje iz `$queryRaw` rezultata. Missing-email
+   privileged create zato je završavao coarse `PERSISTENCE_FAILURE` pre create
+   upisa. Lock je ostao blocking transaction-level advisory lock, ali je njegov
+   `void` rezultat zatvoren u `MATERIALIZED` CTE, dok Prisma vidi samo tačno
+   jedan boolean `lockAcquired=true` red. Svaki drugi oblik pada fail-closed.
+5. Privileged lock-clock i password-reset lock-clock test bili su dva pojavljivanja
+   istog PID `bigint` problema iz tačke 3, ne dve runtime greške.
+
+Lokalno nema psql/Docker dokaza za ove real-DB putanje; zato nijedna od ovih
+korekcija nije proglašena završenom dok novi exact-head PostgreSQL 16 run ne
+prođe svih 315 testova, browser smoke i build.
+
 ### 44.5. Grace expand migracija i invariant smoke
 
 `User` dobija:

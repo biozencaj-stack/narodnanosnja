@@ -8,6 +8,7 @@ import {
   type CredentialsLoginPolicySnapshot,
 } from "./credentials-login";
 import { createPrismaCredentialsLoginDatabase } from "./credentials-login-database";
+import { normalizeEmailAddress } from "./email-address";
 import { hashPassword, verifyPassword } from "./password";
 
 const RUN_DATABASE_TESTS =
@@ -145,7 +146,12 @@ test(
         graceUntil?: Date | null;
       } = {},
     ) {
-      const email = `verified-login-${purpose}-${runId}@example.invalid`;
+      const email = `vl-${purpose}-${runId}@example.invalid`;
+      assert.equal(
+        normalizeEmailAddress(email),
+        email,
+        "integration fixture email mora ostati unutar runtime email ugovora",
+      );
       cleanupEmails.add(email);
       const user = await database.user.create({
         data: {
@@ -265,8 +271,8 @@ test(
 
     const emailMutationUser = await createUser("email-mutation");
     await markVerified(emailMutationUser.id);
-    const changedEmail =
-      `verified-login-email-mutated-${runId}@example.invalid`;
+    const changedEmail = `vl-email-mutated-${runId}@example.invalid`;
+    assert.equal(normalizeEmailAddress(changedEmail), changedEmail);
     cleanupEmails.add(changedEmail);
     let emailMutatedAfterCompare = false;
     const emailMutationResult = await authorizeCredentialsLogin(
@@ -393,10 +399,12 @@ test(
         }>
       >`
         SELECT
-          cardinality(pg_blocking_pids(${workerStart.pid})) > 0 AS "blocked",
+          cardinality(
+            pg_catalog.pg_blocking_pids(${workerStart.pid}::integer)
+          ) > 0 AS "blocked",
           "wait_event_type" AS "waitEventType"
         FROM pg_catalog.pg_stat_activity
-        WHERE "pid" = ${workerStart.pid}
+        WHERE "pid" = ${workerStart.pid}::integer
       `;
       if (
         activity[0]?.blocked === true &&

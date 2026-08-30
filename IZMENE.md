@@ -1911,6 +1911,16 @@ migration deploy, drift, DB invariant smoke, izolovane audit fixture-e i
 opt-in real-DB auth testove preko `RUN_VERIFIED_LOGIN_DB_TESTS=true`, pored
 ranijih reset/verification/registration testova.
 
+PostgreSQL 16 exact-head izvršaj zatvorio je i četiri klase grešaka u samim
+real-DB dokazima: predugačke test email local-part vrednosti sada prolaze isti
+runtime normalizer; resend/verify timestamp se proverava između DB-clock
+granica umesto lažne exact jednakosti; bound backend PID se kastuje iz Prisma
+`bigint` u `integer` za `pg_blocking_pids`; privileged advisory lock zadržava
+blocking transaction-level semantiku, ali svoj PostgreSQL `void` rezultat
+zatvara u `MATERIALIZED` CTE i Prismi izlaže samo fail-closed boolean potvrdu.
+Produkcijski validator i verification DB-clock pravilo nisu oslabljeni da bi
+testovi prošli.
+
 Konačan zbir testova i finalni lint/typecheck/Prisma/build rezultat namerno se
 ne upisuju dok stablo ne bude stabilno i exact-head CI ne završi. Merodavna je
 samo tabela §XXII.12.

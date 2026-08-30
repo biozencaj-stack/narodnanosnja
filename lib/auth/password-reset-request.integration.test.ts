@@ -115,10 +115,12 @@ async function waitForRowLock(
       Array<{ blocked: boolean; waitEventType: string | null }>
     >`
       SELECT
-        cardinality(pg_blocking_pids(${pid})) > 0 AS "blocked",
+        cardinality(
+          pg_catalog.pg_blocking_pids(${pid}::integer)
+        ) > 0 AS "blocked",
         "wait_event_type" AS "waitEventType"
       FROM pg_catalog.pg_stat_activity
-      WHERE "pid" = ${pid}
+      WHERE "pid" = ${pid}::integer
     `;
     if (
       rows[0]?.blocked === true &&

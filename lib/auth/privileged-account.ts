@@ -236,15 +236,27 @@ function prismaTransactionAdapter(
 
       // SELECT ... FOR UPDATE cannot lock an absent row. Serialize competing
       // creates by canonical email, then repeat the User lookup after waiting.
-      // The email remains a bound parameter and never becomes SQL text.
+      // The email remains a bound parameter and never becomes SQL text. Keep
+      // PostgreSQL's void lock result inside a materialized CTE: exposing that
+      // pseudo-type directly makes Prisma fail during result deserialization.
       const advisoryRows = await transaction.$queryRaw<
-        Array<{ lockAcquired: null }>
+        Array<{ lockAcquired: boolean }>
       >`
-        SELECT pg_advisory_xact_lock(
-          hashtextextended(${normalizedEmail}, 684569237451::bigint)
-        ) AS "lockAcquired"
+        WITH advisory_lock AS MATERIALIZED (
+          SELECT pg_catalog.pg_advisory_xact_lock(
+            pg_catalog.hashtextextended(
+              ${normalizedEmail},
+              684569237451::bigint
+            )
+          )
+        )
+        SELECT TRUE AS "lockAcquired"
+        FROM advisory_lock
       `;
-      if (advisoryRows.length !== 1) {
+      if (
+        advisoryRows.length !== 1 ||
+        advisoryRows[0]?.lockAcquired !== true
+      ) {
         throw new PrivilegedAccountError("PERSISTENCE_FAILURE");
       }
 

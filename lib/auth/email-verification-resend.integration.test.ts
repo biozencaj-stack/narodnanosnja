@@ -514,7 +514,12 @@ test(
     );
     assert.ok(oldTokenHash);
     assert.ok(newTokenHash);
-    const raceAt = new Date();
+    const raceClockRows = await prisma.$queryRaw<Array<{ at: Date }>>`
+      SELECT clock_timestamp()::timestamptz(3) AS "at"
+    `;
+    const raceAt = raceClockRows[0]?.at;
+    assert.equal(raceClockRows.length, 1);
+    assert.ok(raceAt instanceof Date);
 
     const user = await prisma.user.create({
       data: {
@@ -597,7 +602,7 @@ test(
         ...(verifyPromise ? [verifyPromise] : []),
       ]);
     }
-    const [storedUser, storedTokens] = await Promise.all([
+    const [storedUser, storedTokens, completionClockRows] = await Promise.all([
       prisma.user.findUniqueOrThrow({
         where: { id: user.id },
         select: {
@@ -611,9 +616,23 @@ test(
         where: { userId: user.id },
         select: { token: true, tokenHash: true },
       }),
+      prisma.$queryRaw<Array<{ at: Date }>>`
+        SELECT clock_timestamp()::timestamptz(3) AS "at"
+      `,
     ]);
 
-    assert.equal(storedUser.emailVerified?.getTime(), raceAt.getTime());
+    const completedAt = completionClockRows[0]?.at;
+    assert.equal(completionClockRows.length, 1);
+    assert.ok(completedAt instanceof Date);
+    assert.ok(storedUser.emailVerified instanceof Date);
+    assert.ok(
+      storedUser.emailVerified.getTime() >= raceAt.getTime(),
+      "verification DB vreme ne sme prethoditi resend serialization granici",
+    );
+    assert.ok(
+      storedUser.emailVerified.getTime() <= completedAt.getTime(),
+      "verification DB vreme ne sme biti posle izmerene completion granice",
+    );
     assert.equal(storedUser.verificationEmailNextAllowedAt, null);
     assert.equal(storedUser.verificationEmailResendWindowStartedAt, null);
     assert.equal(storedUser.verificationEmailResendCount, null);

@@ -295,6 +295,7 @@ interface RawQueryCall {
 
 function fakePrismaClient(
   userLookupResults: Array<Array<{ id: string }>>,
+  advisoryLockResult = true,
 ) {
   const events: string[] = [];
   const queries: RawQueryCall[] = [];
@@ -314,7 +315,7 @@ function fakePrismaClient(
       }
       if (sql.includes("pg_advisory_xact_lock")) {
         events.push("query:advisory-lock");
-        return [{ lockAcquired: null }];
+        return [{ lockAcquired: advisoryLockResult }];
       }
       if (sql.includes("clock_timestamp()")) {
         events.push("query:clock");
@@ -432,7 +433,28 @@ test("Prisma adapter serializes a missing email before create", async () => {
   ]);
   const advisoryQuery = fake.queries[1];
   assert.match(advisoryQuery?.sql ?? "", /pg_advisory_xact_lock/);
+  assert.match(advisoryQuery?.sql ?? "", /WITH advisory_lock AS MATERIALIZED/);
+  assert.match(advisoryQuery?.sql ?? "", /SELECT TRUE AS "lockAcquired"/);
+  assert.match(advisoryQuery?.sql ?? "", /pg_catalog\.hashtextextended/);
   assert.equal(advisoryQuery?.sql.includes("privileged@example.com"), false);
   assert.deepEqual(advisoryQuery?.values, ["privileged@example.com"]);
   assert.equal(fake.creates.length, 1);
+});
+
+test("Prisma adapter fails closed for an invalid advisory lock wrapper result", async () => {
+  const fake = fakePrismaClient([[]], false);
+  const database = createPrismaPrivilegedAccountDatabase(fake.client);
+
+  await assert.rejects(
+    provisionPrivilegedAccount(INPUT, database),
+    (error) =>
+      error instanceof PrivilegedAccountError &&
+      error.code === "PERSISTENCE_FAILURE",
+  );
+  assert.deepEqual(fake.events, [
+    "prisma:transaction:start",
+    "query:user-for-update",
+    "query:advisory-lock",
+  ]);
+  assert.deepEqual(fake.creates, []);
 });
