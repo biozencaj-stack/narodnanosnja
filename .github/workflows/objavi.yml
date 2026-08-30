@@ -57,6 +57,7 @@ jobs:
       # libpq/psql ne poznaje Prisma `schema` query parametar.
       PSQL_DATABASE_URL: postgresql://provera:provera@127.0.0.1:5432/provera
       NEXTAUTH_SECRET: ci-nextauth-secret-nije-za-produkciju
+      AUTH_VERIFIED_LOGIN_POLICY: audit
       ORDER_ACCESS_SECRET: ci-order-secret-nije-za-produkciju
       NEXTAUTH_URL: https://ci.example.invalid
       NEXT_PUBLIC_SITE_URL: https://ci.example.invalid
@@ -108,6 +109,11 @@ jobs:
           -v ON_ERROR_STOP=1
           -f scripts/db-invariant-smoke.sql
 
+      - name: Proveri izolovane verified-login audit fixture-e
+        env:
+          AUTH_AUDIT_TEST_DATABASE_URL: ${{ env.PSQL_DATABASE_URL }}
+        run: node --import tsx scripts/test-auth-email-verification-audits.ts
+
       - name: Proveri lint pravila
         run: npm run lint -- --quiet
 
@@ -121,6 +127,7 @@ jobs:
           RUN_PASSWORD_RESET_CONFIRM_DB_TESTS: "true"
           RUN_REGISTRATION_DB_TESTS: "true"
           RUN_EMAIL_VERIFICATION_RESEND_DB_TESTS: "true"
+          RUN_VERIFIED_LOGIN_DB_TESTS: "true"
         run: npm test
 
       - name: Instaliraj Chromium za browser smoke test

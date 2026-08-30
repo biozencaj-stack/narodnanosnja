@@ -77,6 +77,7 @@ test("registration atomically creates user, initial quota and compatible token",
       firstName: INPUT.firstName,
       lastName: INPUT.lastName,
       phone: INPUT.phone,
+      emailVerificationLoginGraceUntil: null,
       verificationEmailNextAllowedAt: new Date(
         ISSUED_AT.getTime() + REGISTRATION_VERIFICATION_COOLDOWN_MS,
       ),

@@ -82,6 +82,8 @@ function databaseAdapter(
                 lastName: user.lastName,
                 phone: user.phone,
                 role: "CUSTOMER",
+                emailVerificationLoginGraceUntil:
+                  user.emailVerificationLoginGraceUntil,
                 verificationEmailNextAllowedAt:
                   user.verificationEmailNextAllowedAt,
                 verificationEmailResendWindowStartedAt:
@@ -253,6 +255,7 @@ test(
         firstName: true,
         lastName: true,
         phone: true,
+        emailVerificationLoginGraceUntil: true,
         verificationEmailNextAllowedAt: true,
         verificationEmailResendWindowStartedAt: true,
         verificationEmailResendCount: true,
@@ -273,6 +276,7 @@ test(
     assert.equal(persisted.firstName, winner.firstName);
     assert.equal(persisted.lastName, winner.lastName);
     assert.equal(persisted.phone, winner.phone);
+    assert.equal(persisted.emailVerificationLoginGraceUntil, null);
     assert.equal(
       persisted.verificationEmailNextAllowedAt?.getTime(),
       winner.issuedAt.getTime() + REGISTRATION_VERIFICATION_COOLDOWN_MS,

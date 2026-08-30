@@ -3,12 +3,64 @@ import bcrypt from "bcryptjs";
 const SALT_ROUNDS = 12;
 export const MAX_BCRYPT_PASSWORD_BYTES = 72;
 
+/**
+ * Public, non-secret work factor fixture used only to equalize credential
+ * checks when no usable account hash exists. It hashes the dummy input below
+ * with bcrypt cost 12 and must never be generated per request.
+ */
+export const CREDENTIALS_DUMMY_PASSWORD =
+  "auth-dummy-password-never-used";
+export const CREDENTIALS_DUMMY_PASSWORD_HASH =
+  "$2a$12$Q9Zsra7V4cjtM7i016djiun6rgpsj9KfQ9Q8vumNSUpLfCoEB/wtm";
+
+type BcryptCompare = (password: string, hash: string) => Promise<boolean>;
+
+// Credentials login accepts only the same cost used by the public dummy hash.
+// Accepting another cost would recreate an account-existence timing signal and
+// could let a corrupted high-cost row amplify CPU use. The aggregate DB audit
+// reports every non-12 legacy value before this code can be rolled out.
+const SUPPORTED_BCRYPT_HASH_PATTERN =
+  /^\$2[ab]\$12\$[./A-Za-z0-9]{53}$/;
+
 /** Bcrypt ignores input after 72 bytes, so longer values must be rejected. */
 export function isBcryptSafePassword(value: unknown): value is string {
   return (
     typeof value === "string" &&
     new TextEncoder().encode(value).byteLength <= MAX_BCRYPT_PASSWORD_BYTES
   );
+}
+
+export function isSupportedBcryptPasswordHash(
+  value: unknown,
+): value is string {
+  return (
+    typeof value === "string" && SUPPORTED_BCRYPT_HASH_PATTERN.test(value)
+  );
+}
+
+/**
+ * Performs exactly one bcrypt comparison for every caller invocation.
+ *
+ * Invalid/missing/overlong password input and absent/malformed hashes use a
+ * fixed cost-12 dummy pair. A dummy comparison can never authenticate because
+ * success is returned only when both original inputs were eligible.
+ */
+export async function verifyPasswordConstantWork(
+  password: unknown,
+  hash: unknown,
+  compare: BcryptCompare = bcrypt.compare,
+): Promise<boolean> {
+  const usablePassword =
+    isBcryptSafePassword(password) && password.length > 0;
+  const usableHash = isSupportedBcryptPasswordHash(hash);
+  const useStoredCredential = usablePassword && usableHash;
+
+  const compared = await compare(
+    useStoredCredential ? password : CREDENTIALS_DUMMY_PASSWORD,
+    useStoredCredential ? hash : CREDENTIALS_DUMMY_PASSWORD_HASH,
+  );
+
+  return useStoredCredential && compared;
 }
 
 /**

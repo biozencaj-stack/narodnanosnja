@@ -23,6 +23,7 @@ model User {
   phone                          String?
   role                           Role      @default(CUSTOMER)
   emailVerified                  DateTime?
+  emailVerificationLoginGraceUntil DateTime?
   verificationEmailNextAllowedAt        DateTime?
   verificationEmailResendWindowStartedAt DateTime?
   verificationEmailResendCount           Int?

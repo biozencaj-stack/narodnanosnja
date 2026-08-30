@@ -24,7 +24,7 @@ Prethodna parcijalna localized-JSON migracija zato je uklonjena iz aktivnog
 
 ## Aktivni lanac naspram produkciono primenjenog stanja
 
-Aktivni Git lanac trenutno ima šest SQL migracija. To nije isto što i šest
+Aktivni Git lanac trenutno ima sedam SQL migracija. To nije isto što i sedam
 produkcijski primenjenih migracija:
 
 | Redosled | Migracija | Produkcijski status ovog preseka |
@@ -35,11 +35,13 @@ produkcijski primenjenih migracija:
 | 4 | `20260829020000_expand_v2_platform` | primenjena |
 | 5 | `20260830000000_expand_hashed_auth_tokens` | dokazana samo na praznoj izolovanoj CI bazi; nije primenjena na produkciju |
 | 6 | `20260830010000_expand_email_verification_cooldown` | PASS u exact-head run-u `33317607438` i post-merge run-u `33317787952` na praznoj izolovanoj PostgreSQL 16 bazi; nije primenjena na produkciju |
+| 7 | `20260830020000_expand_verified_login_grace` | proverena samo u lokalnom/izolovanom razvojnom paketu; nije primenjena na produkciju i za ovaj presek još nema završen release dokaz |
 
 Zato je tačna produkcijska tvrdnja i dalje: četiri završene migracije iz ranijeg
-kontrolisanog prozora. Prisustvo pete i šeste migracije u repozitorijumu nije
-dokaz da ih produkciona `_prisma_migrations` tabela sadrži ili da server može
-bez dodatne probe da pokrene novi kod.
+kontrolisanog prozora. Prisustvo pete, šeste i sedme migracije u repozitorijumu
+nije dokaz da ih produkciona `_prisma_migrations` tabela sadrži ili da server
+može bez dodatne probe da pokrene novi kod. Produkciona baza nije migrirana,
+čitana niti menjana tokom verified-login etape.
 
 ## Produkciona baza
 
@@ -57,7 +59,7 @@ Ova komanda je upisala Prisma migracionu evidenciju; nije izvršila baseline SQL
 nad postojećim tabelama. Izvršena je tačno jednom, a zatim su tri tada postojeće
 V2 expand migracije primenjene sa `prisma migrate deploy`. Završne provere tog
 istorijskog prozora potvrđuju četiri završene migracije, nulti schema drift i
-očuvane postojeće podatke. Dve kasnije auth migracije nisu deo te tvrdnje.
+očuvane postojeće podatke. Tri kasnije auth migracije nisu deo te tvrdnje.
 
 ## Auth-token compat expand
 
@@ -139,6 +141,94 @@ primenila su ceo migration chain na praznom izolovanom PostgreSQL 16 servisu i
 zatim prošla drift, DB invariant smoke i svih 8 PostgreSQL test scenarija. To
 je CI dokaz šeme, ne produkcijska primena.
 
+## Verified-login grace expand
+
+`20260830020000_expand_verified_login_grace` dodaje samo jednu `User` kolonu:
+
+| Kolona | Prisma/PostgreSQL ugovor |
+| --- | --- |
+| `emailVerificationLoginGraceUntil` | nullable `DateTime?` / `timestamp(3) without time zone`, bez defaulta i bez dedicated indeksa |
+
+Ovo je expand-only kompatibilnost za budući kontrolisani `staged` prelaz.
+Migracija nema `INSERT`, `UPDATE`, `DELETE`, backfill ili automatsko
+označavanje korisnika kao verifikovanih. Zatečeni i novi redovi zato posle DDL-a
+imaju `NULL` dok zasebna, pregledana data odluka eventualno ne dodeli jedan
+odobreni rok samo odgovarajućim legacy CUSTOMER nalozima. `NULL` ne znači
+verifikovan nalog i ne sme se pretvarati u `emailVerified` bez poslovnog dokaza.
+
+SQL koristi isti hardened operativni okvir kao cooldown expand:
+
+```sql
+SET LOCAL search_path = pg_catalog, public;
+SET LOCAL lock_timeout = '10s';
+SET LOCAL statement_timeout = '2min';
+```
+
+Nullable kolona bez defaulta je metadata-only na podržanom PostgreSQL-u, ali
+`ALTER TABLE "User"` i dalje traži kratak `ACCESS EXCLUSIVE` lock. Pre
+produkcione primene obavezni su svež backup/restore klon, merenje locka,
+pregled blokera, maintenance prozor i post-migration `migrate status`, drift i
+`scripts/db-invariant-smoke.sql`. Ako migracija bude evidentirana kao failed,
+prvo potvrditi rollback i otkloniti uzrok; tek zatim se sme razmatrati:
+
+```bash
+npx prisma migrate resolve \
+  --rolled-back 20260830020000_expand_verified_login_grace
+```
+
+Sama sedma migracija ne dozvoljava `staged` ili `strict` login. Produkcioni
+runtime mora ostati na `AUTH_VERIFIED_LOGIN_POLICY=audit` dok se ne uvedu DB
+revalidacija/revokacija rolling JWT sesija i shared limiter sa pregledanim
+trusted-proxy/client-IP ugovorom. Read-only preflight namerno uvek emituje
+`preflight.jwt_session_revalidation.unavailable|1` i završava neuspehom dok se
+taj zasebni bezbednosni paket ne implementira i gate ne izmeni.
+
+## Read-only email-verification audit granice
+
+Pre auth expand migracija koristi se isključivo baseline-safe audit:
+
+```bash
+psql -X "$DATABASE_URL" \
+  -v ON_ERROR_STOP=1 \
+  -f scripts/auth-email-verification-audit-legacy.sql
+```
+
+On namerno odbija šemu na kojoj postoji bilo koja od tri auth expand promene.
+Posle kontrolisane primene sve tri auth migracije koristi se current audit:
+
+```bash
+psql -X "$DATABASE_URL" \
+  -v ON_ERROR_STOP=1 \
+  -f scripts/auth-email-verification-audit-current.sql
+```
+
+Obe skripte rade u `REPEATABLE READ READ ONLY` transakciji, uzimaju samo
+`ACCESS SHARE` lockove, mere PostgreSQL sat tek posle lockova, ispisuju samo
+`category|count` agregate bez emaila, ID-a, credentiala ili timestampova i
+završavaju sa `ROLLBACK`. Audit nije backfill i nije dozvola za promenu podataka.
+
+Staged enforcement preflight se nad current šemom poziva sa sve tri obavezne
+`psql` promenljive:
+
+```bash
+psql -X "$DATABASE_URL" \
+  -v ON_ERROR_STOP=1 \
+  -v target_policy=staged \
+  -v legacy_cutoff='YYYY-MM-DDTHH:MM:SS.mmmZ' \
+  -v grace_deadline='YYYY-MM-DDTHH:MM:SS.mmmZ' \
+  -f scripts/auth-email-verification-enforcement-preflight.sql
+```
+
+Oba vremena moraju biti tačan kanonski UTC oblik sa milisekundama. Cutoff ne
+sme biti u budućnosti; jednakost pripada novim nalozima (`createdAt >= cutoff`).
+Grace deadline mora biti najmanje 7 i najviše 30 dana posle DB vremena
+preflight-a, a svaki non-`NULL` grace u bazi mora biti tačno jednak tom jednom
+odobrenom roku. Skripta prihvata isključivo `target_policy=staged`; `strict` je
+namerno zaseban budući gate. Trenutno će uvek vratiti izlazni status `3`,
+`preflight.ready|0` i blocker
+`preflight.jwt_session_revalidation.unavailable|1`. To je očekivano fail-closed
+stanje, ne nalaz koji treba ručno zaobići.
+
 ## Baza koja već beleži arhiviranu localized migraciju
 
 Pre baseline postupka obavezno pokrenuti `prisma migrate status` i read-only
@@ -168,7 +258,7 @@ menja ručno na produkciji bez klon-probe, backupa i eksplicitnog odobrenja.
 ## Nova ili prazna baza
 
 Nad praznom PostgreSQL bazom ne koristi se `resolve`. `prisma migrate deploy`
-izvršava baseline SQL i zatim svih pet kasnijih migracija redom. Posle toga su
+izvršava baseline SQL i zatim svih šest kasnijih migracija redom. Posle toga su
 obavezni schema drift i `scripts/db-invariant-smoke.sql`; sama činjenica da je
 komanda završila nije kompletan dokaz. Izolovana prazna CI baza nije zamena za
 restore-clone ili produkcioni audit legacy podataka i lockova.

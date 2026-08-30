@@ -2,9 +2,12 @@
 
 Ova grana menja Prisma šemu i **ne sme** direktno na postojeću produkcionu
 bazu. Kod je kompatibilno proširen, ali baza prvo mora dobiti nove
-order/payment kolone, payment event dnevnik, expand-only kataloške tabele i dve
+order/payment kolone, payment event dnevnik, expand-only kataloške tabele i tri
 odvojeno pregledane auth expand promene. Činjenica da su prve četiri migracije
 ranije primenjene ne znači da su kasnije auth migracije već na produkciji.
+Aktivni lanac ima sedam migracija, ali produkciona evidencija ovog preseka i
+dalje ima samo prve četiri; verified-login rad nije čitao, menjao ili migrirao
+produkcijsku bazu.
 
 ## Šta šema dodaje
 
@@ -20,7 +23,10 @@ ranije primenjene ne znači da su kasnije auth migracije već na produkciji.
 - nullable/no-default `verificationEmailNextAllowedAt`,
   `verificationEmailResendWindowStartedAt` i
   `verificationEmailResendCount` iz
-  `20260830010000_expand_email_verification_cooldown`.
+  `20260830010000_expand_email_verification_cooldown`;
+- nullable/no-default `User.emailVerificationLoginGraceUntil`, bez dedicated
+  indeksa ili backfilla, iz
+  `20260830020000_expand_verified_login_grace`.
 
 Ništa postojeće se ne uklanja. `ProductSize` ostaje aktivni izvor zalihe dok
 se generičke varijante ne popune i ne provere.
@@ -33,9 +39,9 @@ se generičke varijante ne popune i ne provere.
    produkcionom bazom bez Prisma istorije, evidentirati baseline kao primenjen
    prema `docs/PRISMA-BASELINE.md`.
 4. Potvrditi tačno produkcijsko migration stanje. Prve četiri migracije su
-   istorijski završene; auth-token i cooldown expand su kasniji koraci koji
-   zahtevaju zaseban audit/backup/restore/lock dokaz. Ne generisati novi expand
-   SQL i ne koristiti `prisma db push`.
+   istorijski završene; auth-token, cooldown i verified-login grace expand su
+   kasniji koraci koji zahtevaju zaseban audit/backup/restore/lock dokaz. Ne
+   generisati novi expand SQL i ne koristiti `prisma db push`.
 5. Primeniti migraciju na klonu i pokrenuti Prisma validate/generate,
    TypeScript i produkcijski build.
 6. Smoke testirati: anonimnu i prijavljenu porudžbinu, izgubljen/replayed
@@ -47,11 +53,29 @@ se generičke varijante ne popune i ne provere.
 8. Tek tada zakazati produkcijski prozor, ponoviti backup, primeniti pregledanu
    migraciju i objaviti kod.
 
-## Auth registracija/resend gate pre javnog V2 rada
+## Auth/verified-login gate pre javnog V2 rada
 
-Atomska registracija i verification resend postoje u kodu, ali se ne smatraju
-produkcijski spremnim samo zato što unit testovi ili migracija nad praznom CI
-bazom prolaze. Pre bilo kakvog live-a obavezno je sledeće.
+Atomska registracija, verification resend/confirm, password reset/change i
+audit-mode credentials login postoje u kodu, ali se ne smatraju produkcijski
+spremnim samo zato što unit testovi ili migracija nad praznom CI bazom prolaze.
+Pre bilo kakvog live-a obavezno je sledeće.
+
+Strogi end-to-end redosled za ovu auth etapu je:
+
+1. pokrenuti legacy aggregate audit nad još neproširenom produkcionom šemom;
+2. poslovno pregledati agregate bez automatskog `emailVerified` backfill-a;
+3. napraviti/proveriti backup i restore klon, pa na klonu probati sva tri auth
+   expand koraka;
+4. posle expand-a pokrenuti current aggregate audit;
+5. eventualni grace DML pregledati kao zasebnu data promenu samo za odobrene
+   legacy `CUSTOMER` redove, sa jednim deadline-om i rollback planom;
+6. uvesti i dokazati JWT session revision/revalidation/revocation;
+7. uvesti shared limiter i trusted-proxy/client-IP ugovor;
+8. pokrenuti staged preflight, koji do završetka tačaka 6–7 mora ostati crven;
+9. tek posebnim odobrenjem uključiti staged i pratiti recovery period;
+10. posle isteka grace-a koristiti novi, zaseban strict gate;
+11. main-push/live workflow napraviti ili aktivirati isključivo kao poslednji
+    korak ukupnog plana.
 
 ### Šema i podaci
 
@@ -64,25 +88,94 @@ bazom prolaze. Pre bilo kakvog live-a obavezno je sledeće.
    `20260830010000_expand_email_verification_cooldown`. Potvrditi tri
    nullable/no-default kolone, tačne tipove/precision i odsustvo dedicated
    indeksa.
-4. Izmeriti lock trajanje. Cooldown ALTER je metadata-only bez defaulta, ali
-   ipak kratko uzima `ACCESS EXCLUSIVE`; oba SQL fajla imaju 10s lock i 2min
-   statement timeout koji nisu zamena za maintenance plan.
-5. Pokrenuti kompletan `scripts/db-invariant-smoke.sql` u rollback režimu.
-6. Evidentirati tačan recovery postupak. Failed migracija se ne ponavlja
+4. Na istom klonu primeniti
+   `20260830020000_expand_verified_login_grace`. Potvrditi jednu nullable
+   `timestamp(3)` kolonu bez defaulta, backfill DML-a i dedicated indeksa.
+5. Izmeriti lock trajanje. Cooldown i grace ALTER-i su metadata-only bez
+   defaulta, ali ipak kratko uzimaju `ACCESS EXCLUSIVE`; sva tri auth SQL fajla
+   imaju 10s lock i 2min statement timeout koji nisu zamena za maintenance plan.
+6. Pokrenuti kompletan `scripts/db-invariant-smoke.sql` u rollback režimu.
+7. Evidentirati tačan recovery postupak. Failed migracija se ne ponavlja
    naslepo; `migrate resolve --rolled-back` je dozvoljen tek posle potvrđenog
    rollback-a i otklanjanja uzroka.
 
-### Legacy email nalog i login
+### Legacy/current audit i verified-login preflight
 
-1. Read-only prebrojati i klasifikovati postojeće naloge sa
-   `emailVerified IS NULL`.
-2. Ne pretpostavljati da svaki takav nalog treba blokirati ili automatski
-   označiti verifikovanim. Definisati poslovni kriterijum, kontrolisani backfill
-   i audit trag.
-3. Smoke-testirati registration → inbox → explicit POST verify, expired link →
-   resend i SMTP failure → recovery tok nad staging podacima.
-4. Tek posle audita/backfill-a i recovery dokaza uključiti verified-login
-   enforcement. Do tada login kompatibilnost ostaje namerna.
+Verified-login paket je trenutno **audit-only**. Produkcija mora imati
+eksplicitno `AUTH_VERIFIED_LOGIN_POLICY=audit`: password-valid neverifikovan
+nalog ostaje kompatibilno prijavljiv, dobija `requiresEmailVerification`, a
+sistem beleži samo coarse `AUDIT_WOULD_DENY` događaj bez emaila, user ID-a,
+hasha ili exceptiona. `staged` i `strict` postoje u kodu da bi politika bila
+testabilna, ali nisu odobreni deployment izbori.
+
+Pre bilo koje auth expand migracije pokrenuti baseline-safe, aggregate-only
+audit:
+
+```bash
+psql -X "$DATABASE_URL" \
+  -v ON_ERROR_STOP=1 \
+  -f scripts/auth-email-verification-audit-legacy.sql
+```
+
+`-X` isključuje lokalni `psqlrc`. `$DATABASE_URL` u ovom runbook-u mora biti
+libpq/psql-kompatibilan, odobren read-only connection URI; ne ispisivati ga u
+log, shell trace ili CI artefakt. Prisma-only URL opcije se ne prosleđuju psql-u.
+
+Ova skripta koristi samo baseline kolone i namerno odbija proširenu auth šemu.
+Posle kontrolisane primene svih triju auth expand migracija pokrenuti current
+audit:
+
+```bash
+psql -X "$DATABASE_URL" \
+  -v ON_ERROR_STOP=1 \
+  -f scripts/auth-email-verification-audit-current.sql
+```
+
+Obe skripte rade u `REPEATABLE READ READ ONLY` transakciji, uzimaju samo
+`ACCESS SHARE` lockove, imaju `lock_timeout=5s` i `statement_timeout=60s`,
+ispisuju isključivo `category|count` agregate bez PII/credential/timestamp
+redova i završavaju sa `ROLLBACK`. Klasifikuju kanoničnost/duplikate emaila,
+role i verified stanje, token/throttle/grace invarijante, podržani bcrypt cost
+12, kao i aggregate aktivnosti neverifikovanih naloga (`Order`, `Address`,
+`Wishlist`, `ProductReview`, aktivan `PasswordReset`, `CouponUsage`). `Session`
+red je samo telemetrija: aplikacija koristi JWT i taj red nije dokaz da je
+sesija revalidirana.
+
+Tek posle posebno pregledane data odluke, bez automatskog
+`emailVerified` backfilla, može se probati staged preflight. Tačna komanda je:
+
+```bash
+psql -X "$DATABASE_URL" \
+  -v ON_ERROR_STOP=1 \
+  -v target_policy=staged \
+  -v legacy_cutoff='YYYY-MM-DDTHH:MM:SS.mmmZ' \
+  -v grace_deadline='YYYY-MM-DDTHH:MM:SS.mmmZ' \
+  -f scripts/auth-email-verification-enforcement-preflight.sql
+```
+
+Obe vremenske vrednosti moraju biti kanonski UTC timestampovi sa tačno tri
+decimale. `legacy_cutoff` ne sme biti u budućnosti; samo `createdAt < cutoff`
+je legacy, pa jednakost pripada novim nalozima. `grace_deadline` mora biti
+najmanje 7 i najviše 30 dana posle PostgreSQL vremena preflight-a. Svaki
+non-`NULL` grace mora biti konačan i tačno jednak tom jednom deadline-u;
+verifikovani i post-cutoff nalozi moraju imati `NULL`. Preflight prihvata samo
+`target_policy=staged`; `strict` namerno zahteva poseban budući gate.
+
+Ova revizija namerno uvek emituje
+`preflight.jwt_session_revalidation.unavailable|1`, zato su
+`preflight.ready|0`, izlazni status `3` i neuspešan gate očekivani čak i kada su
+svi data nalazi nula. Ne uklanjati ili ručno zaobilaziti blocker. Rolling
+NextAuth JWT se trenutno ponovo potpisuje bez svežeg DB policy/revocation
+snapshot-a, pa promena politike, istek grace-a, promena lozinke ili role ne
+opozivaju već izdate aktivne sesije. Pre staged/strict aktivacije moraju se
+završiti DB-backed session revalidation/revocation i shared login/auth limiter
+sa eksplicitnim trusted-proxy/client-IP ugovorom. Tek novi pregledani paket sme
+izmeniti preflight i dodati zaseban strict gate.
+
+Nezavisno od tog blokera smoke-testirati registration → inbox → explicit POST
+verify, expired link → resend i SMTP failure → recovery tok nad staging
+podacima. Audit/preflight nisu backfill, ne menjaju naloge i nisu dokaz da je
+produkcija migrirana.
 
 ### Resend/throttle invarijante
 
@@ -98,6 +191,47 @@ bazom prolaze. Pre bilo kakvog live-a obavezno je sledeće.
 - SMTP se poziva posle commita, a ambiguous failure ne briše credential ili
   vraća allowance.
 
+### Login, verifikacija i password credential granice
+
+Credentials login za svaki sintaksno validan kanonizovan email radi tačno
+jedan bcrypt cost-12 compare; nepostojeći nalog koristi fiksni cost-12 dummy.
+Tek posle uspešnog compare-a ponovo čita User policy snapshot, zaključava User
+za stabilno čitanje i uzima PostgreSQL `clock_timestamp()::timestamptz(3)`
+posle lock wait-a. Email, ID i password hash moraju i dalje odgovarati prvom
+credential lookup-u. Ovo smanjuje enumeraciju i stale-credential trke, ali je
+cost-12 rad CPU abuse površina i zato shared limiter ostaje live blocker.
+
+Email verify, reset confirm i privilegovani account provisioning dele
+User-first lock redosled. Verify zaključava `User`, zatim tačan
+`EmailVerification` red, pa tek onda čita DB sat. Claim je vezan za tačan
+email/passwordHash/role/ime snapshot iz kog je pripremljena 24h JWT sesija;
+istek ili promena dok se čeka na lock daju read-only conflict/expired ishod bez
+prepared cookie-ja. Uspešan commit troši tačan credential, postavlja
+`emailVerified` DB vremenom, čisti grace/throttle i briše verification siblinge
+u istoj transakciji.
+
+Password reset request i confirm imaju zasebne trusted same-origin guardove,
+prihvataju samo odsutan ili `identity` `Content-Encoding`, zahtevaju JSON media
+type i sprovode deklarisani i stvarni streaming limit od najviše 1024 bajta.
+Request prihvata samo plain JSON
+objekat sa tačno jednim ključem `email`; confirm samo tačno dva ključa `token`
+i `password`. Niz, `null`, class/prototype objekat, nedostajući ili dodatni
+ključevi nisu dozvoljeni. Request prvo radi minimalni lookup, a u
+write transakciji ponovo zaključava User, proverava email/role/PostgreSQL
+`xmin` reviziju, tek potom čita DB sat i zamenjuje unique reset credential.
+Promena između lookup-a i locka zato postaje private no-op/failure, ne stale
+token za unapređen ili izmenjen nalog.
+
+Reset confirm zaključava `User`, pa tačan `PasswordReset`, pa tek onda čita DB
+sat i proverava expiry. Promena password hasha, claim tačnog reset credentiala,
+brisanje reset siblinga i brisanje svih starijih `EmailVerification` linkova su
+jedna transakcija; rollback vraća i hash i credential. Uspešan reset time
+opoziva verification linkove zato što bi oni inače mogli izdati passwordless
+sesiju. Autentifikovana promena lozinke analogno radi bcrypt izvan transakcije,
+zatim User lock + exact-hash CAS i atomski briše reset/verification tokove.
+Ni jedan od ovih tokova još ne opoziva već izdate rolling JWT sesije; to ostaje
+isti obavezni session-revalidation paket pre enforcementa/live-a.
+
 ### Privacy, abuse i delivery
 
 Registration created/existing odgovori moraju ostati byte-identical private
@@ -106,9 +240,11 @@ kriptografski jitter samo kao timing defense-in-depth. To nije dozvola da se
 zadrži procesni limiter u produkciji.
 
 Application body zaštita je završena: registration zahteva JSON media type,
-odbija `Content-Encoding` i sprovodi fail-closed declared/streaming limit 4096
-bajta; resend primenjuje isti ugovor sa 1024 bajta. Chunked ili nedostajući
-Content-Length ne zaobilazi stvarni reader cap. Pre live-a reverse proxy ipak
+prihvata samo odsutan ili `identity` `Content-Encoding` i sprovodi fail-closed
+declared/streaming limit 4096
+bajta; resend, reset request i reset confirm primenjuju isti ugovor sa 1024
+bajta, uz gore navedene exact JSON shape-ove. Chunked ili nedostajući
+`Content-Length` ne zaobilazi stvarni reader cap. Pre live-a reverse proxy ipak
 mora dobiti usklađene body-size, request-rate, header/read timeout i connection
 limite, jer route guard ne sprečava da promet prvo stigne do Node procesa.
 
@@ -173,6 +309,9 @@ presentation `main`.
   `NESTPAY_FAIL_URL` HTTPS callback putanje na istom origin-u kao
   `NEXT_PUBLIC_SITE_URL`; ovaj tok prihvata isključivo RSD (`941`) i `Auth`;
 - proveriti javni site URL, dostavu i capability flagove iz `.env.example`;
+- u produkciji eksplicitno postaviti `AUTH_VERIFIED_LOGIN_POLICY=audit` i ne
+  postavljati staged grace kao aktivacioni signal. `staged`/`strict` ostaju
+  blokirani session-revalidation i shared-limiter gate-ovima opisanim iznad;
 - za SMTP potvrditi host, credential-e, sender i port kontrolisanim testom:
   465 koristi implicitni TLS, ostali portovi zahtevaju STARTTLS, a
   `SMTP_TLS_REJECT_UNAUTHORIZED` mora ostati `true` u produkciji;
@@ -181,10 +320,31 @@ presentation `main`.
 - auth email primalac mora biti tačno jedan normalizovan mailbox; staging smoke
   mora proveriti escaped HTML, verification/reset URL i odbijanje display-name/
   group/list inputa;
-- verified-login flag/politika ne uključuje se dok legacy audit/backfill i
-  resend recovery nisu završeni;
+- verified-login data remediation se ne radi dok legacy/current aggregate audit
+  nije pregledan i odobren; audit nikada nije automatski backfill;
 - shared limiter/trusted proxy i auth outbox moraju biti aktivni pre javnog
-  registration/resend saobraćaja.
+  registration/resend/reset/login saobraćaja.
+
+## Demo seed je isključivo opt-in nad bezbednom bazom
+
+`npm run db:seed-demo` sadrži javne, zajedničke demo credentiale i nikada se ne
+pokreće nad produkcijom. Potrebna su oba nezavisna uslova:
+
+```bash
+DEMO_DATABASE_SEED=true npm run db:seed-demo
+```
+
+- `DATABASE_URL` mora biti validan PostgreSQL URL čiji naziv baze jasno sadrži
+  odvojen marker `demo`, `e2e`, `test` ili `provera`;
+- naziv ne sme sadržati odvojen marker `prod`, `production` ili `live`;
+- skripta posle konekcije proverava `SELECT current_database()` i zahteva da se
+  stvarni naziv tačno poklapa sa URL ciljem pre prvog seed upisa.
+
+Demo korisnici se upisuju sa centralnim cost-12 hashom, `emailVerified` seed
+vremenom, `emailVerificationLoginGraceUntil=NULL` i očišćenim reset/
+verification credentialima u istoj transakciji. Ove zaštite ne pretvaraju demo
+seed u produkcijsku operaciju; opt-in i DB guard se ne smeju zaobići u workflow-u
+ili runbook-u.
 
 ## Legacy preflight i maintenance prozor
 
@@ -223,7 +383,7 @@ lock ili blokirati upise, zato se ovaj expand ne pušta pod redovnim saobraćaje
 Ako lock ili statement timeout prekine migraciju, ne ponavljati je naslepo:
 zaustaviti rollout, pregledati `_prisma_migrations` i PostgreSQL stanje i
 napraviti eksplicitan recovery/resolve plan. Četiri već primenjena
-`migration.sql` fajla su nepromenljiva produkcijska istorija, a oba kasnija
+`migration.sql` fajla su nepromenljiva produkcijska istorija, a sva tri kasnija
 auth SQL fajla takođe se ne prepravljaju radi lakšeg rollout-a. Svaka buduća
 promena ide u novu migraciju, nikada izmenom postojećeg sadržaja ili checksum-a.
 

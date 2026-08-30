@@ -14,7 +14,8 @@ const prisma = new PrismaClient();
  * - Ticker messages
  *
  * NOTE: Admin user is created separately with:
- *   npx tsx scripts/create-admin.ts --email admin@example.com --password YourPassword123! --role ADMIN
+ *   npx tsx scripts/create-admin.ts --email admin@example.com --role ADMIN
+ * The password is entered through the masked TTY prompt or --password-stdin.
  */
 
 async function main() {
@@ -272,7 +273,7 @@ async function main() {
   console.log("\nSeed completed successfully!");
   console.log("\nTo create an admin user, run:");
   console.log(
-    "  npx tsx scripts/create-admin.ts --email admin@example.com --password YourPassword123! --role ADMIN\n",
+    "  npx tsx scripts/create-admin.ts --email admin@example.com --role ADMIN\n",
   );
 }
 

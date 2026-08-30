@@ -539,7 +539,10 @@ test(
         expires: new Date(raceAt.getTime() + 60_000),
       },
     });
-    const claim = createStoredEmailVerificationClaim(oldVerification);
+    const claim = createStoredEmailVerificationClaim({
+      ...oldVerification,
+      user,
+    });
     assert.ok(claim);
 
     let signalResendLockAcquired: () => void = () => undefined;
@@ -577,7 +580,7 @@ test(
           throw new Error("Resend je završen pre signala da je User lock uzet");
         }),
       ]);
-      verifyPromise = commitEmailVerification(prisma, claim, raceAt).then(
+      verifyPromise = commitEmailVerification(prisma, claim).then(
         () => true,
       );
       releaseResendClock();

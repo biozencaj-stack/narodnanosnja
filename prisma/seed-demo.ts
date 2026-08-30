@@ -1,5 +1,6 @@
 import { PrismaClient, Role, OrderStatus, PaymentMethod, PaymentStatus, PromotionType } from "@prisma/client";
-import bcrypt from "bcryptjs";
+import { hashPassword } from "../lib/auth/password";
+import { requireSafeDemoSeedTarget } from "../lib/database/demo-seed-safety";
 
 const prisma = new PrismaClient();
 
@@ -10,7 +11,7 @@ const prisma = new PrismaClient();
  * users (5), addresses, orders (12), reviews (20), promotions (4),
  * banners (4), articles (3), ticker messages, newsletter subscribers, chat FAQ.
  *
- * Run: npx tsx prisma/seed-demo.ts
+ * Run: DEMO_DATABASE_SEED=true npx tsx prisma/seed-demo.ts
  */
 
 // Helper: date N days ago
@@ -24,6 +25,19 @@ const daysAgo = (n: number) => {
 const orderNum = (n: number) => `ORD-2026-${String(n).padStart(5, "0")}`;
 
 async function main() {
+  const expectedDatabaseName = requireSafeDemoSeedTarget(process.env);
+  const databaseRows = await prisma.$queryRaw<
+    Array<{ databaseName: string }>
+  >`SELECT current_database() AS "databaseName"`;
+  if (
+    databaseRows.length !== 1 ||
+    databaseRows[0]?.databaseName !== expectedDatabaseName
+  ) {
+    throw new Error(
+      "Demo seed je odbijen jer stvarna baza ne odgovara DATABASE_URL cilju.",
+    );
+  }
+
   console.log("Starting comprehensive demo seed...\n");
 
   // ===========================================================================
@@ -938,7 +952,7 @@ async function main() {
   // ===========================================================================
   // USERS (5)
   // ===========================================================================
-  const passwordHash = await bcrypt.hash("Demo1234!", 12);
+  const passwordHash = await hashPassword("Demo1234!");
 
   const usersData = [
     { email: "admin@demo.rs", firstName: "Admin", lastName: "Demo", role: Role.ADMIN },
@@ -950,10 +964,37 @@ async function main() {
 
   const userIds: Record<string, string> = {};
   for (const u of usersData) {
-    const user = await prisma.user.upsert({
-      where: { email: u.email },
-      update: { firstName: u.firstName, lastName: u.lastName, role: u.role, emailVerified: new Date() },
-      create: { ...u, passwordHash, emailVerified: new Date(), newsletterOptIn: true },
+    const verifiedAt = new Date();
+    const user = await prisma.$transaction(async (transaction) => {
+      const storedUser = await transaction.user.upsert({
+        where: { email: u.email },
+        update: {
+          firstName: u.firstName,
+          lastName: u.lastName,
+          role: u.role,
+          passwordHash,
+          emailVerified: verifiedAt,
+          emailVerificationLoginGraceUntil: null,
+          verificationEmailNextAllowedAt: null,
+          verificationEmailResendWindowStartedAt: null,
+          verificationEmailResendCount: null,
+        },
+        create: {
+          ...u,
+          passwordHash,
+          createdAt: verifiedAt,
+          emailVerified: verifiedAt,
+          emailVerificationLoginGraceUntil: null,
+          newsletterOptIn: true,
+        },
+      });
+      await transaction.emailVerification.deleteMany({
+        where: { userId: storedUser.id },
+      });
+      await transaction.passwordReset.deleteMany({
+        where: { userId: storedUser.id },
+      });
+      return storedUser;
     });
     userIds[u.email] = user.id;
   }

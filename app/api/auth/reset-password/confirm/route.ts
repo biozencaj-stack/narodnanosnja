@@ -59,7 +59,7 @@ export const POST = createPasswordResetConfirmHandler({
     NextResponse.json({
       message: PASSWORD_RESET_CONFIRM_SUCCESS_MESSAGE,
     }),
-  commitReset: (claim, passwordHash, resetAt) =>
-    commitPasswordResetConfirmation(database, claim, passwordHash, resetAt),
+  commitReset: (claim, passwordHash) =>
+    commitPasswordResetConfirmation(database, claim, passwordHash),
   reportFailure,
 });

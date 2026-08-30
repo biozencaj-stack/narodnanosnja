@@ -6,6 +6,20 @@ const KNOWN_INSECURE_AUTH_SECRETS = new Set([
 
 export const AUTH_SESSION_MAX_AGE_SECONDS = 24 * 60 * 60;
 
+export const VERIFIED_LOGIN_POLICIES = [
+  "audit",
+  "staged",
+  "strict",
+] as const;
+
+export type VerifiedLoginPolicy = (typeof VERIFIED_LOGIN_POLICIES)[number];
+
+export const VERIFIED_LOGIN_MAX_GRACE_WINDOW_MS =
+  30 * 24 * 60 * 60 * 1_000;
+
+const CANONICAL_UTC_MILLISECOND_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
 export type AuthEnvironment = Readonly<Record<string, string | undefined>>;
 
 export class AuthConfigurationError extends Error {
@@ -54,6 +68,93 @@ export function resolveAuthSecret(
   }
 
   return secret;
+}
+
+/**
+ * Controls whether a password-valid account must also have a verified email.
+ *
+ * Production requires an explicit value so a missing deployment setting can
+ * never silently disable enforcement. Development and tests retain the
+ * compatibility-safe audit default when the variable is genuinely absent.
+ */
+export function resolveVerifiedLoginPolicy(
+  environment: AuthEnvironment = process.env,
+): VerifiedLoginPolicy {
+  const configuredPolicy = environment.AUTH_VERIFIED_LOGIN_POLICY;
+
+  if (configuredPolicy === undefined) {
+    if (environment.NODE_ENV === "production") {
+      throw new AuthConfigurationError(
+        "AUTH_VERIFIED_LOGIN_POLICY mora biti podešen u produkciji",
+      );
+    }
+    return "audit";
+  }
+
+  if (
+    configuredPolicy.length === 0 ||
+    configuredPolicy.trim() !== configuredPolicy
+  ) {
+    throw new AuthConfigurationError(
+      "AUTH_VERIFIED_LOGIN_POLICY mora biti audit, staged ili strict bez okolnih razmaka",
+    );
+  }
+
+  if (
+    !VERIFIED_LOGIN_POLICIES.includes(
+      configuredPolicy as VerifiedLoginPolicy,
+    )
+  ) {
+    throw new AuthConfigurationError(
+      "AUTH_VERIFIED_LOGIN_POLICY mora biti audit, staged ili strict",
+    );
+  }
+
+  return configuredPolicy as VerifiedLoginPolicy;
+}
+
+/**
+ * Resolves the one reviewed rollout deadline used by staged login.
+ *
+ * The exact UTC millisecond form matches the read-only PostgreSQL preflight.
+ * Maximum duration is evaluated later against the same fresh DB clock as the
+ * account policy, never against the application process clock.
+ */
+export function resolveVerifiedLoginGraceDeadline(
+  policy: VerifiedLoginPolicy,
+  environment: AuthEnvironment = process.env,
+): Date | null {
+  const configuredDeadline =
+    environment.AUTH_VERIFIED_LOGIN_GRACE_DEADLINE;
+
+  if (configuredDeadline === undefined) {
+    if (policy === "staged") {
+      throw new AuthConfigurationError(
+        "AUTH_VERIFIED_LOGIN_GRACE_DEADLINE je obavezan za staged politiku",
+      );
+    }
+    return null;
+  }
+
+  if (
+    !CANONICAL_UTC_MILLISECOND_PATTERN.test(configuredDeadline)
+  ) {
+    throw new AuthConfigurationError(
+      "AUTH_VERIFIED_LOGIN_GRACE_DEADLINE mora biti kanonski UTC timestamp sa milisekundama",
+    );
+  }
+
+  const deadline = new Date(configuredDeadline);
+  if (
+    !Number.isFinite(deadline.getTime()) ||
+    deadline.toISOString() !== configuredDeadline
+  ) {
+    throw new AuthConfigurationError(
+      "AUTH_VERIFIED_LOGIN_GRACE_DEADLINE nije validan UTC timestamp",
+    );
+  }
+
+  return deadline;
 }
 
 export function shouldUseSecureAuthCookies(

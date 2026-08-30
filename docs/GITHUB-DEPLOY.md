@@ -4,6 +4,13 @@ Workflow `.github/workflows/objavi.yml` je odvojen od presentation `main` grane.
 CI radi nad kanonskom granom prodavnice, dok produkcijski job može da se pokrene
 isključivo namenskim V2 release tagom.
 
+**Trenutno ništa iz verified-login paketa nije pušteno live.** Nije napravljen
+nov V2 release tag, nije odobren production Environment, server i produkcijska
+baza nisu menjani, a poseban workflow koji bi na svaki push presentation
+`main` grane objavio novu javnu verziju nije aktiviran. Po odobrenom redosledu
+main-push objavljivanje ostaje poslednja sekcija rada, posle svih DB, session,
+limiter, outbox i operativnih gate-ova.
+
 | Događaj | CI provera | Produkcijski deploy |
 | --- | --- | --- |
 | Pull request ka `verzija/v2.0-univerzalna-platforma` | da | ne |
@@ -19,11 +26,11 @@ release mehanizam. Poseban `Potvrdi V2 release` job proverava tag, stablo i
 Git ancestry pre nego što se uopšte otvori `production` Environment gate;
 produkcijski job iste uslove ponavlja pre SSH pripreme.
 
-Registration/resend etapa ne menja ovu matricu. Njene izmene workflow-a samo
-uključuju dodatne opt-in PostgreSQL testove. Poseban main-push workflow koji će
-objaviti novu javnu verziju presentation sajta ostaje poslednji korisnički
-korak; ne aktivira se tokom auth/DB rada i nikada nije razlog da se V2 spoji u
-`main`.
+Verified-login etapa ne menja ovu matricu. Njene izmene workflow-a samo
+proširuju izolovane audit fixture-e, DB invariant smoke i opt-in PostgreSQL
+testove. Poseban main-push workflow koji će objaviti novu javnu verziju
+presentation sajta ostaje poslednji korisnički korak; ne aktivira se tokom
+auth/DB rada i nikada nije razlog da se V2 spoji u `main`.
 
 ## GitHub podešavanja
 
@@ -82,11 +89,13 @@ backup/migracije, kartice i operativni prozor pre odobravanja Environment-a.
   ime određuje `APP_NAME`;
 - PostgreSQL je dostupan i njegova šema je već usklađena sa Prisma šemom.
 
-Za auth registration/resend release „usklađena šema” znači da su obe kasnije
-auth expand migracije kontrolisano primenjene posle read-only audita,
-backup/restore i restore-clone probe. Ranije četiri produkcione migracije nisu
-dovoljne za kod koji očekuje compat token hash i tri verification throttle
-kolone. Workflow namerno neće popravljati taj nedostatak preko SSH-a.
+Za ovaj auth release „usklađena šema” znači da su sve tri kasnije auth expand
+migracije kontrolisano primenjene posle read-only audita, backup/restore i
+restore-clone probe: compat token hash, tri verification throttle kolone i
+nullable/no-default `User.emailVerificationLoginGraceUntil`. Ranije četiri
+produkcione migracije nisu dovoljne za aktuelni kod. Aktivni Git lanac ima sedam
+migracija, dok produkcijska evidencija ovog preseka i dalje ima četiri;
+workflow namerno neće popravljati taj nedostatak preko SSH-a.
 
 Reverse proxy mora prosleđivati zahteve na `APP_PORT`, a `SMOKE_PORT` mora biti
 slobodan na lokalnom interfejsu servera. Ako se promene `APP_NAME`, `APP_PORT`
@@ -100,6 +109,57 @@ po proceduri iz `V2-ROLL-OUT.md`, pa se workflow ponovo pokrene.
 Kartično plaćanje ostaje isključeno u produkcionom `.env` dok nisu završeni svi
 uslovi iz rollout dokumenta, uključujući instaliran timer, uspešan cleanup
 dry-run/apply smoke, `REVIEW` inbox i reconciliation/refund/bankarski staging.
+
+## Verified-login audit je operativni gate, ne deploy korak
+
+Workflow nikada ne pokreće audit nad produkcionom bazom i nikada ne radi
+backfill. Operator pre auth expand-a ručno, u odobrenom read-only prozoru,
+pokreće tačno baseline-safe skriptu:
+
+```bash
+psql -X "$DATABASE_URL" \
+  -v ON_ERROR_STOP=1 \
+  -f scripts/auth-email-verification-audit-legacy.sql
+```
+
+Posle kontrolisane primene sve tri auth expand migracije koristi se current
+skripta:
+
+```bash
+psql -X "$DATABASE_URL" \
+  -v ON_ERROR_STOP=1 \
+  -f scripts/auth-email-verification-audit-current.sql
+```
+
+Legacy skripta namerno odbija expanded auth šemu, a current zahteva sve
+expanded kolone. Obe vraćaju isključivo `category|count` agregate i završavaju
+sa `ROLLBACK`; rezultat se čuva kao ograničeni operativni artefakt, bez
+prepisivanja PII u GitHub log ili komentar PR-a.
+
+Čak i posle pregledane remediation odluke staged preflight trenutno ostaje
+negativan. Tačan poziv je:
+
+```bash
+psql -X "$DATABASE_URL" \
+  -v ON_ERROR_STOP=1 \
+  -v target_policy=staged \
+  -v legacy_cutoff='YYYY-MM-DDTHH:MM:SS.mmmZ' \
+  -v grace_deadline='YYYY-MM-DDTHH:MM:SS.mmmZ' \
+  -f scripts/auth-email-verification-enforcement-preflight.sql
+```
+
+Preflight prima samo `staged`, zahteva kanonski UTC millisecond cutoff i jedan
+kanonski grace deadline 7–30 dana posle DB vremena. Svaki non-`NULL` grace mora
+biti tačno jednak tom deadline-u. `strict` je namerno odbijen. Ova revizija
+uvek ispisuje `preflight.jwt_session_revalidation.unavailable|1`, zatim
+`preflight.ready|0` i završava statusom `3`. Zato GitHub Environment reviewer
+ne sme odobriti staged/strict release niti tretirati druge nulte countove kao
+ready dok zaseban session-revalidation paket ne promeni i kod i preflight gate.
+
+Produkcijski `.env` u međuvremenu mora eksplicitno sadržati
+`AUTH_VERIFIED_LOGIN_POLICY=audit`. `AUTH_VERIFIED_LOGIN_GRACE_DEADLINE` nije
+dozvola za staged aktivaciju; tek pregledani budući rollout koristi potpuno
+isti timestamp u runtime-u, bazi i preflight-u.
 
 ## VPS scheduler nije deo deploy workflow-a
 
@@ -134,18 +194,32 @@ instaliran.
    proverava TypeScript, izvršava sigurnosne testove i pravi probni production
    build.
 
-   Registration/resend presek u ovom koraku postavlja
-   `RUN_REGISTRATION_DB_TESTS=true` i
-   `RUN_EMAIL_VERIFICATION_RESEND_DB_TESTS=true`. Time CI proverava atomic
-   User+credential registration, duplicate/rollback/hash-collision scenarije,
-   resend two-worker race, DB sat posle User lock wait-a, verify-vs-resend
-   lock redosled, fixed 24h allowance i rollback granice. DB smoke dodatno
-   proverava tri nullable/no-default throttle kolone i odsustvo dedicated
-   indeksa. Exact-head run `33317607438` na
+   Auth presek u ovom koraku postavlja
+   `RUN_REGISTRATION_DB_TESTS=true`,
+   `RUN_EMAIL_VERIFICATION_RESEND_DB_TESTS=true`,
+   `RUN_AUTH_VERIFICATION_DB_TESTS=true`,
+   `RUN_PASSWORD_RESET_CONFIRM_DB_TESTS=true` i
+   `RUN_VERIFIED_LOGIN_DB_TESTS=true`. Time CI proverava atomsku
+   User+credential registraciju, resend race/allowance, User-first verify i
+   reset lock redosled, DB sat posle lock wait-a, stale snapshot/xmin granice,
+   password reset/change rollback, credentials policy snapshot i konkurentno
+   privilegovano provisionovanje. DB smoke dodatno proverava compat token,
+   throttle i novu nullable/no-default grace kolonu bez dedicated indeksa.
+
+   Pre lint/typecheck/test koraka `scripts/test-auth-email-verification-audits.ts`
+   pravi zasebne fixture baze i proverava tačne izlaze legacy audita, current
+   audita i fail-closed staged preflight-a. Preflight mora i na čistom fixture-u
+   ostati blokiran sa
+   `preflight.jwt_session_revalidation.unavailable|1`; CI ne sme taj status
+   pretvoriti u lažni ready signal.
+
+   Exact-head run `33317607438` na
    `964831f490b54a3f5b11ec0cecce8b562551d4d8` i post-merge run
-   `33317787952` na `15c18cf1de19ceee4de4a06eff28bf7114d3fc19` su attempt 1
-   SUCCESS. Oba su prošla migration/deploy, drift, DB smoke, lint, typecheck,
-   237/237 testova sa 8 PostgreSQL scenarija, mobile Chromium E2E i build.
+   `33317787952` na `15c18cf1de19ceee4de4a06eff28bf7114d3fc19` ostaju istorijski
+   dokaz prethodnog registration/resend preseka. Oni nisu dokaz novog
+   verified-login/reset/grace paketa. Završni SHA/run ID za ovaj paket sme se
+   upisati tek posle stvarno završenog exact-head i post-merge CI-ja; ovaj
+   dokument ih ne izmišlja unapred.
 2. Poseban, neprodukcijski release-gate job proverava strogi naziv taga, V2
    projektno stablo i da je označeni commit deo kanonske V2 istorije. Tek njegov
    uspeh dozvoljava otvaranje zaštićenog `production` Environment-a.
@@ -197,20 +271,35 @@ Sam workflow ne kreira GitHub Environment, ruleset, secrets, server niti tag.
 
 Pre required-reviewer odobrenja auth deo dodatno mora imati:
 
-- produkcioni legacy `emailVerified` audit, kontrolisani backfill i recovery
-  smoke pre verified-login enforcementa;
+- pregledan produkcioni legacy audit pre auth migracija, current audit posle
+  sve tri auth expand migracije i posebno odobren data remediation/backfill;
+  aggregate audit sam po sebi nikada ne menja `emailVerified` ili grace;
+- produkcioni `AUTH_VERIFIED_LOGIN_POLICY=audit`. `staged` i `strict` su
+  zabranjeni dok rolling JWT session revalidation/revocation nije uveden.
+  Postojeći preflight to sprovodi stalnim blockerom
+  `preflight.jwt_session_revalidation.unavailable|1` i zato trenutno nikad ne
+  može vratiti ready;
 - shared limiter i eksplicitan trusted-proxy/client-IP ugovor umesto procesnog
-  LRU-a i sirovog `x-forwarded-for` identiteta;
+  LRU-a i sirovog `x-forwarded-for` identiteta, uključujući NextAuth credentials
+  callback i cost-12 bcrypt CPU abuse granicu;
 - reverse-proxy body-size, rate, timeout i connection limite usklađene sa
-  završenim application cap-ovima: registration 4096 B, resend 1024 B;
+  završenim application cap-ovima: registration 4096 B; resend, reset request i
+  reset confirm 1024 B. Reset request prihvata samo exact
+  `{"email":"..."}`, a confirm samo exact
+  `{"token":"...","password":"..."}` JSON shape; redosled ključeva nije
+  bitan, ali dodatni ili nedostajući ključ jeste;
 - transactional auth-email outbox/durable worker sa retry-em, monitoringom i
   shutdown/redeploy dokazom, jer Next.js `after()` može izgubiti posao posle
   već vraćenog HTTP 202;
-- kontrolisanu primenu auth-token i cooldown expand migracija;
+- kontrolisanu primenu auth-token, cooldown i verified-login grace expand
+  migracija; aktivni lanac ima sedam, produkcija i dalje samo četiri;
 - potvrdu fixed 24h kvote od pet poruka uključujući initial, 60s cooldown-a i
   retained ranije neisteklih verification linkova;
 - potvrdu da je 900+0–200 ms registration padding samo timing
-  defense-in-depth, ne zamena za shared abuse zaštitu.
+  defense-in-depth, ne zamena za shared abuse zaštitu;
+- potvrdu da demo seed nije deo release/deploy toka: mora ostati iza
+  `DEMO_DATABASE_SEED=true`, bezbednog naziva baze i runtime
+  `current_database()` equality guarda i nikada se ne pokreće nad produkcijom.
 
 Dok ijedna od tih granica nema dokaz, ne pravi se release tag i ne odobrava se
 production Environment. Main-push live objavljivanje ostaje poslednji korak.

@@ -5,6 +5,66 @@
 BEGIN;
 SET LOCAL search_path = pg_catalog, public;
 
+-- Verified-login grace expand: nullable/no-default preserves existing login
+-- behaviour until the audited cutoff/backfill and enforcement release. The
+-- field is read with User.id/email, so no deadline index is part of the
+-- compatibility contract.
+DO $$
+BEGIN
+  IF (
+    SELECT "is_nullable"
+    FROM information_schema.columns
+    WHERE "table_schema" = 'public'
+      AND "table_name" = 'User'
+      AND "column_name" = 'emailVerificationLoginGraceUntil'
+  ) IS DISTINCT FROM 'YES'
+     OR (
+       SELECT "data_type"
+       FROM information_schema.columns
+       WHERE "table_schema" = 'public'
+         AND "table_name" = 'User'
+         AND "column_name" = 'emailVerificationLoginGraceUntil'
+     ) IS DISTINCT FROM 'timestamp without time zone'
+     OR (
+       SELECT "datetime_precision"
+       FROM information_schema.columns
+       WHERE "table_schema" = 'public'
+         AND "table_name" = 'User'
+         AND "column_name" = 'emailVerificationLoginGraceUntil'
+     ) IS DISTINCT FROM 3
+     OR (
+       SELECT "column_default"
+       FROM information_schema.columns
+       WHERE "table_schema" = 'public'
+         AND "table_name" = 'User'
+         AND "column_name" = 'emailVerificationLoginGraceUntil'
+     ) IS NOT NULL THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: verified-login grace column contract is invalid';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_index AS catalog_index
+    JOIN pg_catalog.pg_class AS indexed_table
+      ON indexed_table.oid = catalog_index.indrelid
+    JOIN pg_catalog.pg_namespace AS table_namespace
+      ON table_namespace.oid = indexed_table.relnamespace
+    WHERE table_namespace.nspname = 'public'
+      AND indexed_table.relname = 'User'
+      AND position(
+        '"emailVerificationLoginGraceUntil"'
+        IN pg_catalog.pg_get_indexdef(catalog_index.indexrelid)
+      ) > 0
+  ) THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: redundant verified-login grace index exists';
+  END IF;
+
+  RAISE NOTICE 'PASS: verified-login grace expand contract is valid';
+END;
+$$;
+
 -- Verification-email throttle expand: nullable/no-default preserves legacy
 -- users and old application compatibility. Equality access continues through
 -- User.id, so dedicated throttle indexes would only add write overhead.

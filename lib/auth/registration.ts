@@ -26,6 +26,7 @@ export interface RegistrationUserWrite {
   firstName: string;
   lastName: string;
   phone: string | null;
+  emailVerificationLoginGraceUntil: null;
   verificationEmailNextAllowedAt: Date;
   verificationEmailResendWindowStartedAt: Date;
   verificationEmailResendCount: number;
@@ -128,6 +129,9 @@ export async function registerAccount(
         firstName: input.firstName,
         lastName: input.lastName,
         phone: input.phone,
+        // Grace is reserved for explicitly reviewed legacy CUSTOMER rows.
+        // A newly registered account must always verify its mailbox.
+        emailVerificationLoginGraceUntil: null,
         verificationEmailNextAllowedAt,
         verificationEmailResendWindowStartedAt,
         verificationEmailResendCount:

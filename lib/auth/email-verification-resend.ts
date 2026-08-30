@@ -373,7 +373,7 @@ async function readEmailVerificationDatabaseTime(
 ): Promise<Date> {
   const rows = await transaction.$queryRaw<
     Array<{ currentTimestamp: Date }>
-  >`SELECT clock_timestamp() AS "currentTimestamp"`;
+  >`SELECT clock_timestamp()::timestamptz(3) AS "currentTimestamp"`;
   const currentTimestamp = rows[0]?.currentTimestamp;
   if (rows.length !== 1 || !(currentTimestamp instanceof Date)) {
     throw new Error("Invalid email verification resend database clock");
