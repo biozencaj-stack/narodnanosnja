@@ -226,10 +226,48 @@ pripremiti odgovor sa cookie-jem. Tek zatim jedna transakcija conditional
 sve sibling verification tokene. Svaka izmena tog redosleda mora zadržati unit
 testove za encode/response/commit greške i opt-in PostgreSQL concurrency test.
 
-Trenutni klijentski redirect na GET auto-login rutu je prelazno stanje, ne
-obrazac za nove tokove. Sledeća auth etapa treba da uvede eksplicitnu
-prefetch-safe korisničku potvrdu i POST mutaciju, kako email skener ili link
-preview ne bi prerano potrošio verification token.
+Email verification je trajno prefetch-safe pravilo, ne privremeni UI detalj.
+Kanonski link iz emaila vodi na serversku `/verify-email/[token]` stranicu koja
+ne čita bazu, ne menja nalog, ne troši token i ne izdaje sesiju. Stranica mora
+ostati upotrebljiva kao običan HTML: eksplicitni native same-origin `POST` se
+šalje tek nakon korisničkog klika. Legacy API `GET` i `HEAD` smeju samo da vrate
+`303 See Other` ka toj confirmation stranici, bez tela, session cookie-ja ili
+DB/session/token rada. Prefetch, link preview i email skener nikada ne smeju
+postati mutirajući signal; nova potvrda ili magic-login tok ne smeju vratiti
+mutaciju na `GET`.
+
+Mutirajući `POST /api/auth/verify-email/[token]` mora lokalno proveriti trusted
+same-origin write pre čitanja parametara, auth konfiguracije, sesije ili baze,
+jer je širi `/api/auth` prostor izuzet od globalnog origin guard-a zbog
+NextAuth callbackova. Prihvata se samo tačno 64 heksadecimalna znaka, uz
+lowercase kanonizaciju. Posle te lokalne provere, ali pre auth konfiguracije,
+session čitanja i baze, zahtev mora biti i na kanonskom storefront originu.
+Trusted alias-host POST sme samo da vrati `303` ka kanonskoj confirmation
+stranici, bez lookup-a, commita ili cookie-ja; inače bi host-only session cookie
+nestao pri redirectu na kanonski domen. Istekli token se prijavljuje bez
+brisanja. Ako je u pregledaču aktivna sesija drugog korisnika, potvrda mora biti
+odbijena bez izdavanja sesije i bez potrošnje tokena; ista ili odsutna sesija
+sme da nastavi.
+
+Uspešan redosled ostaje: session encode → potpuno pripremljen `303` odgovor sa
+24-časovnim centralno imenovanim cookie-jem → atomski conditional token claim,
+`emailVerified` upis i brisanje sibling tokena. Prepared odgovor se vraća tek
+posle uspešnog commita. Conflict ili bilo koja kasnija greška ne smeju poslati
+prepared cookie; neuspeh ostaje retryable ili invalid-token ishod sa stage-only
+logom. Tako se magic-login dobija tek posle eksplicitnog klika, nikada samim
+otvaranjem email URL-a.
+
+Confirmation stranica i API ishodi moraju ostati `private, no-store`,
+`no-referrer`, `noindex/nofollow/noarchive`, a `/verify-email` putanje isključene
+iz svih third-party skripti. Zajednički sensitive-credential guard mora da
+isključi i Google Analytics i globalni reCAPTCHA provider na
+`/verify-email/*`, token putanji `/reset-password/*` i
+`/newsletter/odjava`; nepoznat pathname je private-by-default. Reset-token i
+newsletter odjava page/API granice koriste ista privacy zaglavlja. GA događaji
+na dozvoljenim stranicama smeju da šalju samo origin + pathname, bez query-ja
+ili hash-a u `page_location`. Ovo smanjuje browser, cache, crawler i analytics
+curenje, ali ne uklanja prvi URL iz reverse-proxy/access logova; dok tokeni ne
+budu hashovani, URL i DB vrednost su i dalje poverljivi podaci.
 
 Ovo pravilo još ne znači da login sme globalno da odbije svaki nalog sa
 `emailVerified = NULL`. Pre verified-login enforcementa potrebni su audit i
@@ -351,8 +389,11 @@ Release tag se ne pravi tokom običnog razvoja; live puštanje je poslednji kora
 - [ ] REVIEW reconciliation, refund tok i email outbox
 - [ ] Transactional auth-email outbox i runtime dokaz da `after()` posao nije
       izgubljen pri shutdown/redeploy granici
-- [ ] Hashovani reset tokeni, exactly-once confirm i concurrency-safe jedan
-      aktivni token po korisniku
+- [ ] Hashovani verification/reset tokeni, exactly-once reset confirm i
+      concurrency-safe jedan aktivni reset token po korisniku
+- [ ] Atomska registracija, stvarni verification resend/cooldown i kontrolisani
+      `emailVerified` login rollout sa auditom/backfill-om
+- [ ] Session revocation posle resetovanja lozinke i sveža role provera
 - [ ] Shared auth/reset limiter i eksplicitan trusted-proxy/client-IP ugovor
 
 ## Bezbedno objavljivanje šeme

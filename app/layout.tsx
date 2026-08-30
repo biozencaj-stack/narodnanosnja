@@ -1,7 +1,6 @@
 import type { CSSProperties } from "react";
 import type { Metadata } from "next";
 import { PT_Serif, PT_Sans } from "next/font/google";
-import Script from "next/script";
 import "./globals.css";
 import { Providers } from "./providers";
 import { getLocale, getMessages } from "next-intl/server";
@@ -15,6 +14,7 @@ import { storeIdentityFromSettings } from "@/lib/config/store-identity";
 import { getStorefrontUrl } from "@/lib/config/storefront-url";
 import { StoreIdentityProvider } from "@/components/StoreIdentityProvider";
 import { serializeJsonLd } from "@/lib/security/json-ld";
+import { GoogleAnalytics } from "@/components/analytics/GoogleAnalytics";
 
 const configuredGaId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID;
 const GA_ID = configuredGaId && /^G-[A-Z0-9]+$/i.test(configuredGaId)
@@ -150,23 +150,7 @@ export default async function RootLayout({
         <WebSiteJsonLd settings={settings} />
       </head>
       <body className="font-body antialiased bg-background text-text">
-        {/* Google Analytics 4 */}
-        {GA_ID && (
-          <>
-            <Script
-              src={`https://www.googletagmanager.com/gtag/js?id=${GA_ID}`}
-              strategy="afterInteractive"
-            />
-            <Script id="google-analytics" strategy="afterInteractive">
-              {`
-                window.dataLayer = window.dataLayer || [];
-                function gtag(){dataLayer.push(arguments);}
-                gtag('js', new Date());
-                gtag('config', '${GA_ID}');
-              `}
-            </Script>
-          </>
-        )}
+        {GA_ID && <GoogleAnalytics measurementId={GA_ID} />}
         <NextIntlClientProvider messages={messages}>
           <StoreIdentityProvider identity={storeIdentityFromSettings(settings)}>
             <Providers>

@@ -5,6 +5,7 @@ import {
   storeEmail,
   siteUrl,
 } from "@/lib/config/store";
+import { getStorefrontUrl } from "@/lib/config/storefront-url";
 
 const FROM_EMAIL = process.env.EMAIL_FROM || `${storeName} <${storeEmail}>`;
 
@@ -172,15 +173,17 @@ Započnite kupovinu: ${siteUrl}
 }
 
 /**
- * Send email verification with magic link
- * Link automatically logs user in and verifies email
+ * Send an email verification link that opens an explicit confirmation page.
  */
 export async function sendVerificationEmail(
   email: string,
   firstName: string,
   token: string
 ): Promise<void> {
-  const verifyUrl = `${siteUrl}/verify-email/${token}`;
+  const verifyUrl = new URL(
+    `/verify-email/${encodeURIComponent(token)}`,
+    getStorefrontUrl(),
+  ).toString();
 
   const content = `
     <div style="text-align: center; margin-bottom: 24px;">
@@ -192,14 +195,16 @@ export async function sendVerificationEmail(
 
     <p style="color: #666; margin: 0 0 24px;">Hvala vam što ste se registrovali na ${storeName} webshopu.</p>
 
-    <p style="color: #666; margin: 0 0 24px;">Kliknite na dugme ispod da potvrdite vaš email i automatski se prijavite:</p>
+    <p style="color: #666; margin: 0 0 16px;">Dugme ispod otvara sigurnu stranicu za potvrdu emaila.</p>
+
+    <p style="color: #666; margin: 0 0 24px;">Samo otvaranje linka neće promeniti vaš nalog. Na otvorenoj stranici izaberite „Potvrdi email“ da biste završili potvrdu i prijavu.</p>
 
     <div style="text-align: center; margin: 32px 0;">
-      <a href="${verifyUrl}"
+      <a href="${verifyUrl}" rel="noreferrer"
          style="background-color: #4F46E5; color: white; padding: 16px 48px;
                 text-decoration: none; border-radius: 4px; display: inline-block;
                 font-weight: 600; text-transform: uppercase; letter-spacing: 1px; font-size: 14px;">
-        ✓ Potvrdi email i prijavi se
+        Otvori stranicu za potvrdu
       </a>
     </div>
 
@@ -225,7 +230,7 @@ Poštovani ${firstName},
 
 Hvala vam što ste se registrovali na ${storeName} webshopu.
 
-Kliknite na link ispod da potvrdite vaš email i automatski se prijavite:
+Link ispod otvara sigurnu stranicu za potvrdu emaila. Samo otvaranje linka neće promeniti vaš nalog. Na otvorenoj stranici izaberite „Potvrdi email“ da završite potvrdu i prijavu:
 ${verifyUrl}
 
 VAŽNO: Link važi samo 1 sat!

@@ -36,6 +36,13 @@ const securityHeaders = [
     : []),
 ];
 
+const sensitiveCredentialHeaders = [
+  { key: 'Cache-Control', value: 'private, no-store, max-age=0' },
+  { key: 'Pragma', value: 'no-cache' },
+  { key: 'Referrer-Policy', value: 'no-referrer' },
+  { key: 'X-Robots-Tag', value: 'noindex, nofollow, noarchive' },
+];
+
 const nextConfig: NextConfig = {
   // NAPOMENA: standalone mode uklonjen jer zahteva drugačiji startup
   // Ako trebaš Docker deployment, dodaj: output: 'standalone'
@@ -87,11 +94,23 @@ const nextConfig: NextConfig = {
       },
       {
         source: '/newsletter/odjava',
-        headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }],
+        headers: sensitiveCredentialHeaders,
       },
       {
         source: '/api/newsletter/unsubscribe',
-        headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }],
+        headers: sensitiveCredentialHeaders,
+      },
+      {
+        source: '/verify-email/:path*',
+        headers: sensitiveCredentialHeaders,
+      },
+      {
+        source: '/api/auth/verify-email/:path*',
+        headers: sensitiveCredentialHeaders,
+      },
+      {
+        source: '/reset-password/:token',
+        headers: sensitiveCredentialHeaders,
       },
     ];
   },

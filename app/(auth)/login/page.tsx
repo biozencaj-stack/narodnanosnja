@@ -28,9 +28,9 @@ export default function LoginPage() {
       case "CredentialsSignin":
         return "Neispravan email ili lozinka";
       case "invalid_token":
-        return "Link za verifikaciju nije validan. Pokušajte se ponovo registrovati.";
+        return "Link za verifikaciju nije važeći. Proverite da li ste otvorili ceo link iz najnovijeg emaila.";
       case "expired_token":
-        return "Link za verifikaciju je istekao. Molimo registrujte se ponovo.";
+        return "Link za verifikaciju je istekao. Ako je email već potvrđen, prijavite se; u suprotnom kontaktirajte podršku.";
       case "verification_failed":
         return "Verifikacija nije uspela. Pokušajte ponovo ili kontaktirajte podršku.";
       default:
@@ -86,7 +86,8 @@ export default function LoginPage() {
           <div className="mb-6 p-4 bg-success-light border border-success/20 rounded-xl text-success text-sm">
             <strong>Nalog uspešno kreiran!</strong>
             <p className="mt-1">
-              Proverite vaš email - poslali smo link za potvrdu koji važi 1 sat.
+              Za aktivaciju je potrebna email potvrda. Proverite prijemno
+              sanduče i spam; ako poruka ne stigne, kontaktirajte podršku.
             </p>
           </div>
         )}

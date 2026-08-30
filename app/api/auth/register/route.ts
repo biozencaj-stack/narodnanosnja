@@ -89,14 +89,17 @@ export async function POST(request: NextRequest) {
     // Send verification email
     try {
       await sendVerificationEmail(user.email, user.firstName, verificationToken);
-    } catch (emailError) {
-      console.error("Failed to send verification email:", emailError);
-      // Continue even if email fails - user can request resend
+    } catch {
+      // Do not log the recipient or raw SMTP details. Durable delivery and a
+      // real resend flow remain a separate P1 registration task.
+      console.error("Registration verification delivery failed", {
+        stage: "DELIVERY",
+      });
     }
 
     return NextResponse.json(
       {
-        message: "Nalog uspešno kreiran. Proverite email za potvrdu.",
+        message: "Nalog uspešno kreiran. Za aktivaciju je potrebna email potvrda.",
         requiresVerification: true,
         user: {
           id: user.id,

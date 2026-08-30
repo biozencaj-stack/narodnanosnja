@@ -3176,3 +3176,423 @@ nije kontaktiran server i ništa nije pušteno live.
 Produkcijska aktivacija ostaje poslednja, posebno odobrena faza posle svih
 preostalih P0/P1, legalnih, infrastrukturnih, backup/restore i operativnih
 gate-ova.
+
+## 41. P1 prefetch-safe email potvrda i eksplicitni POST
+
+Treći P1 auth presek urađen je 30. avgusta 2026. na radnoj grani
+`ispravka/v2-prefetch-safe-verifikacija`, izvedenoj direktno iz kanonskog V2
+documentation head-a `8d22116543c3bf2f2e76080758d9814b0e61c2fe`. Cilj je
+bio usko definisan: sačuvati ranije uvedenu exactly-once DB verifikaciju i
+24-časovni auth cookie ugovor, ali ukloniti mutaciju sa svake GET navigacije.
+Promena je završena i lokalno proverena kao funkcionalni diff. Još nema feature
+commita/PR-a, exact-head GitHub run-a, V2 merge-a ili post-merge CI dokaza; oni
+neće biti upisani retroaktivno ili pretpostavljeni pre stvarnog GitHub događaja.
+
+### 41.1. Zašto je stari GET auto-login bio opasan
+
+Pre ovog preseka email je vodio na `/verify-email/[token]`, a klijentska
+stranica je po mount-u radila redirect na
+`GET /api/auth/verify-email/[token]`. API GET je zatim čitao token, upisivao
+`emailVerified`, brisao verification tokene, izdavao session cookie i
+automatski prijavljivao korisnika. Atomski DB deo je već bio ojačan u §39, ali
+HTTP metod i dalje nije predstavljao bezbednu browser granicu.
+
+Email bezbednosni skeneri, webmail preview, browser prefetch, unfurl botovi i
+crawleri rutinski otvaraju link pre korisnika. Ako GET troši credential, takav
+automat može:
+
+- verifikovati nalog bez korisničkog pristanka;
+- potrošiti jednokratni link pre stvarnog klika;
+- izdati magic-login cookie u pogrešnom user-agentu;
+- ostaviti korisnika sa „nevažećim“ linkom i bez pravog resend toka;
+- uneti jednokratni token u analytics, referrer, crawler ili cache površinu.
+
+Zato prefetch header heuristika nije izabrana kao glavna zaštita. Ne šalju svi
+skeneri `Purpose`, `Sec-Purpose` ili konzistentan user-agent. Trajna invarijanta
+je metodska: GET/HEAD samo čitaju ili preusmeravaju, a jedina mutacija je
+eksplicitni same-origin POST koji nastaje posle korisničkog klika.
+
+### 41.2. Serverska confirmation stranica bez mutacije i bez JS zavisnosti
+
+`app/(auth)/verify-email/[token]/page.tsx` sada je server component. Nema
+`"use client"`, `useEffect`, `fetch`, `router.replace` ni automatski API poziv.
+Za završetak potvrde nije potreban client-side JavaScript: regularan HTML
+`<form action="/api/auth/verify-email/..." method="post">` i native browser
+submit predstavljaju jedini action. Tek vidljiv klik na dugme „Potvrdi email i
+prijavi me“ šalje POST i jasno najavljuje obe posledice.
+
+GET render obavlja samo sintaksnu proveru `/^[a-f0-9]{64}$/i`. Token mora biti
+tačno 64 hex znaka, što odgovara 32-byte CSPRNG vrednosti u postojećem toku.
+Pogrešan oblik odmah prikazuje generičnu poruku i link ka prijavi, bez forme i
+bez DB lookup-a. Validan oblik prikazuje:
+
+- eksplicitnu poruku da samo otvaranje linka nije promenilo nalog;
+- native POST dugme;
+- link za regularnu prijavu;
+- retry poruku kada API vrati `error=temporary`;
+- session-mismatch poruku i sign-out izbor kada je aktivan drugi nalog.
+
+Kod session mismatch-a forma je namerno uklonjena sa stranice. Korisnik dobija
+uputstvo da odjavi trenutni nalog ili da link otvori u privatnom prozoru. Time
+UI ne nudi dugme koje bi samo ponovilo ishod koji zaštita mora da odbije.
+
+Stranica je `dynamic = "force-dynamic"` i `revalidate = 0`. Metadata postavlja
+`robots.index=false`, `follow=false`, `nocache=true` i
+`referrer="no-referrer"`. Ovo je dodatna render-time zaštita; response headeri
+opisani u §41.6 ostaju autoritativna HTTP granica.
+
+### 41.3. Legacy API GET i HEAD su navigation-only 303
+
+`app/api/auth/verify-email/[token]/route.ts` i novi testabilni
+`lib/auth/email-verification-route.ts` zadržavaju kompatibilnost sa starim
+direktnim API linkovima. `GET` i `HEAD` pozivaju samo `getConfirmationUrl()` i
+vraćaju `303 See Other`:
+
+- validan token vodi na kanonski lowercase `/verify-email/[token]`;
+- nevalidan oblik vodi na `/login?error=invalid_token`;
+- odgovor nema telo;
+- odgovor nema `Set-Cookie`;
+- nema verification DB lookup-a;
+- nema čitanja postojeće sesije;
+- nema JWT encode-a;
+- nema token claim-a, `emailVerified` upisa ili sibling cleanup-a.
+
+`303`, a ne 307/308, namerno normalizuje sledeću navigaciju na GET i sprečava
+browser da kasnije ponovi mutirajući POST ka redirect cilju. Produkcijska
+kompozicija i dalje fail-closed validira konfiguraciju. Params failure ili
+nedostupan kanonski storefront URL vraćaju zaštićeni generički 503. Kada je
+submitted token validnog oblika i kanonski URL poznat, kasniji auth-config kvar
+vraća read-only 303 na confirmation ekran sa `error=temporary`. Nijedan od tih
+ishoda ne čita bazu niti mutira token; u konfigurisanom toku legacy GET/HEAD
+ugovor je isključivo read-only 303.
+
+### 41.4. Lokalni same-origin/CSRF guard pre konfiguracije i baze
+
+Globalni `proxy.ts` mora da izuzme deo `/api/auth` prostora kako eksterni
+NextAuth provider callbackovi ne bi bili pogrešno blokirani. Zbog toga novi
+verification POST ne može da se osloni samo na globalni unsafe-method guard.
+Ruta eksplicitno poziva `isTrustedWriteRequest(request.headers)` pre:
+
+1. čekanja route parametara;
+2. čitanja `NEXT_PUBLIC_SITE_URL`/storefront URL konfiguracije;
+3. čitanja `NEXTAUTH_SECRET` i cookie politike;
+4. `getToken()` session dekodiranja;
+5. bilo kog Prisma lookup-a ili commita.
+
+Factory istu proveru ponavlja kako test ili buduća kompozicija ne bi slučajno
+uklonili invarijantu. Zahtev se smatra trusted samo kada `Origin` postoji i
+njegov normalizovani host odgovara `Host` headeru, ili kada browser bez Origin-a
+pošalje `Sec-Fetch-Site: same-origin`. Pogrešan/malformed Origin, cross-origin,
+missing Host ili odsustvo oba trusted signala vraćaju 403. U tom ishodu nema
+params rada, lookup-a, sesije, cookie-ja ni token consumption-a.
+
+Druga, odvojena origin granica rešava storefront alias. NextAuth session cookie
+je host-only. Kada bi trusted same-origin POST stigao preko alias hosta, a
+success redirect vodio na kanonski `getStorefrontUrl()` origin, browser bi
+potrošio verification token na aliasu i zatim izgubio novu sesiju pri prelasku
+na kanonski host. Ruta zato posle lokalnog guard-a i razrešavanja params/
+storefront URL-a, ali pre auth secret/cookie konfiguracije, session čitanja i
+baze, poziva `isCanonicalEmailVerificationRequest()`.
+
+Trusted alias POST nije greška i ne troši token: vraća samo zaštićeni `303` ka
+kanonskoj `/verify-email/[token]` stranici, bez lookup-a, commita ili
+`Set-Cookie` headera. Korisnik na kanonskom originu ponovo vidi eksplicitno
+dugme i tek naredni POST može da mutira stanje. Zahtev sa Origin-om mora da se
+poklopi sa kanonskim originom; fallback bez Origin-a poredi Host sa kanonskim
+hostom. Time local CSRF guard i canonical-cookie guard rešavaju različite
+probleme i oba ostaju pre credential consumption-a.
+
+Ovo je CSRF granica, ne opšta XSS ili compromised-origin zaštita. Skripta koja
+već izvršava kod na legitimnom storefront originu i dalje može poslati trusted
+POST; zato CSP, HTML sanitizacija, dependency hardening i ostale browser
+zaštite ostaju nezavisno važne.
+
+### 41.5. POST pipeline i session-mismatch pravilo
+
+Posle lokalne i kanonske origin provere POST ima sledeći tačan redosled:
+
+1. iz route konteksta uzima submitted token;
+2. odbija sve osim tačno 64 hex znaka;
+3. kanonizuje token u lowercase;
+4. radi `EmailVerification.findUnique` lookup;
+5. računa jedan `verifiedAt` trenutak i zahteva `expires > verifiedAt`;
+6. čita eventualni current-session user ID centralnim NextAuth secret/cookie
+   ugovorom;
+7. proverava da current session ne pripada drugom korisniku;
+8. izdaje session JWT sa centralnim rokom od 86.400 sekundi;
+9. priprema kompletan success 303 i auth cookie;
+10. atomskom transakcijom claim-uje token, verifikuje korisnika i briše
+    sibling tokene;
+11. vraća pripremljen odgovor samo posle commita.
+
+Nepostojeći token daje invalid-token redirect bez kasnijeg rada. Istek na
+tačnoj boundary vrednosti je zatvoren (`expires <= verifiedAt`) i vodi na
+`/login?error=expired_token`. Ruta ga namerno ne briše: request path ostaje
+read-only za expiry, dok će cleanup, resend ili maintenance kasnije odlučiti o
+retentionu. Time transientni problem ne uništava credential pre nego što
+postoji pouzdan recovery tok.
+
+Ako `getToken()` vrati user ID različit od verification `userId`, odgovor je
+303 nazad na confirmation stranicu sa `error=session_mismatch`. Nema session
+encode-a, nema prepared success response-a, nema cookie-ja i nema DB commita.
+Token ostaje potpuno retryable. Ako nema aktivne sesije ili ona pripada istom
+korisniku, tok nastavlja. Ovo sprečava da email link za nalog A tiho zameni
+aktivnu sesiju naloga B, a ne blokira legitimni repeat za isti nalog.
+
+### 41.6. Encode → prepared 303 cookie → atomic commit
+
+`prepareVerificationSuccessBeforeCommit()` i dalje sprovodi response-before-
+commit invarijantu iz §39, sada iza eksplicitnog POST-a:
+
+1. `next-auth/jwt.encode()` potpisuje token centralnim secretom i rokom od 24
+   sata;
+2. priprema se `303 /moj-nalog?verified=true`;
+3. response dobija centralno ime session cookie-ja, `HttpOnly`,
+   `SameSite=Lax`, `Path=/`, centralnu secure odluku i `Max-Age=86400`;
+4. tek zatim `commitEmailVerification()` otvara Prisma transakciju;
+5. conditional `deleteMany` zahteva isti `id`, `userId`, lowercase token i
+   `expires > verifiedAt`;
+6. tačno jedan claim postavlja `User.emailVerified=verifiedAt` i briše sve
+   preostale verification tokene tog korisnika;
+7. bilo koji failure rollback-uje celu transakciju.
+
+Ako conditional claim izgubi race, baca se
+`EmailVerificationConflictError`. Prepared success objekat se ne vraća;
+failure helper dodatno uklanja svaki `Set-Cookie`, pa gubitnik dobija generični
+invalid-token redirect bez autentifikacije. Isto važi kada JWT encode,
+response priprema ili DB commit zakažu: token ostaje retryable kada commit nije
+uspeo, operational failure vodi na confirmation ekran sa `error=temporary`, a
+prepared cookie se nikada ne šalje.
+
+Ovaj redosled znači da „magic login“ nije uklonjen, već precizno ograničen:
+korisnik dobija standardnu 24-časovnu sesiju tek posle eksplicitnog POST klika i
+uspešnog exactly-once commita. Sam email GET, preview ili scanner nema put do
+sesije.
+
+### 41.7. Jedinstvena cache, referrer, robots i GA politika
+
+`lib/auth/email-verification-route.ts` centralizuje privacy headere i primenjuje
+ih na svaki redirect, JSON fallback i failure odgovor:
+
+| Header | Vrednost | Svrha |
+| --- | --- | --- |
+| `Cache-Control` | `private, no-store, max-age=0` | zabrana čuvanja credential URL odgovora |
+| `Pragma` | `no-cache` | kompatibilnost sa starijim cache slojevima |
+| `Referrer-Policy` | `no-referrer` | token se ne šalje kao outbound Referer |
+| `X-Robots-Tag` | `noindex, nofollow, noarchive` | crawler ne indeksira, ne prati i ne arhivira tok |
+
+`next.config.ts` istu politiku postavlja na
+`/verify-email/:path*`, `/api/auth/verify-email/:path*`, bearer-token stranicu
+`/reset-password/:token`, kao i `/newsletter/odjava` i njen unsubscribe API.
+Time verification page/API i postojeće reset/newsletter credential površine
+dele pun no-store/no-referrer/noindex/noarchive ugovor; newsletter je ranije
+imao samo `no-referrer`. Factory ponavlja headere na svim verification
+dinamičkim ishodima i briše cookie pre svakog failure return-a.
+
+Stari globalni GA inline blok zamenjen je
+`components/analytics/GoogleAnalytics.tsx` komponentom i čistim helperom
+`lib/analytics/google-analytics.ts`. Konačna odluka je centralizovana u
+`lib/security/credential-path.ts`, jer `Referrer-Policy` ne sprečava skriptu
+koja već radi na stranici da pročita `window.location`. Sensitive putanje su
+tačan `/verify-email`, sve `/verify-email/*` podputanje, token-bearing
+`/reset-password/*` i `/newsletter/odjava`, čiji credential živi u query-ju.
+
+I Google Analytics i globalni reCAPTCHA provider koriste isti
+`shouldLoadThirdPartyScripts()` guard. Na sensitive putanji se zato ne učitava
+ni `gtag.js` ni reCAPTCHA third-party skripta. Dok `usePathname()` ne razreši
+vrednost, odluka je private-by-default. Obična `/reset-password` request forma,
+`/newsletter`, `/verify-email-address`, login i ostale storefront putanje
+ostaju normalno funkcionalne/trackable.
+
+Ručni GA page view za dozvoljenu stranicu šalje `page_path=pathname`, a
+`page_location` eksplicitno sklapa samo kao `window.location.origin +
+pathname`. Query string i hash se ne prosleđuju čak ni na običnim stranicama.
+To zatvara slučajno analytics curenje budućih query credentiala i drugih
+osetljivih parametara.
+
+`no-referrer`, no-store i GA exclusion ograničavaju sekundarno browser curenje,
+ali ne mogu da uklone prvi zahtev iz browser history-ja ili HTTP access loga.
+CDN, reverse proxy i application server već vide puni verification URL pre
+nego što response header može da deluje. Dok se token ne hash-uje i log
+redaction/retention ne proveri operativno, prvi URL u access logu ostaje poznat
+residual, a token se tretira kao plaintext secret.
+
+### 41.8. Kanonski email link, registration copy i account završetak
+
+`lib/email/auth-emails.ts` više ne koristi opšti `siteUrl` string za verification
+link. URL se pravi kao `new URL('/verify-email/' + encodedToken,
+getStorefrontUrl())`, čime se dobija ista kanonska origin validacija kao u
+ostatku storefronta i izbegava ručno spajanje slash-eva. HTML link nosi
+`rel="noreferrer"`.
+
+Email copy je usklađen sa stvarnim dvokoračnim tokom:
+
+- dugme sada kaže „Otvori stranicu za potvrdu“;
+- poruka objašnjava da samo otvaranje neće promeniti nalog;
+- korisnik mora na stranici da izabere „Potvrdi email i prijavi me“;
+- tek taj korak završava potvrdu i prijavu;
+- postojeći jednočasovni verification link expiry ostaje isti.
+
+U `app/api/auth/register/route.ts` delivery failure više ne ispisuje raw SMTP
+exception. Log sadrži samo tekst toka i `{ stage: "DELIVERY" }`, bez emaila,
+tokena ili transport detalja. Registration response više ne kaže „proverite
+email, poslali smo“ kada je SMTP možda pao, već samo da je nalog napravljen i da
+je za aktivaciju potrebna email potvrda. Login registration banner koristi isti
+oprezni ugovor: proveriti inbox/spam i kontaktirati podršku ako poruka ne stigne.
+To je sitna, ali važna ispravka istinitosti; resend/outbox još ne postoji.
+
+Uspešan verification POST vodi na `/moj-nalog?verified=true`.
+`app/(user)/moj-nalog/VerifiedEmailNotice.tsx` prikazuje pristupačni statusni
+banner „Email je uspešno potvrđen“ i zatim preko `history.replaceState` briše
+samo `verified` parametar. Ostali query parametri i hash ostaju sačuvani. Tako
+refresh/back/clipboard ne ponavljaju success signal, a verification token se
+nikada ne prenosi na account URL. Client helper postoji tek na već
+autentifikovanoj account strani; confirmation mutacija i dalje ne zavisi od JS-a.
+
+### 41.9. Stage-only observability i failure matrica
+
+Novi route factory prati samo grubu fazu:
+
+- `PARAMS`;
+- `LOOKUP`;
+- `EXPIRY_CHECK`;
+- `CURRENT_SESSION`;
+- `SESSION_ISSUE`;
+- `RESPONSE_PREPARATION`;
+- `COMMIT`.
+
+Produkcijska kompozicija dodaje samo `CONFIGURATION`. Reporter nikada ne dobija
+submitted token, verification URL, email, session JWT, user ID ili originalni
+DB/JWT exception. I reporter je iza `try/catch` granice, pa kvar loggera ne
+menja generični retry ishod.
+
+Javni ishodi su kontrolisani ovako:
+
+| Granica | Ishod | DB/token/session posledica |
+| --- | --- | --- |
+| cross-origin/missing trusted signal | 403 JSON | ništa nije pročitano ni promenjeno |
+| trusted alias origin | 303 kanonska confirmation stranica | bez lookup-a, commita i cookie-ja |
+| malformed 64-hex token | 303 invalid login cilj | bez lookup-a |
+| token ne postoji | 303 invalid login cilj | samo read lookup |
+| token istekao | 303 expired login cilj | bez delete-a i bez cookie-ja |
+| aktivna druga sesija | 303 confirmation + `session_mismatch` | token ostaje aktivan |
+| encode/response/operativni kvar | 303 confirmation + `temporary` | bez success cookie-ja; commit nije uspeo |
+| concurrent claim conflict | 303 invalid login cilj | gubitnik nema cookie; pobednik je jedini commit |
+| uspeh | 303 account + `verified=true` | 24h cookie tek posle atomskog commita |
+| params ili kanonski URL nisu dostupni | generički 503 JSON | bez DB mutacije i bez raw detalja |
+| kasniji auth-config kvar uz validan token/poznat URL | 303 confirmation + `temporary` | bez lookup-a, commita i cookie-ja |
+
+Svaki od ovih odgovora dobija kompletnu private/no-store/no-referrer/noindex
+politiku. Statusi nisu account-enumeration ugovor kao reset request, jer sam
+verification token predstavlja high-entropy capability; ipak se nijedan raw
+interni detalj ne vraća ili loguje.
+
+### 41.10. Testovi i završni lokalni dokaz
+
+Novi `lib/auth/email-verification-route.test.ts` sadrži tačno 13 testova —
+prvobitnih 12 route ugovora i naknadni canonical-origin test:
+
+1. response helperi primenjuju sva četiri privacy headera;
+2. canonical-origin helper prihvata kanonski origin/host, a odbija trusted
+   alias pre token use-a;
+3. legacy GET i HEAD su tačni read-only 303 bez tela/cookie-ja;
+4. lokalni trusted-write guard radi pre params i lookup-a;
+5. validan POST poštuje lookup → current session → encode → response → commit;
+6. asinhrona response priprema mora završiti pre commita;
+7. malformed i absent token ne pokreću kasniji rad;
+8. expired/boundary token je read-only;
+9. sesija drugog korisnika ne troši token;
+10. sesija istog korisnika sme da završi potvrdu;
+11. svih sedam operational failure faza daju stage-only retry bez cookie-ja;
+12. commit conflict odbacuje prepared success cookie;
+13. kvar reportera ne menja generičan javni ishod.
+
+`lib/analytics/google-analytics.test.ts` dodaje tri odvojena wrapper testa:
+credential path exclusion matricu, normalne/slično nazvane trackable putanje i
+private-by-default ponašanje za null/undefined/prazan pathname.
+`lib/security/credential-path.test.ts` dodaje još tri testa same centralne
+politike: verification/reset-token/newsletter putanje nikada ne učitavaju
+third-party skripte, obične auth/storefront putanje smeju da ih učitaju i
+nerazrešeno stanje ostaje privatno. Tako GA i reCAPTCHA ne zavise od dve ručno
+održavane liste.
+
+Opt-in `lib/auth/email-verification.integration.test.ts` je proširen sa same DB
+commit primitive na stvarnu route granicu. Nad bezbedno imenovanom PostgreSQL
+test bazom pravi korisnika, primarni i sibling 64-hex token, pa proverava:
+
+1. prefetch GET i HEAD vraćaju 303 bez cookie-ja;
+2. route lookup count ostaje nula;
+3. `emailVerified` i `updatedAt` ostaju nepromenjeni;
+4. oba verification reda ostaju prisutna;
+5. dva preklopljena POST radnika oba vide isti token;
+6. tačno jedan vraća 303 sa session cookie-jem;
+7. drugi vraća conflict/invalid ishod bez cookie-ja;
+8. samo jedan commit pobeđuje;
+9. korisnik dobija tačan `verifiedAt`;
+10. primarni i svi sibling tokeni nestaju posle pobedničke transakcije.
+
+Završna lokalna matrica posle funkcionalnog preseka:
+
+| Provera | Rezultat |
+| --- | --- |
+| email-verification route testovi | 13/13 prolazi |
+| GA privacy testovi | 3/3 prolaze |
+| central sensitive-credential policy testovi | 3/3 prolaze |
+| ciljani paket | 20 ukupno; 19 prolazi; 1 auth real-DB test preskočen |
+| kompletan `npm test` | 145 ukupno; 143 prolaze; 2 opt-in PostgreSQL testa preskočena |
+| razlog za skip | nema pokrenute, jasno imenovane bezbedne lokalne test baze |
+| `npm run lint -- --quiet` | prolazi |
+| `npm run typecheck` | prolazi |
+| `git diff --check` | prolazi |
+| production build sa lažnim CI vrednostima | prolazi; završena je matrica od 91 rute |
+| nezavisni završni read-only review | ranija dva HIGH i canonical-host MEDIUM su zatvoreni; nema novih blocker/high nalaza |
+
+Dva skip-a nisu failure: oba su postojeći real-DB testa koja se namerno
+uključuju samo eksplicitnim flagom i bezbednim PostgreSQL URL-om. Lokalni build
+je koristio eksplicitno zadate lažne CI vrednosti i postojeće safe-default
+grane. Agent nije otvarao, čitao niti ispisivao vrednosti iz `.env`; relevantne
+postavke bile su pregažene lažnim vrednostima, a DB URL je pokazivao na
+nedostupan loopback port 9, pa produkciona baza nije kontaktirana. Ovaj lokalni
+dokaz još nema izolovani GitHub PostgreSQL/Chromium replay za novi feature
+head.
+
+Canonical-origin helper je direktno unit-testiran, ali production route modul
+nema zaseban import test jer vezuje server-only i Prisma kompoziciju. Njegov
+redosled local guard → params/storefront → alias 303 ili canonical auth/DB put
+nezavisno je read-only pregledan i ocenjen ispravnim. Budući route-module
+harness može povećati dubinu automatizovanog testa; ovo nije ostavljen
+blocker/high funkcionalni nalaz.
+
+### 41.11. Ograničenja i sledeći P1 redosled
+
+Prefetch-safe granica je završena, ali auth/email platforma nije kompletna:
+
+1. verification i reset tokeni su još plaintext u bazi; hashing je sledeći
+   credential-at-rest korak;
+2. prvi email URL može ostati u browser/CDN/reverse-proxy/server access logu;
+3. ne postoji pravi verification resend sa cooldown/concurrency pravilima;
+4. ne postoji transactional auth-email outbox, retry worker, deduplikacija,
+   delivery monitoring ili alert;
+5. registracija nije atomski povezana sa pouzdanom email isporukom;
+6. globalni verified-login uslov nije uključen, jer postojeći nalozi još nemaju
+   audit/backfill i bezbedan recovery;
+7. sesije se ne opozivaju ovom promenom i role freshness ostaje zaseban rad;
+8. verification/login abuse zaštita još koristi postojeće procesne granice;
+   nema shared Redis/DB limitera;
+9. reset-confirm exactly-once claim i concurrency-safe jedan reset token ostaju
+   odvojeni P1 zadaci;
+10. staging/runtime delivery i auth smoke tek treba izvršiti u kontrolisanom
+    okruženju.
+
+Nije menjana Prisma šema i nema nove migracije. Nisu čitani ili menjani
+produkcioni podaci, server, SSH/VPS, `.env`, tajne, DNS, TLS, reverse proxy,
+PM2, GitHub Environment, required reviewer, repository/environment
+secrets/variables ili release workflow. Nije napravljen release tag, nije
+pokrenut deploy i ništa nije pušteno live.
+
+PR/CI dokaz za ovu funkcionalnu granu namerno nije dodat u ovom preseku. Posle
+stvarnog feature commita i PR-a treba dopuniti: tačan feature SHA, PR broj i V2
+base, exact-head run, rezultate svih jobova, status release/deploy poslova,
+merge SHA, post-merge run i read-only potvrdu da production deployment zapis i
+dalje nije nastao. Do tada je jedina tačna tvrdnja: funkcionalni slice je
+lokalno završen i proveren, ali još nije integrisan u kanonsku V2 granu.
