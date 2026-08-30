@@ -912,7 +912,7 @@ Reklamacija ograničava prilog i priprema ga za bezbednije slanje kao attachment
 Prvobitna zaštita je uključila proveru TLS sertifikata u opštem maileru i
 prijavi za posao, ali su auth, order i wishlist moduli zadržali zasebne
 fail-open transportere. Naknadni P1 pregled i potpuna centralizacija opisani su
-u odeljku 34.
+u odeljku 35.
 
 ## 19. Prisma schema promene
 
@@ -2477,3 +2477,56 @@ scenario. Kartice ostaju isključene dok svi ti tokovi, timer i produkcioni
 smoke nisu završeni. PostgreSQL test trenutno dokazuje cleanup-vs-cleanup
 exactly-once trku; zasebna real-DB cleanup-vs-payment-start/callback trka ostaje
 dodatna P2 verifikacija pre uključivanja kartica.
+
+## 37. Bezbedna newsletter odjava
+
+P1 pregled je našao dva vezana problema: unsubscribe URL je koristio poznati
+javni fallback ključ, a GET zahtev je direktno menjao stanje pretplate. Time je
+link mogao da bude falsifikovan kada stvarni secret nije podešen, dok su email
+skeneri i prefetch klijenti mogli da odjave korisnika bez njegove odluke.
+
+### 37.1. Centralna token i secret politika
+
+`lib/newsletter/unsubscribe.ts` je jedini izvor unsubscribe tokena i URL-ova.
+Email se najpre trimuje, normalizuje na mala slova i validira. HMAC-SHA256
+potpis se izdaje kao strogo formatiran token i proverava timing-safe poređenjem.
+Nevalidan email ili token pada pre deactivation callback-a i Prisma upita.
+
+Konfiguracija radi fail-closed:
+
+- `NEWSLETTER_UNSUBSCRIBE_SECRET` i kompatibilni `NEXTAUTH_SECRET` moraju imati
+  najmanje 32 bajta;
+- podešen ali slab dedicated secret je greška i nikada se tiho ne zamenjuje;
+- novi token se potpisuje dedicated ključem kada je on podešen;
+- jaki raniji `NEXTAUTH_SECRET` može privremeno samo da verifikuje stare linkove
+  kada je `NEWSLETTER_UNSUBSCRIBE_ACCEPT_NEXTAUTH_LEGACY=true`;
+- nepoznata boolean vrednost migracionog flaga se odbija, a podrazumevana
+  vrednost je `false`.
+
+### 37.2. GET potvrda i POST mutacija
+
+Legacy campaign GET endpoint sada samo validira email/token i 307 preusmerava
+na `/newsletter/odjava`. GET nikada ne menja bazu. Confirmation stranica je
+dinamička, `noindex`, `no-referrer` i bez keširanja; prikazuje eksplicitno dugme
+za odjavu ili neutralnu poruku za nevalidnu/nedostupnu konfiguraciju.
+
+Tek korisnički klik šalje JSON POST istom API-ju. Posle uspešne autorizacije
+jedna Prisma transakcija preko `updateMany` idempotentno isključuje
+`User.newsletterOptIn` i `NewsletterSubscriber.active`. Isti uspešan odgovor
+važi kada adresa pripada korisniku, gostujućem subscriber-u, oboma ili nijednom,
+pa ruta ne otkriva postojanje naloga. Greške ne loguju email ni Bearer token.
+Klijent posle uspeha koristi `router.replace` da ukloni oba podatka iz URL-a i
+browser istorije.
+
+### 37.3. Regresiona zaštita i status
+
+`lib/newsletter/unsubscribe.test.ts` pokriva secret matricu, legacy migraciju,
+normalizaciju i validaciju emaila, pogrešne/rotirane tokene, URL izgradnju,
+zabranu deactivation poziva bez validne autorizacije, propagaciju DB greške i
+uspešnu idempotentnu deaktivaciju. Mailer sada svaki unsubscribe link pravi
+centralnim helperom i kanonskim storefront URL-om.
+
+PR #4 je spojen u V2, a njegova puna provera i kasniji objedinjeni V2 CI su
+zeleni. Promena ne uvodi Prisma migraciju i nije aktivirala deploy. Produkcioni
+secret i vremenski ograničena legacy migracija ostaju deo odobrenog rollout-a;
+newsletter subscribe abuse/double-opt-in tok je zaseban preostali P1.
