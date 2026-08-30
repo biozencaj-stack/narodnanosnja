@@ -65,6 +65,723 @@ BEGIN
 END;
 $$;
 
+-- Authoritative-session compatibility expand. Legacy Session rows keep all
+-- three metadata fields NULL. A V2 row must provide a complete, bounded and
+-- digest-only contract, while the singleton policy row is seeded in audit.
+DO $$
+DECLARE
+  required_constraint RECORD;
+BEGIN
+  IF (
+    SELECT "is_nullable"
+    FROM information_schema.columns
+    WHERE "table_schema" = 'public'
+      AND "table_name" = 'User'
+      AND "column_name" = 'authSessionRevision'
+  ) IS DISTINCT FROM 'NO'
+     OR (
+       SELECT "data_type"
+       FROM information_schema.columns
+       WHERE "table_schema" = 'public'
+         AND "table_name" = 'User'
+         AND "column_name" = 'authSessionRevision'
+     ) IS DISTINCT FROM 'integer'
+     OR (
+       SELECT "column_default"
+       FROM information_schema.columns
+       WHERE "table_schema" = 'public'
+         AND "table_name" = 'User'
+         AND "column_name" = 'authSessionRevision'
+     ) IS NULL THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: User auth session revision contract is invalid';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM (
+      VALUES
+        ('authSessionRevision', 'integer', NULL::integer),
+        ('authPolicyRevision', 'integer', NULL::integer),
+        ('issuedAt', 'timestamp without time zone', 3)
+    ) AS expected("columnName", "dataType", "precision")
+    LEFT JOIN information_schema.columns AS actual
+      ON actual."table_schema" = 'public'
+     AND actual."table_name" = 'Session'
+     AND actual."column_name" = expected."columnName"
+    WHERE actual."column_name" IS NULL
+       OR actual."is_nullable" IS DISTINCT FROM 'YES'
+       OR actual."data_type" IS DISTINCT FROM expected."dataType"
+       OR actual."column_default" IS NOT NULL
+       OR (
+         expected."precision" IS NOT NULL
+         AND actual."datetime_precision" IS DISTINCT FROM expected."precision"
+       )
+  ) THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: Session authoritative expand columns are invalid';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM (
+      VALUES
+        ('id', 'NO', 'integer', NULL::integer, true),
+        ('revision', 'NO', 'integer', NULL::integer, true),
+        ('policy', 'NO', 'text', NULL::integer, true),
+        (
+          'stagedGraceDeadline',
+          'YES',
+          'timestamp without time zone',
+          3,
+          false
+        ),
+        ('createdAt', 'NO', 'timestamp without time zone', 3, true),
+        ('updatedAt', 'NO', 'timestamp without time zone', 3, false)
+    ) AS expected(
+      "columnName",
+      "isNullable",
+      "dataType",
+      "precision",
+      "hasDefault"
+    )
+    LEFT JOIN information_schema.columns AS actual
+      ON actual."table_schema" = 'public'
+     AND actual."table_name" = 'AuthPolicyState'
+     AND actual."column_name" = expected."columnName"
+    WHERE actual."column_name" IS NULL
+       OR actual."is_nullable" IS DISTINCT FROM expected."isNullable"
+       OR actual."data_type" IS DISTINCT FROM expected."dataType"
+       OR (
+         expected."precision" IS NOT NULL
+         AND actual."datetime_precision" IS DISTINCT FROM expected."precision"
+       )
+       OR (
+         expected."hasDefault"
+         AND actual."column_default" IS NULL
+       )
+       OR (
+         NOT expected."hasDefault"
+         AND actual."column_default" IS NOT NULL
+       )
+  ) THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: AuthPolicyState column contract is invalid';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_index AS catalog_index
+    JOIN pg_catalog.pg_class AS indexed_table
+      ON indexed_table.oid = catalog_index.indrelid
+    JOIN pg_catalog.pg_namespace AS table_namespace
+      ON table_namespace.oid = indexed_table.relnamespace
+    JOIN pg_catalog.pg_attribute AS indexed_column
+      ON indexed_column.attrelid = indexed_table.oid
+     AND indexed_column.attnum = catalog_index.indkey[0]
+    WHERE catalog_index.indexrelid =
+          to_regclass('public."Session_expires_idx"')
+      AND table_namespace.nspname = 'public'
+      AND indexed_table.relname = 'Session'
+      AND indexed_column.attname = 'expires'
+      AND catalog_index.indisvalid
+      AND catalog_index.indisready
+      AND NOT catalog_index.indisunique
+      AND catalog_index.indnkeyatts = 1
+      AND catalog_index.indnatts = 1
+      AND catalog_index.indpred IS NULL
+      AND catalog_index.indexprs IS NULL
+  ) THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: Session expiry index is missing or invalid';
+  END IF;
+
+  IF to_regclass('public."AuthPolicyState"') IS NULL
+     OR (
+       SELECT count(*)
+       FROM public."AuthPolicyState"
+     ) <> 1
+     OR NOT EXISTS (
+       SELECT 1
+       FROM public."AuthPolicyState"
+       WHERE "id" = 1
+         AND "revision" = 1
+         AND "policy" = 'audit'
+         AND "stagedGraceDeadline" IS NULL
+         AND pg_catalog.isfinite("createdAt")
+         AND pg_catalog.isfinite("updatedAt")
+     ) THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: AuthPolicyState audit singleton is invalid';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_constraint
+    WHERE conname = 'AuthPolicyState_pkey'
+      AND conrelid = to_regclass('public."AuthPolicyState"')
+      AND contype = 'p'
+      AND convalidated
+  ) THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: AuthPolicyState primary key is missing or invalid';
+  END IF;
+
+  FOR required_constraint IN
+    SELECT *
+    FROM (
+      VALUES
+        ('User_authSessionRevision_nonnegative_check', 'User'),
+        ('Session_authoritative_metadata_check', 'Session'),
+        ('AuthPolicyState_singleton_check', 'AuthPolicyState'),
+        ('AuthPolicyState_revision_check', 'AuthPolicyState'),
+        ('AuthPolicyState_policy_check', 'AuthPolicyState'),
+        ('AuthPolicyState_deadline_check', 'AuthPolicyState'),
+        ('AuthPolicyState_timestamps_check', 'AuthPolicyState')
+    ) AS required("constraintName", "tableName")
+  LOOP
+    IF NOT EXISTS (
+      SELECT 1
+      FROM pg_catalog.pg_constraint
+      WHERE conname = required_constraint."constraintName"
+        AND conrelid = to_regclass(
+          format('public.%I', required_constraint."tableName")
+        )
+        AND contype = 'c'
+        AND convalidated
+    ) THEN
+      RAISE EXCEPTION
+        'DB invariant smoke failed: constraint % is missing or not valid',
+        required_constraint."constraintName";
+    END IF;
+  END LOOP;
+
+  RAISE NOTICE 'PASS: authoritative session expand catalog contract is valid';
+END;
+$$;
+
+INSERT INTO "User" (
+  "id", "email", "passwordHash", "firstName", "lastName", "updatedAt"
+) VALUES (
+  'codex-smoke-session-user',
+  'codex-smoke-session-user@example.invalid',
+  'codex-smoke-password-hash',
+  'Codex',
+  'Session',
+  CURRENT_TIMESTAMP
+);
+
+DO $$
+BEGIN
+  IF (
+    SELECT "authSessionRevision"
+    FROM "User"
+    WHERE "id" = 'codex-smoke-session-user'
+  ) IS DISTINCT FROM 0 THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: User auth session revision default is not zero';
+  END IF;
+
+  RAISE NOTICE 'PASS: User auth session revision default is zero';
+END;
+$$;
+
+INSERT INTO "Session" (
+  "id", "sessionToken", "userId", "expires"
+) VALUES (
+  'codex-smoke-legacy-session',
+  'codex-smoke-legacy-session-token',
+  'codex-smoke-session-user',
+  TIMESTAMP '2026-08-31 12:00:00'
+);
+
+INSERT INTO "Session" (
+  "id",
+  "sessionToken",
+  "userId",
+  "expires",
+  "authSessionRevision",
+  "authPolicyRevision",
+  "issuedAt"
+) VALUES (
+  'codex-smoke-authoritative-session',
+  'v1:' || repeat('a', 64),
+  'codex-smoke-session-user',
+  TIMESTAMP '2026-08-31 12:00:00',
+  0,
+  1,
+  TIMESTAMP '2026-08-30 12:00:00'
+);
+
+UPDATE "User"
+SET "authSessionRevision" = 2
+WHERE "id" = 'codex-smoke-session-user';
+
+INSERT INTO "Session" (
+  "id",
+  "sessionToken",
+  "userId",
+  "expires",
+  "authSessionRevision",
+  "authPolicyRevision",
+  "issuedAt"
+) VALUES (
+  'codex-smoke-authoritative-session-revision',
+  'v1:' || repeat('f', 64),
+  'codex-smoke-session-user',
+  TIMESTAMP '2026-08-31 11:59:59.999',
+  2,
+  2,
+  TIMESTAMP '2026-08-30 12:00:00'
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM "Session"
+    WHERE "id" = 'codex-smoke-legacy-session'
+      AND "authSessionRevision" IS NULL
+      AND "authPolicyRevision" IS NULL
+      AND "issuedAt" IS NULL
+  )
+     OR NOT EXISTS (
+       SELECT 1
+       FROM "Session"
+       WHERE "id" = 'codex-smoke-authoritative-session'
+         AND "sessionToken" = 'v1:' || repeat('a', 64)
+         AND "authSessionRevision" = 0
+         AND "authPolicyRevision" = 1
+         AND "issuedAt" = TIMESTAMP '2026-08-30 12:00:00'
+         AND "expires" = TIMESTAMP '2026-08-31 12:00:00'
+     )
+     OR NOT EXISTS (
+       SELECT 1
+       FROM "Session"
+       WHERE "id" = 'codex-smoke-authoritative-session-revision'
+         AND "authSessionRevision" = 2
+         AND "authPolicyRevision" = 2
+     )
+     OR (
+       SELECT "authSessionRevision"
+       FROM "User"
+       WHERE "id" = 'codex-smoke-session-user'
+     ) IS DISTINCT FROM 2 THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: valid legacy or authoritative session was not preserved exactly';
+  END IF;
+
+  RAISE NOTICE 'PASS: valid legacy and authoritative sessions are stored exactly';
+END;
+$$;
+
+UPDATE "User"
+SET "authSessionRevision" = 0
+WHERE "id" = 'codex-smoke-session-user';
+
+DO $$
+DECLARE
+  rejected_negative_user_revision BOOLEAN := false;
+  rejected_digest_without_metadata BOOLEAN := false;
+  rejected_partial_metadata BOOLEAN := false;
+  rejected_negative_session_revision BOOLEAN := false;
+  rejected_zero_policy_revision BOOLEAN := false;
+  rejected_nonpositive_lifetime BOOLEAN := false;
+  rejected_oversized_lifetime BOOLEAN := false;
+  rejected_plaintext_authoritative_token BOOLEAN := false;
+  rejected_wrong_version_digest BOOLEAN := false;
+  rejected_short_digest BOOLEAN := false;
+  rejected_uppercase_digest BOOLEAN := false;
+  rejected_infinite_issued_at BOOLEAN := false;
+  rejected_infinite_expiry BOOLEAN := false;
+BEGIN
+  BEGIN
+    UPDATE "User"
+    SET "authSessionRevision" = -1
+    WHERE "id" = 'codex-smoke-session-user';
+  EXCEPTION WHEN check_violation THEN
+    rejected_negative_user_revision := true;
+  END;
+
+  BEGIN
+    INSERT INTO "Session" (
+      "id", "sessionToken", "userId", "expires"
+    ) VALUES (
+      'codex-smoke-session-digest-without-metadata',
+      'v1:' || repeat('1', 64),
+      'codex-smoke-session-user',
+      TIMESTAMP '2026-08-31 12:00:00'
+    );
+  EXCEPTION WHEN check_violation THEN
+    rejected_digest_without_metadata := true;
+  END;
+
+  BEGIN
+    INSERT INTO "Session" (
+      "id", "sessionToken", "userId", "expires", "authSessionRevision"
+    ) VALUES (
+      'codex-smoke-session-partial',
+      'codex-smoke-session-partial-token',
+      'codex-smoke-session-user',
+      TIMESTAMP '2026-08-31 12:00:00',
+      0
+    );
+  EXCEPTION WHEN check_violation THEN
+    rejected_partial_metadata := true;
+  END;
+
+  BEGIN
+    INSERT INTO "Session" (
+      "id", "sessionToken", "userId", "expires",
+      "authSessionRevision", "authPolicyRevision", "issuedAt"
+    ) VALUES (
+      'codex-smoke-session-negative-revision',
+      'v1:' || repeat('b', 64),
+      'codex-smoke-session-user',
+      TIMESTAMP '2026-08-31 12:00:00',
+      -1,
+      1,
+      TIMESTAMP '2026-08-30 12:00:00'
+    );
+  EXCEPTION WHEN check_violation THEN
+    rejected_negative_session_revision := true;
+  END;
+
+  BEGIN
+    INSERT INTO "Session" (
+      "id", "sessionToken", "userId", "expires",
+      "authSessionRevision", "authPolicyRevision", "issuedAt"
+    ) VALUES (
+      'codex-smoke-session-zero-policy',
+      'v1:' || repeat('c', 64),
+      'codex-smoke-session-user',
+      TIMESTAMP '2026-08-31 12:00:00',
+      0,
+      0,
+      TIMESTAMP '2026-08-30 12:00:00'
+    );
+  EXCEPTION WHEN check_violation THEN
+    rejected_zero_policy_revision := true;
+  END;
+
+  BEGIN
+    INSERT INTO "Session" (
+      "id", "sessionToken", "userId", "expires",
+      "authSessionRevision", "authPolicyRevision", "issuedAt"
+    ) VALUES (
+      'codex-smoke-session-nonpositive-lifetime',
+      'v1:' || repeat('d', 64),
+      'codex-smoke-session-user',
+      TIMESTAMP '2026-08-30 12:00:00',
+      0,
+      1,
+      TIMESTAMP '2026-08-30 12:00:00'
+    );
+  EXCEPTION WHEN check_violation THEN
+    rejected_nonpositive_lifetime := true;
+  END;
+
+  BEGIN
+    INSERT INTO "Session" (
+      "id", "sessionToken", "userId", "expires",
+      "authSessionRevision", "authPolicyRevision", "issuedAt"
+    ) VALUES (
+      'codex-smoke-session-oversized-lifetime',
+      'v1:' || repeat('e', 64),
+      'codex-smoke-session-user',
+      TIMESTAMP '2026-08-31 12:00:00.001',
+      0,
+      1,
+      TIMESTAMP '2026-08-30 12:00:00'
+    );
+  EXCEPTION WHEN check_violation THEN
+    rejected_oversized_lifetime := true;
+  END;
+
+  BEGIN
+    INSERT INTO "Session" (
+      "id", "sessionToken", "userId", "expires",
+      "authSessionRevision", "authPolicyRevision", "issuedAt"
+    ) VALUES (
+      'codex-smoke-session-plaintext-token',
+      'codex-smoke-authoritative-plaintext-token',
+      'codex-smoke-session-user',
+      TIMESTAMP '2026-08-31 12:00:00',
+      0,
+      1,
+      TIMESTAMP '2026-08-30 12:00:00'
+    );
+  EXCEPTION WHEN check_violation THEN
+    rejected_plaintext_authoritative_token := true;
+  END;
+
+  BEGIN
+    INSERT INTO "Session" (
+      "id", "sessionToken", "userId", "expires",
+      "authSessionRevision", "authPolicyRevision", "issuedAt"
+    ) VALUES (
+      'codex-smoke-session-wrong-digest-version',
+      'v2:' || repeat('2', 64),
+      'codex-smoke-session-user',
+      TIMESTAMP '2026-08-31 12:00:00',
+      0,
+      1,
+      TIMESTAMP '2026-08-30 12:00:00'
+    );
+  EXCEPTION WHEN check_violation THEN
+    rejected_wrong_version_digest := true;
+  END;
+
+  BEGIN
+    INSERT INTO "Session" (
+      "id", "sessionToken", "userId", "expires",
+      "authSessionRevision", "authPolicyRevision", "issuedAt"
+    ) VALUES (
+      'codex-smoke-session-short-digest',
+      'v1:' || repeat('3', 63),
+      'codex-smoke-session-user',
+      TIMESTAMP '2026-08-31 12:00:00',
+      0,
+      1,
+      TIMESTAMP '2026-08-30 12:00:00'
+    );
+  EXCEPTION WHEN check_violation THEN
+    rejected_short_digest := true;
+  END;
+
+  BEGIN
+    INSERT INTO "Session" (
+      "id", "sessionToken", "userId", "expires",
+      "authSessionRevision", "authPolicyRevision", "issuedAt"
+    ) VALUES (
+      'codex-smoke-session-uppercase-digest',
+      'v1:' || repeat('A', 64),
+      'codex-smoke-session-user',
+      TIMESTAMP '2026-08-31 12:00:00',
+      0,
+      1,
+      TIMESTAMP '2026-08-30 12:00:00'
+    );
+  EXCEPTION WHEN check_violation THEN
+    rejected_uppercase_digest := true;
+  END;
+
+  BEGIN
+    INSERT INTO "Session" (
+      "id", "sessionToken", "userId", "expires",
+      "authSessionRevision", "authPolicyRevision", "issuedAt"
+    ) VALUES (
+      'codex-smoke-session-infinite-issued-at',
+      'v1:' || repeat('4', 64),
+      'codex-smoke-session-user',
+      TIMESTAMP '2026-08-31 12:00:00',
+      0,
+      1,
+      'infinity'::timestamp
+    );
+  EXCEPTION WHEN check_violation THEN
+    rejected_infinite_issued_at := true;
+  END;
+
+  BEGIN
+    INSERT INTO "Session" (
+      "id", "sessionToken", "userId", "expires",
+      "authSessionRevision", "authPolicyRevision", "issuedAt"
+    ) VALUES (
+      'codex-smoke-session-infinite-expiry',
+      'v1:' || repeat('5', 64),
+      'codex-smoke-session-user',
+      'infinity'::timestamp,
+      0,
+      1,
+      TIMESTAMP '2026-08-30 12:00:00'
+    );
+  EXCEPTION WHEN check_violation THEN
+    rejected_infinite_expiry := true;
+  END;
+
+  IF NOT rejected_negative_user_revision
+     OR NOT rejected_digest_without_metadata
+     OR NOT rejected_partial_metadata
+     OR NOT rejected_negative_session_revision
+     OR NOT rejected_zero_policy_revision
+     OR NOT rejected_nonpositive_lifetime
+     OR NOT rejected_oversized_lifetime
+     OR NOT rejected_plaintext_authoritative_token
+     OR NOT rejected_wrong_version_digest
+     OR NOT rejected_short_digest
+     OR NOT rejected_uppercase_digest
+     OR NOT rejected_infinite_issued_at
+     OR NOT rejected_infinite_expiry THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: invalid authoritative session metadata was accepted';
+  END IF;
+
+  RAISE NOTICE 'PASS: invalid authoritative session metadata was rejected';
+END;
+$$;
+
+DO $$
+DECLARE
+  rejected_second_singleton BOOLEAN := false;
+  rejected_zero_revision BOOLEAN := false;
+  rejected_unknown_policy BOOLEAN := false;
+  rejected_staged_without_deadline BOOLEAN := false;
+  rejected_audit_with_deadline BOOLEAN := false;
+  rejected_strict_with_deadline BOOLEAN := false;
+  rejected_infinite_deadline BOOLEAN := false;
+  rejected_infinite_created_at BOOLEAN := false;
+  rejected_infinite_updated_at BOOLEAN := false;
+BEGIN
+  BEGIN
+    INSERT INTO "AuthPolicyState" (
+      "id", "revision", "policy", "createdAt", "updatedAt"
+    ) VALUES (
+      2,
+      1,
+      'audit',
+      CURRENT_TIMESTAMP,
+      CURRENT_TIMESTAMP
+    );
+  EXCEPTION WHEN check_violation THEN
+    rejected_second_singleton := true;
+  END;
+
+  BEGIN
+    UPDATE "AuthPolicyState"
+    SET "revision" = 0
+    WHERE "id" = 1;
+  EXCEPTION WHEN check_violation THEN
+    rejected_zero_revision := true;
+  END;
+
+  BEGIN
+    UPDATE "AuthPolicyState"
+    SET "policy" = 'unknown'
+    WHERE "id" = 1;
+  EXCEPTION WHEN check_violation THEN
+    rejected_unknown_policy := true;
+  END;
+
+  BEGIN
+    UPDATE "AuthPolicyState"
+    SET "policy" = 'staged', "stagedGraceDeadline" = NULL
+    WHERE "id" = 1;
+  EXCEPTION WHEN check_violation THEN
+    rejected_staged_without_deadline := true;
+  END;
+
+  BEGIN
+    UPDATE "AuthPolicyState"
+    SET
+      "policy" = 'audit',
+      "stagedGraceDeadline" = TIMESTAMP '2026-09-01 00:00:00'
+    WHERE "id" = 1;
+  EXCEPTION WHEN check_violation THEN
+    rejected_audit_with_deadline := true;
+  END;
+
+  BEGIN
+    UPDATE "AuthPolicyState"
+    SET
+      "policy" = 'strict',
+      "stagedGraceDeadline" = TIMESTAMP '2026-09-01 00:00:00'
+    WHERE "id" = 1;
+  EXCEPTION WHEN check_violation THEN
+    rejected_strict_with_deadline := true;
+  END;
+
+  BEGIN
+    UPDATE "AuthPolicyState"
+    SET
+      "policy" = 'staged',
+      "stagedGraceDeadline" = 'infinity'::timestamp
+    WHERE "id" = 1;
+  EXCEPTION WHEN check_violation THEN
+    rejected_infinite_deadline := true;
+  END;
+
+  BEGIN
+    UPDATE "AuthPolicyState"
+    SET "createdAt" = 'infinity'::timestamp
+    WHERE "id" = 1;
+  EXCEPTION WHEN check_violation THEN
+    rejected_infinite_created_at := true;
+  END;
+
+  BEGIN
+    UPDATE "AuthPolicyState"
+    SET "updatedAt" = '-infinity'::timestamp
+    WHERE "id" = 1;
+  EXCEPTION WHEN check_violation THEN
+    rejected_infinite_updated_at := true;
+  END;
+
+  IF NOT rejected_second_singleton
+     OR NOT rejected_zero_revision
+     OR NOT rejected_unknown_policy
+     OR NOT rejected_staged_without_deadline
+     OR NOT rejected_audit_with_deadline
+     OR NOT rejected_strict_with_deadline
+     OR NOT rejected_infinite_deadline
+     OR NOT rejected_infinite_created_at
+     OR NOT rejected_infinite_updated_at THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: invalid AuthPolicyState row was accepted';
+  END IF;
+
+  UPDATE "AuthPolicyState"
+  SET
+    "revision" = 2,
+    "policy" = 'staged',
+    "stagedGraceDeadline" = TIMESTAMP '2026-09-01 00:00:00',
+    "updatedAt" = CURRENT_TIMESTAMP
+  WHERE "id" = 1;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM "AuthPolicyState"
+    WHERE "id" = 1
+      AND "revision" = 2
+      AND "policy" = 'staged'
+      AND "stagedGraceDeadline" = TIMESTAMP '2026-09-01 00:00:00'
+  ) THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: valid staged AuthPolicyState was rejected';
+  END IF;
+
+  UPDATE "AuthPolicyState"
+  SET
+    "revision" = 3,
+    "policy" = 'strict',
+    "stagedGraceDeadline" = NULL,
+    "updatedAt" = CURRENT_TIMESTAMP
+  WHERE "id" = 1;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM "AuthPolicyState"
+    WHERE "id" = 1
+      AND "revision" = 3
+      AND "policy" = 'strict'
+      AND "stagedGraceDeadline" IS NULL
+  ) THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: valid strict AuthPolicyState was rejected';
+  END IF;
+
+  UPDATE "AuthPolicyState"
+  SET
+    "revision" = 1,
+    "policy" = 'audit',
+    "stagedGraceDeadline" = NULL,
+    "updatedAt" = CURRENT_TIMESTAMP
+  WHERE "id" = 1;
+
+  RAISE NOTICE 'PASS: AuthPolicyState singleton and policy constraints are enforced';
+END;
+$$;
+
 -- Verification-email throttle expand: nullable/no-default preserves legacy
 -- users and old application compatibility. Equality access continues through
 -- User.id, so dedicated throttle indexes would only add write overhead.
