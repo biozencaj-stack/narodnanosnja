@@ -11,6 +11,7 @@ Zapisa ima više i lako je otvoriti pogrešan. Poređano po dubini:
 
 | Dokument | Obim | Šta pokriva |
 | --- | --- | --- |
+| **`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-08-30.md`** | 29 glavnih odeljaka | **Konsolidovan presek svega urađenog.** Implementirano stanje, razlozi, Git/PR/CI dokazi, ključni fajlovi, P0/P1/P2 dug, preporučeni redosled i produkcioni checklist |
 | **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 37 odeljaka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
 | Ovaj fajl (`IZMENE.md`) | sažeti dnevnik | Hronologija i odluke — zašto je nešto urađeno tako |
 | `docs/ARCHITECTURE-V2.md` | 4 KB | Arhitektonske granice platforme |
@@ -20,8 +21,11 @@ Zapisa ima više i lako je otvoriti pogrešan. Poređano po dubini:
 | `docs/PRISMA-BASELINE.md` | 3 KB | Baseline migracija |
 | `PREGLED_PROJEKTA_2026-08-29.md` | 770 linija | U repou prezentacionog sajta — read-only pregled **oba** dela projekta |
 
-Ako tražiš „šta je tačno promenjeno u kodu“ — `docs/DETALJAN-DNEVNIK-IZMENA.md`.
-Ovaj fajl je ulazna tačka i objašnjava razloge, ne pojedinačne izmene.
+Ako tražiš objedinjeno „šta je urađeno i šta je ostalo“ — otvori
+`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-08-30.md`. Ako tražiš hronološki zapis
+svakog razvojnog preseka i pojedinačnih izmena — otvori
+`docs/DETALJAN-DNEVNIK-IZMENA.md`. Ovaj fajl je ulazna tačka i objašnjava
+razloge, ne pojedinačne izmene.
 
 ---
 
