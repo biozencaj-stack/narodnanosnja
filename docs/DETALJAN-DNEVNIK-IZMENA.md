@@ -24,8 +24,11 @@
 > [sekciji 43](#43-p1-atomska-registracija-i-verification-resend). On zatvara
 > atomic User+credential registraciju i uvodi DB-backed resend/cooldown/fixed
 > allowance, ali ne aktivira verified-login, ne primenjuje migracije na
-> produkciji i ne pušta aplikaciju live. Završni Git/PR/CI dokaz:
-> `PENDING_FINAL_EVIDENCE`.
+> produkciji i ne pušta aplikaciju live. Feature
+> `964831f490b54a3f5b11ec0cecce8b562551d4d8` spojen je kroz PR #18 samo u V2
+> kao `15c18cf1de19ceee4de4a06eff28bf7114d3fc19`; exact-head run
+> `33317607438` i post-merge run `33317787952` su SUCCESS, a release/deploy
+> poslovi preskočeni.
 
 ## 1. Svrha dokumenta
 
@@ -4190,10 +4193,13 @@ verification credentiala, duplikat emaila ne sme da se otkrije javnim odgovorom
 ili očiglednom timing granom, a resend mora istovremeno da bude upotrebljiv,
 konkurentno bezbedan i ograničen u bazi.
 
-Implementacija je urađena na zasebnoj feature grani izvedenoj iz kanonskog V2
-stanja posle dokumentacionog preseka za PR #16. Tačan feature SHA, PR broj,
-exact-head run, merge SHA, post-merge run i remote V2 head biće dopisani tek po
-stvarnom završetku tih koraka: `PENDING_FINAL_EVIDENCE`.
+Implementacija je urađena na grani
+`ispravka/v2-atomska-registracija-resend`, izvedenoj iz kanonskog V2 stanja
+posle dokumentacionog preseka za PR #16. Feature commit je
+`964831f490b54a3f5b11ec0cecce8b562551d4d8`; kroz
+[PR #18](https://github.com/biozencaj-stack/narodnanosnja/pull/18) sa V2-only
+base granom spojen je `2026-08-30T14:46:32Z` kao
+`15c18cf1de19ceee4de4a06eff28bf7114d3fc19`.
 
 Odeljak strogo razlikuje četiri stanja:
 
@@ -4568,9 +4574,12 @@ pokrenuti drift i DB invariant smoke, zatim sve auth integration scenarije,
 kompletan unit paket, lint, TypeScript, Chromium COD E2E i production build.
 Lokalni real-DB skip nije PASS i mora biti naveden kao skip.
 
-Tačni lokalni totals/pass/skip, broj build ruta, feature SHA, PR, exact-head
-run, merge SHA i post-merge run nisu unapred izmišljeni:
-`PENDING_FINAL_EVIDENCE`.
+Lokalno je kompletan `npm test` imao 237 testova: 229 pass, 8 očekivanih
+real-PostgreSQL skip-ova bez bezbedne lokalne baze i 0 fail. ESLint quiet,
+typecheck, Prisma validate, diff-check i build 93/93 su prošli. Exact-head i
+post-merge CI izvršili su svih 237 testova sa svih 8 PostgreSQL scenarija i
+nula skip/fail, uz migration deploy, drift, DB smoke, lint, typecheck, mobile
+Chromium E2E i build.
 
 ### 43.15. Pre-live blokatori posle ove etape
 
@@ -4616,16 +4625,19 @@ Ovaj odeljak se ne popunjava procenama. Po stvarnom završetku treba zabeležiti
 
 | Dokaz | Rezultat |
 | --- | --- |
-| Feature grana i commit | `PENDING_FINAL_EVIDENCE` |
-| PR i V2-only base | `PENDING_FINAL_EVIDENCE` |
-| Exact-head run i poslovi | `PENDING_FINAL_EVIDENCE` |
-| V2 merge SHA | `PENDING_FINAL_EVIDENCE` |
-| Post-merge run i poslovi | `PENDING_FINAL_EVIDENCE` |
-| Remote kanonski V2 head | `PENDING_FINAL_EVIDENCE` |
-| Release tagovi | `PENDING_FINAL_EVIDENCE` |
-| V2/production deployment dokaz | `PENDING_FINAL_EVIDENCE` |
+| Feature grana i commit | `ispravka/v2-atomska-registracija-resend`; `964831f490b54a3f5b11ec0cecce8b562551d4d8` |
+| PR i V2-only base | [#18](https://github.com/biozencaj-stack/narodnanosnja/pull/18) → `verzija/v2.0-univerzalna-platforma`; merged `2026-08-30T14:46:32Z` |
+| Exact-head run i poslovi | [`33317607438`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33317607438), attempt 1, `pull_request`, SUCCESS na exact feature SHA-u; kompletan verify SUCCESS |
+| V2 merge SHA | `15c18cf1de19ceee4de4a06eff28bf7114d3fc19` |
+| Post-merge run i poslovi | [`33317787952`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33317787952), attempt 1, `push`, SUCCESS na exact merge SHA-u; `Potvrdi V2 release` i `Objavi na produkciju` SKIPPED |
+| Remote kanonski V2 head | `15c18cf1de19ceee4de4a06eff28bf7114d3fc19` |
+| Release tagovi | 0 `prodavnica-v2-*` tagova |
+| V2/production deployment dokaz | 0 deployment zapisa za merge SHA i 0 V2/production deployment zapisa; 5 istorijskih zapisa je nevezano |
 
-Prihvatljiv završni ishod zahteva SUCCESS na tačnom feature head-u i V2 merge
-SHA-u, uz `Potvrdi V2 release` i `Objavi na produkciju` kao `SKIPPED`. Svaki
-istorijski `main`/GitHub Pages deployment mora se razlikovati od V2/production
-deploymenta. Live i main-push aktivacija nisu deo ovog preseka.
+Oba run-a su završila SUCCESS na tačnom feature/merge sadržaju i uključila
+migration deploy, drift, DB invariant smoke, lint, typecheck, 237/237 testova
+sa svih 8 PostgreSQL scenarija, mobile Chromium E2E i build. U post-merge run-u
+`Potvrdi V2 release` i `Objavi na produkciju` bili su SKIPPED. Pet istorijskih
+`main`/GitHub Pages deploymenta nije povezano sa ovim V2 presekom. Produkciona
+baza, server, secrets, presentation `main` i live ostali su netaknuti; main-push
+aktivacija nije deo ovog preseka.

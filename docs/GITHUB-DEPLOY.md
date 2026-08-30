@@ -141,7 +141,11 @@ instaliran.
    resend two-worker race, DB sat posle User lock wait-a, verify-vs-resend
    lock redosled, fixed 24h allowance i rollback granice. DB smoke dodatno
    proverava tri nullable/no-default throttle kolone i odsustvo dedicated
-   indeksa. Finalni exact-head/post-merge dokaz: `PENDING_FINAL_EVIDENCE`.
+   indeksa. Exact-head run `33317607438` na
+   `964831f490b54a3f5b11ec0cecce8b562551d4d8` i post-merge run
+   `33317787952` na `15c18cf1de19ceee4de4a06eff28bf7114d3fc19` su attempt 1
+   SUCCESS. Oba su prošla migration/deploy, drift, DB smoke, lint, typecheck,
+   237/237 testova sa 8 PostgreSQL scenarija, mobile Chromium E2E i build.
 2. Poseban, neprodukcijski release-gate job proverava strogi naziv taga, V2
    projektno stablo i da je označeni commit deo kanonske V2 istorije. Tek njegov
    uspeh dozvoljava otvaranje zaštićenog `production` Environment-a.

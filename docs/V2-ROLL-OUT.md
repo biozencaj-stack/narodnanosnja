@@ -123,8 +123,12 @@ durable worker, retry/dedup, bounce/delivery monitoring, alert i dokaz ponašanj
 preko shutdown/redeploy granice. Bez toga se kodni resend ne opisuje kao
 garantovana isporuka.
 
-Finalni exact-head/post-merge CI dokaz atomske registracije/resenda:
-`PENDING_FINAL_EVIDENCE`.
+Atomska registracija/resend imaju exact-head run `33317607438` na feature
+`964831f490b54a3f5b11ec0cecce8b562551d4d8` i post-merge run `33317787952`
+na V2 merge-u `15c18cf1de19ceee4de4a06eff28bf7114d3fc19`, oba attempt 1
+SUCCESS. Oba su prošla migration deploy, drift, DB smoke, lint, typecheck,
+237/237 testova sa svih 8 PostgreSQL scenarija, mobile Chromium E2E i build.
+Post-merge release/deploy poslovi su SKIPPED; ovo nije live rollout.
 
 ## GitHub release gate — live je poslednji korak
 

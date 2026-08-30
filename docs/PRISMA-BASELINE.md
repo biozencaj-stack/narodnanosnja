@@ -34,7 +34,7 @@ produkcijski primenjenih migracija:
 | 3 | `20260829010100_add_payment_status_review` | primenjena |
 | 4 | `20260829020000_expand_v2_platform` | primenjena |
 | 5 | `20260830000000_expand_hashed_auth_tokens` | dokazana samo na praznoj izolovanoj CI bazi; nije primenjena na produkciju |
-| 6 | `20260830010000_expand_email_verification_cooldown` | implementirana u Git lancu; finalni CI dokaz `PENDING_FINAL_EVIDENCE`; nije primenjena na produkciju |
+| 6 | `20260830010000_expand_email_verification_cooldown` | PASS u exact-head run-u `33317607438` i post-merge run-u `33317787952` na praznoj izolovanoj PostgreSQL 16 bazi; nije primenjena na produkciju |
 
 Zato je tačna produkcijska tvrdnja i dalje: četiri završene migracije iz ranijeg
 kontrolisanog prozora. Prisustvo pete i šeste migracije u repozitorijumu nije
@@ -131,8 +131,13 @@ npx prisma migrate resolve \
   --rolled-back 20260830010000_expand_email_verification_cooldown
 ```
 
-Produkcijska baza nije čitana, menjana ili korišćena za test ove etape. Finalni
-izolovani CI dokaz nove migracije: `PENDING_FINAL_EVIDENCE`.
+Produkcijska baza nije čitana, menjana ili korišćena za test ove etape.
+Exact-head run `33317607438` na feature
+`964831f490b54a3f5b11ec0cecce8b562551d4d8` i post-merge run `33317787952`
+na `15c18cf1de19ceee4de4a06eff28bf7114d3fc19`, oba attempt 1 SUCCESS,
+primenila su ceo migration chain na praznom izolovanom PostgreSQL 16 servisu i
+zatim prošla drift, DB invariant smoke i svih 8 PostgreSQL test scenarija. To
+je CI dokaz šeme, ne produkcijska primena.
 
 ## Baza koja već beleži arhiviranu localized migraciju
 
