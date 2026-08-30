@@ -1,28 +1,51 @@
-# Provera na svakoj grani i svakom pull request-u — gradi sajt i proverava veze,
-# ali ništa ne objavljuje. Objavljuje se isključivo sa main grane.
+# Grane i pull request-i se grade i proveravaju, ali se nikada ne objavljuju.
 name: Provera
 
 on:
   push:
-    branches-ignore: [main]
+    branches-ignore:
+      - main
   pull_request:
-    branches: [main]
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: provera-${{ github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "24"
 
 jobs:
   provera:
     name: Izgradnja i provera veza
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
     steps:
       - name: Preuzmi kod
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Postavi Node
-        uses: actions/setup-node@v4
+      - name: Postavi Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Potvrdi identitet prezentacionog sajta
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f scripts/build.mjs
+          test -f scripts/proveri-veze.mjs
+          test -f site/assets/site.js
+          test ! -f package.json
+
+      - name: Proveri browser JavaScript sintaksu
+        run: node --check site/assets/site.js
 
       - name: Izgradi sajt
         run: node scripts/build.mjs
@@ -31,4 +54,4 @@ jobs:
         run: node scripts/proveri-veze.mjs
 
       - name: Prijavi rezultat
-        run: echo "Sajt se uspešno gradi. Spreman za spajanje u main."
+        run: echo "Sajt se uspešno gradi. Spreman je za pull request ka main grani."

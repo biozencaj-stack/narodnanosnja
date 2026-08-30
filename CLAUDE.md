@@ -53,9 +53,9 @@ site/
 scripts/
   build.mjs      generator: čita data + pages, piše dist/
   proveri-veze.mjs  provera da nijedna interna veza nije polomljena
-  proveri-uzivo.mjs provera objavljenog sajta preko mreže (ne koristi se u CI-ju)
+  proveri-uzivo.mjs provera objavljenog sajta posle Pages deploy-a
 .github/workflows/
-  objavi.yml     push na main -> izgradnja -> GitHub Pages
+  objavi.yml     push na main -> izgradnja -> Pages -> potvrda tačnog SHA-a
   provera.yml    push na ostale grane i PR -> samo izgradnja i provera
 dist/            rezultat izgradnje; nije u git-u, pravi ga CI
 ```
@@ -72,6 +72,10 @@ node scripts/proveri-uzivo.mjs   # proveri objavljeni sajt posle deploy-a
 
 Pre svakog commit-a pokreni **obe** prve dve naredbe. Provera veza mora proći
 bez ijedne greške — CI je ionako obara ako ne prođe.
+
+GitHub Actions koristi podržani Node.js 24. Workflow dodatno pokreće
+`node --check site/assets/site.js`, jer se browser skripta samo kopira u build i
+inače ne bi nužno bila parsirana tokom generisanja.
 
 ---
 
@@ -111,8 +115,23 @@ bez ijedne greške — CI je ionako obara ako ne prođe.
 
 ## Objavljivanje
 
-Push na `main` pokreće `objavi.yml`, koji gradi sajt i objavljuje ga na
-GitHub Pages. Nema drugog načina objavljivanja i `dist/` se nikada ne commit-uje.
+Push na `main` pokreće `objavi.yml`. Workflow je podeljen na tri produkcijske
+sekcije:
+
+1. proverava identitet prezentacionog projekta i JavaScript sintaksu, gradi
+   sajt, proverava veze i uploaduje tačno taj `dist` artefakt;
+2. objavljuje artefakt na GitHub Pages, samo ako je ref tačno `main`;
+3. čeka da javni `verzija.json` vrati SHA trenutnog commita, pa pokreće
+   `proveri-uzivo.mjs` nad svim javnim stranicama i resursima.
+
+`dist/verzija.json` pravi isključivo CI i ne commit-uje se. Sadrži javni Git
+SHA i identitet workflow run-a, bez tajni. Actions zavisnosti su pinovane na
+pregledane pune commit SHA vrednosti, a Pages/OIDC write dozvole ima samo
+deployment job.
+
+Ručno `workflow_dispatch` pokretanje može da proveri i izgradi izabranu granu,
+ali job-level guard ne dozvoljava objavu ako ref nije `refs/heads/main`.
+Nema drugog načina objavljivanja i `dist/` se nikada ne commit-uje.
 
 ### ⚠️ U ovom repozitorijumu žive DVA projekta
 

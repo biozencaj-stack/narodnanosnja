@@ -1,41 +1,61 @@
-# Svaki push na main gradi sajt i objavljuje novu verziju na GitHub Pages.
+# Svaki push na main prolazi kroz tri odvojene sekcije:
+# 1. izgradnja i provera, 2. GitHub Pages objava, 3. potvrda nove verzije.
 name: Objavi sajt
 
+# KONFIGURACIJA: okidači
 on:
   push:
-    branches: [main]
-  workflow_dispatch: # omogućava ručno pokretanje iz Actions kartice
+    branches:
+      - main
+  workflow_dispatch:
 
-# Dozvole potrebne za objavljivanje na Pages.
+# Podrazumevano je dozvoljeno samo čitanje koda. Pages/OIDC write dozvole
+# dobija isključivo deployment job.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
-# Ako stignu dva push-a jedan za drugim, pusti da se prvi objavi do kraja.
+# Dva main push-a se objavljuju redom. Aktivna produkcijska objava se ne prekida.
 concurrency:
-  group: pages
+  group: pages-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  NODE_VERSION: "24"
+
 jobs:
-  gradi:
-    name: Izgradnja
+  # SEKCIJA 1: izgradnja i lokalne provere
+  izgradi:
+    name: 1. Izgradnja i provera
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
     steps:
-      - name: Preuzmi kod
-        uses: actions/checkout@v4
+      - name: Preuzmi tačan commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Postavi Node
-        uses: actions/setup-node@v4
+      - name: Postavi Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
 
-      - name: Podesi Pages
+      - name: Potvrdi identitet prezentacionog sajta
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f scripts/build.mjs
+          test -f scripts/proveri-veze.mjs
+          test -f scripts/proveri-uzivo.mjs
+          test -f site/assets/site.js
+          test ! -f package.json
+
+      - name: Proveri browser JavaScript sintaksu
+        run: node --check site/assets/site.js
+
+      - name: Podesi GitHub Pages putanju
         id: pages
-        uses: actions/configure-pages@v5
-        with:
-          # Uključuje GitHub Pages na repozitorijumu ako već nije uključen.
-          enablement: true
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
       - name: Izgradi sajt
         run: node scripts/build.mjs
@@ -48,19 +68,89 @@ jobs:
         env:
           BASE_PATH: ${{ steps.pages.outputs.base_path }}
 
-      - name: Spakuj rezultat
-        uses: actions/upload-pages-artifact@v3
+      - name: Upiši identitet nove verzije
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '{"sha":"%s","run_id":"%s","run_attempt":"%s"}\n' \
+            "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
+            > dist/verzija.json
+
+      - name: Spakuj provereni rezultat
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: dist
 
+  # SEKCIJA 2: objavljivanje istog, prethodno proverenog artefakta
   objavi:
-    name: Objavljivanje
-    needs: gradi
+    name: 2. GitHub Pages objava
+    needs: izgradi
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.objava.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.objava.outputs.page_url }}
+
     steps:
       - name: Objavi na GitHub Pages
         id: objava
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
+
+  # SEKCIJA 3: dokaz da CDN služi baš commit iz ovog workflow run-a
+  potvrdi:
+    name: 3. Potvrda objavljene verzije
+    needs: objavi
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      PAGE_URL: ${{ needs.objavi.outputs.page_url }}
+      EXPECTED_SHA: ${{ github.sha }}
+
+    steps:
+      - name: Preuzmi skriptu za mrežnu proveru
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Postavi Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Sačekaj da nova verzija bude javno dostupna
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_URL="${PAGE_URL%/}/verzija.json"
+
+          for attempt in $(seq 1 12); do
+            response="$(
+              curl --fail --silent --show-error --location \
+                --max-time 15 \
+                --header 'Cache-Control: no-cache' \
+                "${VERSION_URL}?run=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+                2>/dev/null || true
+            )"
+
+            if [[ "$response" == *"\"sha\":\"${EXPECTED_SHA}\""* ]]; then
+              echo "Javno je dostupan očekivani commit ${EXPECTED_SHA}."
+              exit 0
+            fi
+
+            if (( attempt < 12 )); then
+              echo "Pokušaj ${attempt}/12: nova verzija još nije vidljiva."
+              sleep 5
+            fi
+          done
+
+          echo "Objavljena stranica ne vraća očekivani commit ${EXPECTED_SHA}." >&2
+          exit 1
+
+      - name: Proveri sve javne stranice i resurse
+        run: node scripts/proveri-uzivo.mjs "${PAGE_URL%/}"
