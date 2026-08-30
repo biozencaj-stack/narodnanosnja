@@ -39,6 +39,7 @@
 27. [Preporučeni redosled nastavka](#27-preporučeni-redosled-nastavka)
 28. [Produkcioni kontrolni spisak](#28-produkcioni-kontrolni-spisak)
 29. [Referentna dokumentacija](#29-referentna-dokumentacija)
+30. [P0 release granica za V2](#30-p0-release-granica-za-v2)
 
 ---
 
@@ -71,6 +72,11 @@ taj test obavezno uključuje.
 Ovaj izveštaj opisuje stanje koda pre dodavanja samog izveštaja. Poslednji
 remote V2 merge je `7921621`; njegov sadržaj je kriptografski isti kao CI-
 testirani head `4816b93`.
+
+Operativna dopuna u odeljku 30 opisuje naknadno implementiranu P0 release
+granicu. Raniji commitovi, PR-ovi i CI runovi ostaju istorijski dokazi svog
+vremenskog preseka; aktuelna pravila okidanja i deploya tumače se prema
+odeljcima 16, 26, 28 i 30.
 
 ---
 
@@ -968,16 +974,31 @@ izvršava:
 11. seed i mobilni COD Playwright E2E;
 12. produkcijski Next build.
 
-Produkciona objava zavisi od verify job-a i dodatno je ograničena na `main` i
-push/workflow_dispatch događaj. Ručni run na V2/hotfix grani zato proverava sve,
-ali `Objavi na produkciju` ostaje preskočen.
+U aktuelnoj P0 radnoj grani verify job se automatski pokreće za PR ka
+`verzija/v2.0-univerzalna-platforma`, push na tu kanonsku V2 granu i push taga
+sa prefiksom `prodavnica-v2-`; `workflow_dispatch` ostaje ručna
+verification-only provera. Push na prezentacioni `main` više nije V2 okidač.
+
+Produkciona objava zavisi od uspešnog verify job-a i posebnog
+`Potvrdi V2 release` posla, a oba release posla mogu da uđu u izvršavanje samo
+za push namenskog V2 release taga. Ručni dispatch, PR i običan push kanonske V2
+grane uvek proveravaju kod bez deploya. Sam prefiks taga nije dovoljan:
+neprodukcijski release-gate posao zahteva tačan format
+`prodavnica-v2-YYYYMMDD-N` i commit koji je predak kanonske V2 grane pre nego
+što GitHub otvori `production` Environment. Deploy posao iste uslove ponavlja
+pre SSH-a.
 
 ### 16.2. CI izolacija i concurrency
 
 - minimalna dozvola je `contents: read`;
-- PR dobija svoju cancelable concurrency grupu;
-- produkcijski i ručni deploy dele jednu serijsku grupu;
-- actions/checkout i setup-node su pinovani na pune SHA vrednosti;
+- svaki PR dobija svoju cancelable CI concurrency grupu;
+- push V2 grane i ručni dispatch dobijaju zasebne cancelable CI grupe po ref-u;
+- samo release-tag push ulazi u serijsku produkcionu grupu i taj run se ne
+  prekida novijim runom;
+- `actions/checkout` i `actions/setup-node` su pinovani na pune SHA vrednosti
+  za v7 izdanja, a checkout ne čuva GitHub kredencijale;
+- verify pre instalacije zavisnosti potvrđuje V2 identitet preko obaveznih
+  Next/Prisma/deploy/health fajlova i odbija prezentacioni `scripts/build.mjs`;
 - test tajne su eksplicitno neprodukcijske;
 - E2E seed odbija bazu čiji naziv ne sadrži `e2e`, `test` ili `provera`.
 
@@ -1021,11 +1042,23 @@ baza nije dostupna.
 
 ### 16.5. Operativno stanje
 
-GitHub `production` environment i branch policy postoje, ali poslednji
-dokumentovani audit nalazi 0 secrets i 0 variables. Deploy korisnik, prava,
-SSH ključ, produkcijski `.env`, domen, DNS, TLS i reverse proxy nisu odobreni
-ili popunjeni kroz ovaj rad. Release tok je pripremljen i testiran statički/CI,
-ali V2 aplikacioni deploy nije izvršen.
+U ovoj radnoj grani implementiran je repository-side, fail-closed release
+gate: `main` nije V2 trigger, dispatch ne deployuje, a produkcijski job prihvata
+samo namenski V2 tag, strogi naziv taga, V2 stablo i commit iz kanonske V2
+istorije. To je stanje koda, a ne tvrdnja da je GitHub ili server već
+konfigurisan.
+
+Read-only audit od 30. avgusta 2026. potvrdio je da spoljašnji GitHub
+`production` Environment i dalje dopušta samo staru `main` branch politiku,
+nema required reviewer ni wait timer, ima 0 Environment secrets, 0 variables i
+0 deployment zapisa. `main` nema branch protection niti repository ruleset.
+Ništa od tog spoljašnjeg stanja nije menjano ovom etapom.
+
+Allowed-tag policy/ruleset, obavezni reviewer, secrets i variables ostaju za
+poslednju, posebno odobrenu live fazu. Deploy korisnik, prava, SSH ključ,
+produkcijski `.env`, domen, DNS, TLS i reverse proxy nisu popunjeni kroz ovaj
+rad. Nije napravljen release tag, nije kontaktiran server i V2 aplikacioni
+deploy nije izvršen.
 
 ---
 
@@ -1441,6 +1474,12 @@ Ipak, pre bilo kakvog budućeg produkcionog deploya treba pokrenuti obavezan CI
 na tačnom release SHA-u. Tree ekvivalencija je dobar dokaz za ovaj izveštaj,
 ali nije zamena za release proceduru.
 
+Ovaj pasus ostaje istorijski dokaz završnog stabla pre P0 release izmene. Nova
+P0 grana mora zasebno proći CI na svom tačnom head SHA-u, a posle integracije i
+kanonska V2 grana mora dobiti zeleni push run. Tek commit koji je već deo te
+grane može kasnije biti označen namenskim release tagom; takav tag u ovoj fazi
+nije napravljen.
+
 ---
 
 ## 20. Testovi i dokazi
@@ -1716,9 +1755,10 @@ odvojeno.
 
 Najnovija odluka ima prednost nad starijim dnevnicima. `main` trenutno objavljuje
 drugu aplikaciju preko GitHub Pages. Draft PR #1 je ostao istorijski trag, ali
-nije bezbedan release mehanizam. V2 treba dobiti zaseban repo/release granu ili
-eksplicitno redizajniran deployment tok, bez slučajnog uništenja
-prezentacionog sajta.
+nije bezbedan release mehanizam. Za aktuelnu implementaciju izabrana je
+kanonska V2 grana kao CI/integracioni target, uz produkcijski deploy isključivo
+preko namenskog, strogo proverenog V2 release taga. Time `main` ostaje izvan V2
+workflow-a i nastavlja da služi prezentacionom sajtu.
 
 ---
 
@@ -1902,14 +1942,22 @@ PR #1 je OPEN/DRAFT, konfliktan prema `main` i nema attached checks. Još važni
 njegov cilj je sada arhitektonski pogrešan: `main` objavljuje prezentacioni
 GitHub Pages sajt. Ne treba samo „rešiti konflikte” i merge-ovati.
 
-Potrebno je izabrati i odobriti jedno:
+Izabrano je drugo rešenje: kanonska V2 grana je trajni CI/integracioni target,
+a namenski tag je jedini repository-side ulaz u produkcijski job. U aktuelnoj
+radnoj grani implementirano je:
 
-1. zaseban V2 repozitorijum;
-2. trajnu release granu sa workflow-om koji ne dodiruje Pages `main`;
-3. potpuno odobrenu migraciju repozitorijuma sa planom očuvanja prezentacije.
+1. PR i push CI vezan za `verzija/v2.0-univerzalna-platforma`;
+2. uklanjanje prezentacionog `main` iz V2 workflow okidača;
+3. verification-only `workflow_dispatch`;
+4. tag-only production job sa strogim nazivom i V2 ancestry proverom;
+5. V2 tree guard i odvojene CI/production concurrency grupe.
 
-Zatim treba zatvoriti ili jasno arhivirati PR #1, vezati obavezni CI za pravi
-release target i pokrenuti pipeline na tačnom rezultujućem SHA-u.
+Repository-side P0 granica je zato implementirana u kodu, ali njeno prihvatanje
+još zahteva zeleni CI na tačnom head SHA-u i integraciju u kanonsku V2 granu.
+Spoljašnji GitHub Environment allowed-tag policy/ruleset, obavezni reviewer,
+secrets/variables, zatvaranje ili arhiviranje PR-a #1 i samo kreiranje release
+taga ostaju odvojeni koraci. Release tag, environment izmena i live deploy
+namerno se ne rade do poslednje, posebno odobrene faze.
 
 #### P0.2. Kartice moraju ostati isključene
 
@@ -2205,11 +2253,17 @@ privlačnosti funkcije.
 
 ### Faza 1 — zaključati release granicu
 
-1. Potvrditi da `main` ostaje prezentacioni sajt.
-2. Izabrati zaseban V2 repo ili release granu/workflow.
-3. Zatvoriti/arhivirati Draft PR #1 da ne postane slučajan merge put.
-4. Vratiti licencu, uskladiti README i označiti legacy skripte kao neupotrebljive.
-5. Vezati required CI i dependency/security gate za pravi release target.
+1. Potvrđeno u kodu i dokumentaciji: `main` ostaje prezentacioni sajt.
+2. Izabrano i implementirano u radnoj grani: V2 CI target plus tag-only release
+   workflow, bez deploya sa dispatch-a ili push-a grane.
+3. Sledeće: otvoriti PR ka kanonskoj V2 grani i dobiti zeleni CI na tačnom
+   head SHA-u, zatim potvrditi zeleni push run posle integracije.
+4. Zatvoriti/arhivirati Draft PR #1 da ne postane slučajan merge put.
+5. Vratiti licencu, dovršiti README usklađivanje i označiti legacy skripte kao
+   neupotrebljive.
+6. Podesiti required CI/dependency/security gate za pravi V2 target.
+7. GitHub Environment tag policy, reviewer, secrets, release tag i live
+   aktivaciju ostaviti za završnu, posebno odobrenu fazu.
 
 ### Faza 2 — zatvoriti neposredne security P1 nalaze
 
@@ -2283,9 +2337,18 @@ pretpostavke ili postojanja koda.
 
 ### 28.1. Repo i release
 
-- [ ] Odobren je zaseban V2 release target koji ne prepisuje prezentacioni
-  `main`.
+- [x] U kodu je definisan V2 CI/release target koji ne prepisuje
+  prezentacioni `main`.
+- [x] `workflow_dispatch`, PR i običan push V2 grane ne mogu pokrenuti
+  produkcijski job.
+- [x] Produkcijski job zahteva namenski tag, strogi format, V2 identitet stabla
+  i commit iz kanonske V2 istorije.
+- [ ] P0 workflow izmena je integrisana u kanonsku V2 granu uz zeleni PR i
+  post-merge push CI na tačnim SHA vrednostima.
 - [ ] Draft PR #1 je zatvoren/arhiviran ili zamenjen validnim release PR-om.
+- [ ] GitHub Environment/ruleset dozvoljava samo `prodavnica-v2-*` tagove i
+  zahteva review pre produkcijskog job-a.
+- [ ] Namenski release tag je napravljen tek u odobrenoj završnoj live fazi.
 - [ ] Tačan release SHA je pregledan.
 - [ ] Required CI je zelen na tom SHA-u.
 - [ ] Nema nerešenih merge konflikata.
@@ -2327,6 +2390,8 @@ pretpostavke ili postojanja koda.
 - [ ] Aplikacija veruje samo poznatim proxy hopovima.
 - [ ] Deploy i DB korisnik imaju najmanje potrebne privilegije.
 - [ ] GitHub production environment ima review zaštitu.
+- [ ] GitHub production environment odbija grane i tagove van odobrenog
+  `prodavnica-v2-*` obrasca.
 - [ ] Secrets/variables su postavljeni, validirani i imaju plan rotacije.
 - [ ] `.env` ima ograničena prava i nije u release/Git istoriji.
 - [ ] Logovi ne sadrže lozinke, tokene, kartične ili nepotrebne lične podatke.
@@ -2416,12 +2481,170 @@ specijalizovane detalje:
 
 ---
 
+## 30. P0 release granica za V2
+
+Ovaj odeljak je operativna dopuna vremenskom preseku iz ostatka izveštaja. On
+beleži repository-side P0 izmenu implementiranu u radnoj grani
+`ispravka/v2-release-granica`. Ne menja istorijske tvrdnje o ranijim PR-ovima,
+commitovima i CI runovima, već zamenjuje ranije operativno pravilo po kojem su
+`main` ili ručni dispatch mogli da budu produkcijski deploy ulaz.
+
+### 30.1. Problem koji je granica zatvorila
+
+Isti GitHub repozitorijum sadrži dva različita projekta:
+
+- prezentacioni sajt, čiji `main` ide na GitHub Pages;
+- V2 Next.js/Prisma prodavnicu, čija je kanonska grana
+  `verzija/v2.0-univerzalna-platforma`.
+
+Staro V2 workflow pravilo je produkcijski job vezivalo za `main` i dozvoljavalo
+`workflow_dispatch`. To je stvaralo dve klase rizika: V2 deploy put je zavisio
+od grane drugog projekta, a ručno pokretanje je imalo šire ovlašćenje od obične
+verifikacije. Novi model eksplicitno razdvaja tri stvari: integracioni CI,
+odobreni release identitet i stvarnu live aktivaciju.
+
+### 30.2. Nova matrica okidanja
+
+| Događaj/ref | `Provera verzije` | `Potvrdi V2 release` | `Objavi na produkciju` |
+| --- | --- | --- | --- |
+| PR ka `verzija/v2.0-univerzalna-platforma` | pokreće se | preskočen | preskočen |
+| Push na kanonsku V2 granu | pokreće se | preskočen | preskočen |
+| V2 `workflow_dispatch` | ručna provera | preskočen | preskočen |
+| Push taga `prodavnica-v2-*` | pokreće se | proverava identitet pre Environment-a | moguć tek posle oba uspešna posla |
+| Push na prezentacioni `main` | nije V2 okidač | nije okidač | nije okidač |
+| Drugi branch ili proizvoljan tag | nije okidač | nije okidač | nije okidač |
+
+Glob `prodavnica-v2-*` služi samo da GitHub uopšte napravi release-tag run.
+Unutar neprodukcijskog release-gate job-a važi stroži format:
+`^prodavnica-v2-[0-9]{8}-[1-9][0-9]*$`, odnosno praktično
+`prodavnica-v2-YYYYMMDD-N`. Zbog toga tag koji samo deli prefiks, ali nema
+odobren oblik, ne može proći deploy guard.
+
+### 30.3. Fail-closed identitet koda i release commit
+
+Verify job pre instalacije zavisnosti proverava da checkout zaista liči na V2
+prodavnicu. Zahteva `package.json`, zaključani npm manifest, Next konfiguraciju,
+Prisma šemu, deploy skriptu i health rutu, a istovremeno odbija
+`scripts/build.mjs`, koji pripada prezentacionom generatoru.
+
+Poseban `Potvrdi V2 release` job posle CI-ja ponavlja ključne V2 identitetske
+zahteve i dodatno traži:
+
+1. da je GitHub ref zaista tag;
+2. da naziv taga odgovara strogom release obrascu;
+3. da je `GITHUB_SHA` predak
+   `origin/verzija/v2.0-univerzalna-platforma`.
+
+Release-gate i deploy checkout zato koriste kompletnu istoriju
+(`fetch-depth: 0`), kako bi
+ancestry provera bila zasnovana na Git istoriji, a ne na pretpostavci iz naziva
+taga. I verify i deploy checkout imaju `persist-credentials: false`, pa GitHub
+token ne ostaje upisan u checkout konfiguraciji.
+
+Ovi uslovi znače da tag sa odgovarajućim nazivom, ali napravljen nad commitom
+izvan kanonske V2 istorije, pada pre otvaranja `production` Environment-a.
+Produkcijski job iste uslove ponavlja pre SSH pripreme. Isto važi za checkout
+prezentacionog stabla. Repository workflow zato ne zavisi samo od ljudskog
+sećanja da je izabran pravi commit.
+
+### 30.4. Concurrency i supply-chain detalji
+
+Concurrency je razdvojen prema posledici run-a:
+
+- svaki PR ima svoju otkazivu CI grupu;
+- branch push i ručni dispatch imaju otkazivu CI grupu po ref-u;
+- samo release-tag push koristi jednu serijsku produkcionu grupu za repozitorijum;
+- produkcijski tag run se ne prekida kada stigne noviji run.
+
+Time ručna provera više ne zauzima niti imitira produkcijski deploy red, dok se
+dva live pokušaja ne mogu izvršavati paralelno. `actions/checkout` i
+`actions/setup-node` ažurirani su i pinovani na pune commit SHA vrednosti za
+v7 izdanja, uz zadržanu minimalnu workflow dozvolu `contents: read`.
+
+### 30.5. Šta je implementirano, a šta namerno nije aktivirano
+
+| Sloj | Stanje u ovoj fazi |
+| --- | --- |
+| V2 workflow triggeri | implementirani u radnoj grani |
+| Dispatch kao verification-only | implementirano u uslovu produkcijskog job-a |
+| Tag format i V2 ancestry guard | implementirani u workflow kodu |
+| Pre-Environment release-gate job | implementiran posle CI-ja, pre production Environment-a |
+| V2 naspram presentation tree guard | implementiran pre verifikacije/deploya |
+| CI naspram production concurrency | implementirano u workflow kodu |
+| Zeleni exact-head PR CI | obavezan sledeći dokaz; nije pretpostavljen |
+| Zeleni post-merge V2 push CI | obavezan posle integracije; nije pretpostavljen |
+| GitHub Environment allowed-tag policy/ruleset | spoljašnja postavka, ostavljena za završnu fazu |
+| Obavezni production reviewer | spoljašnja postavka, ostavljena za završnu fazu |
+| Production secrets i variables | nisu popunjavani ovom izmenom |
+| Namenski release tag | nije napravljen |
+| SSH/server, DNS/TLS/proxy ili PM2 | nisu kontaktirani niti menjani |
+| Live deploy i kartični capability | nisu aktivirani |
+
+Ova razlika je namerna. Workflow kod sada postavlja neophodnu unutrašnju
+granicu, ali nije dovoljan dokaz da je spoljna GitHub zaštita uključena ili da
+je produkcija spremna. Environment allowed-tag pravilo, required reviewer i
+odgovarajući ruleset treba da budu nezavisan drugi sloj. Njihovo podešavanje,
+kao i unos tajni, ostaje neposredno pre odobrenog live release-a kako razvojni
+push ili ručna provera ne bi imali produkcijske posledice.
+
+### 30.6. Lokalni dokaz P0 radne grane
+
+Pre PR-a su nad aktuelnim radnim stablom završene sledeće provere:
+
+| Provera | Rezultat |
+| --- | --- |
+| `actionlint 1.7.12 .github/workflows/objavi.yml` | prolazi bez nalaza |
+| lokalna release-gate simulacija | validan V2 tag/ancestor prolazi; pogrešan format taga pada |
+| `git diff --check` | prolazi |
+| relativne Markdown veze i interni anchor-i | svi postoje |
+| `npm run lint -- --quiet` | prolazi |
+| `npm run typecheck` | prolazi |
+| `npm test` | 103 ukupno; 102 prolaze; 1 opt-in DB test očekivano preskočen lokalno |
+| `npm run build` sa neprodukcijskim CI vrednostima | prolazi |
+
+Build bez lokalnog PostgreSQL servisa emituje očekivane poruke da dinamički
+podaci nisu dostupni i koristi bezbedne storefront podrazumevane vrednosti, ali
+završava uspešno. To nije zamena za CI: PR provera mora podići PostgreSQL 16,
+primeniti migracije, uključiti opt-in DB test i izvršiti Chromium E2E.
+
+Zvanični GitHub tag ref-ovi su read-only proverom potvrđeni baš na pinovanim
+SHA vrednostima: `actions/checkout@v7.0.1` na
+`3d3c42e5aac5ba805825da76410c181273ba90b1` i
+`actions/setup-node@v7.0.0` na
+`820762786026740c76f36085b0efc47a31fe5020`.
+
+### 30.7. Obavezan redosled pre prvog live V2 release-a
+
+1. Lokalno validirati workflow sintaksu i kompletan V2 test paket.
+2. Otvoriti PR isključivo ka kanonskoj V2 grani.
+3. Potvrditi zeleni CI na tačnom PR head SHA-u i preskočen production job.
+4. Integrisati promenu u V2, bez dodirivanja prezentacionog `main`.
+5. Potvrditi zeleni push CI na tačnom kanonskom V2 SHA-u i ponovo preskočen
+   production job.
+6. Zatvoriti ili arhivirati stari Draft PR #1 ka `main`.
+7. Završiti P1/security, pravne, serverske, backup/restore i operativne gate-ove.
+8. Tek u poslednjoj odobrenoj fazi podesiti GitHub production Environment,
+   ruleset, reviewer, secrets i variables.
+9. Tek tada napraviti namenski release tag nad već proverenim kanonskim V2
+   commitom i odobriti produkcijski job.
+10. Posle objave proveriti javni health SHA, ključne smoke tokove, monitoring i
+    rollback kriterijume.
+
+Do koraka 9 nijedna aktivnost iz ove P0 sekcije ne pušta sajt live. To je
+ključni operativni rezultat promene: svakodnevni V2 PR, branch push i ručna
+provera ostaju bez produkcijske posledice, dok live zahteva poseban identitet,
+posebnu spoljnu zaštitu i eksplicitno odobren poslednji korak.
+
+---
+
 ## Završna napomena
 
 Najveći deo tehničke osnove je urađen: postoji ozbiljan V2 commerce sloj,
 kontrolisana DB evolucija, kompletan CI, bezbedniji payment/order model, četiri
-naknadna P1 hotfixa i release mehanizam sa rollbackom. Najveći preostali rizik
-nije jedna izolovana funkcija, već poslednji kilometar: odvajanje release puta,
+naknadna P1 hotfixa i release mehanizam sa rollbackom. Repository-side V2
+release granica je implementirana u radnoj grani, ali njeni exact-SHA CI dokazi
+i spoljašnja GitHub/live zaštita još nisu završeni. Najveći preostali rizik nije
+jedna izolovana funkcija, već poslednji kilometar: prihvatanje release granice,
 critical/high dependency i auth hardening, abuse/consent/email zaštita, pravni
 podaci i stvarna produkciona operativa.
 

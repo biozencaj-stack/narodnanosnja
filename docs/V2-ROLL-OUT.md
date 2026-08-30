@@ -37,6 +37,28 @@ se generičke varijante ne popune i ne provere.
 8. Tek tada zakazati produkcijski prozor, ponoviti backup, primeniti pregledanu
    migraciju i objaviti kod.
 
+## GitHub release gate — live je poslednji korak
+
+Pull request i push na `verzija/v2.0-univerzalna-platforma` pokreću kompletan
+CI, ali nikada deploy. Ručni `workflow_dispatch` takođe služi samo za proveru.
+Produkcijski job može da se razmatra tek kada je sav prethodni rad završen i
+kada se pushuje namenski tag oblika `prodavnica-v2-YYYYMMDD-N`.
+
+Pre pravljenja taga obavezno:
+
+1. izabrati pregledani SHA koji je već deo remote kanonske V2 grane;
+2. potvrditi kompletan zeleni CI za isti sadržaj;
+3. ponoviti production backup/restore, migration, capability i rollback gate;
+4. potvrditi da `production` Environment dopušta samo `prodavnica-v2-*` tagove
+   i zahteva reviewera;
+5. tek tada napraviti i pushovati anotirani tag i ručno odobriti Environment.
+
+Poseban workflow job proverava oblik taga, V2 projektno stablo i da je release
+commit predak kanonske V2 grane pre otvaranja `production` Environment gate-a.
+Produkcijski job iste uslove ponavlja pre bilo kakvog SSH koraka. Samo
+postojanje taga ne zaobilazi Environment zaštitu. Tokom razvoja i svih ranijih
+faza tag se ne pravi, server se ne menja i live verzija ostaje netaknuta.
+
 ## Environment pre puštanja
 
 - postaviti jak, zaseban `ORDER_ACCESS_SECRET`;

@@ -20,7 +20,8 @@ korena.
 | Grana | Šta je | Objavljivanje |
 | --- | --- | --- |
 | `main` | prezentacioni statički sajt | GitHub Pages |
-| `verzija/v2.0-univerzalna-platforma` | **ova prodavnica** | `objavi.yml` iz ove grane |
+| `verzija/v2.0-univerzalna-platforma` | **ova prodavnica** | CI bez deploya |
+| `prodavnica-v2-YYYYMMDD-N` tag | pregledani V2 release | jedini dozvoljeni VPS deploy okidač |
 
 **Nikada ne spajaj ovu granu u `main`.** Push na `main` objavljuje
 prezentacioni sajt; spajanje bi oborilo njegov build ili objavilo pogrešan
@@ -33,14 +34,16 @@ misli se na **prenos sadržaja** u Articles, ne na git merge.
 
 ---
 
-## ⚠️ Pravilo broj jedan: svaka nova verzija ide na svoju granu
+## ⚠️ Pravilo broj jedan: svaka izmena ide sa kanonske V2 grane
 
-**Nikada ne radi direktno na `main`.** Svaki put kad kreneš u novu verziju,
-novu funkcionalnost ili veću izmenu, prvo napravi granu:
+**Nikada ne radi direktno na `main` niti na kanonskoj V2 grani.** Svaki put kad
+kreneš u novu verziju, funkcionalnost ili ispravku, napravi novu granu sa
+aktuelnog remote V2 stanja:
 
 ```bash
-git checkout main && git pull
-git checkout -b verzija/v1.1-galerija-proizvoda
+git fetch origin verzija/v2.0-univerzalna-platforma
+git switch --no-track -c dodatak/kratak-opis \
+  origin/verzija/v2.0-univerzalna-platforma
 ```
 
 | Vrsta posla        | Oblik imena                | Primer                        |
@@ -50,7 +53,11 @@ git checkout -b verzija/v1.1-galerija-proizvoda
 | Ispravka greške    | `ispravka/kratak-opis`     | `ispravka/zbir-u-korpi`       |
 | Samo sadržaj       | `sadrzaj/kratak-opis`      | `sadrzaj/opisi-proizvoda`     |
 
-Push na `main` znači objavljivanje, pa `main` mora u svakom trenutku biti ispravan.
+Pull request se otvara ka `verzija/v2.0-univerzalna-platforma`. Push na tu
+granu pokreće CI, ali nikada produkcijski deploy. Ručni `workflow_dispatch`
+takođe je verification-only. Produkciju može da pokrene isključivo push
+pregledanog taga oblika `prodavnica-v2-YYYYMMDD-N`, i to tek na poslednjoj
+odobrenoj rollout fazi.
 
 ## ⚠️ Pravilo broj dva: održavaj ovaj fajl
 
@@ -266,6 +273,15 @@ GitHub deploy workflow ne instalira niti menja VPS systemd timer za cleanup
 rezervacija. Timer, njegov Bearer secret, prvi dry-run i prvi apply smoke su
 zasebna operativna radnja koja zahteva eksplicitno odobrenje. U ovoj izmeni
 VPS nije menjan.
+
+V2 workflow ne reaguje na presentation `main`. PR i push kanonske V2 grane
+rade samo proveru. `workflow_dispatch` ne deployuje čak ni kada se ručno izabere
+release tag. Tag deploy dodatno zahteva da je označeni commit već deo kanonske
+V2 grane, da tag ima strogi oblik `prodavnica-v2-YYYYMMDD-N`, da production
+Environment dozvoljava isti tag obrazac i da je odobren required reviewer.
+Poseban `Potvrdi V2 release` job proverava identitet pre otvaranja Environment
+gate-a, a produkcijski job proveru ponavlja pre SSH-a.
+Release tag se ne pravi tokom običnog razvoja; live puštanje je poslednji korak.
 
 ## Šta još nije urađeno
 

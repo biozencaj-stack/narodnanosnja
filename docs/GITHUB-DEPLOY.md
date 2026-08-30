@@ -1,17 +1,36 @@
 # GitHub Actions objavljivanje
 
-Workflow `.github/workflows/objavi.yml` proverava svaki pull request ka `main`
-i svaki push na `main`. Pull request pokreće samo CI proveru i nikada ne pokreće
-produkcijski deploy. Svaki push na `main` posle uspešne provere automatski
-objavljuje novu verziju. Workflow može da se pokrene i ručno iz GitHub Actions
-kartice.
+Workflow `.github/workflows/objavi.yml` je odvojen od presentation `main` grane.
+CI radi nad kanonskom granom prodavnice, dok produkcijski job može da se pokrene
+isključivo namenskim V2 release tagom.
+
+| Događaj | CI provera | Produkcijski deploy |
+| --- | --- | --- |
+| Pull request ka `verzija/v2.0-univerzalna-platforma` | da | ne |
+| Push na `verzija/v2.0-univerzalna-platforma` | da | ne |
+| Ručni `workflow_dispatch` nad V2 ref-om | da | ne |
+| Push taga `prodavnica-v2-YYYYMMDD-N` | da | da, tek posle svih zaštita |
+| Push na presentation `main` | V2 workflow se ne pokreće | ne |
+
+Tag deploy dodatno odbija tag koji nema strogi `prodavnica-v2-YYYYMMDD-N`
+oblik, pogrešno projektno stablo ili commit koji nije već deo remote
+`verzija/v2.0-univerzalna-platforma` grane. Ručni dispatch namerno nikada nije
+release mehanizam. Poseban `Potvrdi V2 release` job proverava tag, stablo i
+Git ancestry pre nego što se uopšte otvori `production` Environment gate;
+produkcijski job iste uslove ponavlja pre SSH pripreme.
 
 ## GitHub podešavanja
 
 U `Settings → Environments` najpre kreirati environment `production`. U
-njegovom odeljku `Deployment branches and tags` izabrati custom branch policy
-i dozvoliti samo granu `main`. Produkcijske vrednosti je preporučeno čuvati u
-tom environmentu, umesto u širem repository scope-u.
+njegovom odeljku `Deployment branches and tags` izabrati custom policy,
+ukloniti ranije `main` pravilo i dozvoliti samo tag obrazac
+`prodavnica-v2-*`. Dodati required reviewer i, kada GitHub plan/politika to
+podržava, sprečiti da pokretač sam odobri sopstveni deploy. Preporučuje se i
+ruleset koji ograničava kreiranje, izmenu i brisanje `prodavnica-v2-*` tagova.
+
+Ova Environment/ruleset promena je namerno operativni poslednji korak. Dok
+policy i secrets nisu spremni, tag deploy treba da ostane blokiran. Produkcijske
+vrednosti čuvati u tom environmentu, ne u širem repository scope-u.
 
 U environment `production` dodati secrets:
 
@@ -41,9 +60,9 @@ prethodni release.
 računara, uporedite fingerprint sa serverom i tek onda ceo izlaz sačuvajte kao
 secret. Za nestandardni SSH port red mora sadržati `[host]:port` oblik.
 
-Required reviewers nisu obavezni i ne treba ih uključiti ako je cilj da svaki
-uspešan push na `main` automatski objavi novu verziju. Mogu se privremeno
-uključiti samo tokom kontrolisanog prvog produkcijskog puštanja.
+Required reviewer je obavezan deo release gate-a. Uspešan CI nije dozvola da
+se aplikacija sama pusti: reviewer proverava tačan tag/SHA, capability zastavice,
+backup/migracije, kartice i operativni prozor pre odobravanja Environment-a.
 
 ## Zahtevi na serveru
 
@@ -102,13 +121,17 @@ instaliran.
    DB invariant smoke (uključujući očekivana odbijanja nevalidnih redova),
    proverava TypeScript, izvršava sigurnosne testove i pravi probni production
    build.
-2. Kod se šalje u novu `$DEPLOY_PATH/releases/<commit>-<attempt>` fasciklu.
-3. Produkcijski `.env` i `public/uploads` ostaju shared podaci i povezuju se
+2. Poseban, neprodukcijski release-gate job proverava strogi naziv taga, V2
+   projektno stablo i da je označeni commit deo kanonske V2 istorije. Tek njegov
+   uspeh dozvoljava otvaranje zaštićenog `production` Environment-a.
+3. Produkcijski job ponavlja iste provere pre učitavanja SSH pristupa, pa se kod
+   šalje u novu `$DEPLOY_PATH/releases/<commit>-<attempt>` fasciklu.
+4. Produkcijski `.env` i `public/uploads` ostaju shared podaci i povezuju se
    simboličkim linkovima; korisničke slike se nikada ne brišu rsync-om.
-4. Novi release se gradi i pokreće na privremenom lokalnom portu.
-5. Tek posle uspešnog `/api/health` odgovora `current` link se atomski prebacuje
+5. Novi release se gradi i pokreće na privremenom lokalnom portu.
+6. Tek posle uspešnog `/api/health` odgovora `current` link se atomski prebacuje
    i PM2 pokreće novu verziju.
-6. Ako lokalna ili javna provera padne, skript automatski vraća prethodni
+7. Ako lokalna ili javna provera padne, skript automatski vraća prethodni
    release. Čuva se poslednjih pet release-a.
 
 Deploy i cleanup starih release direktorijuma koriste isti server-side
@@ -120,9 +143,29 @@ Javni health endpoint vraća `deployment` SHA, pa workflow proverava da server
 zaista servira commit koji je upravo poslat, a ne samo neku prethodnu zdravu
 verziju.
 
-## Prvi push
+## Kontrolisani release tag — tek na kraju
 
-Lokalni repozitorijum mora imati GitHub remote i `main` mora biti poslat na taj
-remote. Sam fajl workflow-a ne kreira GitHub repozitorijum niti postavlja
-secrets. Kada su prethodna podešavanja završena, svaki sledeći push na `main`
-automatski pokreće ovaj tok.
+Običan razvoj se završava PR-om ka kanonskoj V2 grani i zelenim CI-jem. To ne
+objavljuje aplikaciju. Tek kada su svi rollout gate-ovi zatvoreni:
+
+1. potvrditi da je izabrani SHA već na
+   `origin/verzija/v2.0-univerzalna-platforma`;
+2. potvrditi zeleni kompletan CI baš za taj sadržaj;
+3. proveriti backup/migracije, production Environment, secrets/variables,
+   domen/HTTPS, kartične capability zastavice i rollback prozor;
+4. napraviti anotirani tag oblika `prodavnica-v2-YYYYMMDD-N` nad tačnim SHA-om;
+5. pregledati tag još jednom, pa pushovati samo taj tag;
+6. required reviewer odobrava `production` Environment tek posle pregleda;
+7. pratiti release health i po potrebi aktivirati dokumentovani rollback.
+
+Primer komandi je samo runbook; ne izvršavati ga tokom običnog razvoja:
+
+```bash
+git fetch origin verzija/v2.0-univerzalna-platforma
+git switch --detach <PREGLEDANI_V2_SHA>
+git tag -a prodavnica-v2-YYYYMMDD-N -m "V2 produkcijski release"
+git push origin prodavnica-v2-YYYYMMDD-N
+```
+
+Sam workflow ne kreira GitHub Environment, ruleset, secrets, server niti tag.
+`workflow_dispatch` može ponoviti proveru, ali nikada deploy.

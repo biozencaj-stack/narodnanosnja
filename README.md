@@ -168,7 +168,9 @@ pm2 start ecosystem.config.js
 ### Hetzner / VPS
 
 See `docs/HETZNER-DEPLOY-GUIDE.md` for a complete deployment guide.
-For automatic main-branch releases, see `docs/GITHUB-DEPLOY.md`.
+For verified, tag-gated V2 releases, see `docs/GITHUB-DEPLOY.md`. Pull requests
+and pushes to `verzija/v2.0-univerzalna-platforma` run CI only; production is
+reserved for an explicitly approved `prodavnica-v2-YYYYMMDD-N` tag.
 
 ## License
 
