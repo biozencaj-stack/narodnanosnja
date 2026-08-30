@@ -5,6 +5,128 @@
 BEGIN;
 SET LOCAL search_path = pg_catalog, public;
 
+-- Verification-email throttle expand: nullable/no-default preserves legacy
+-- users and old application compatibility. Equality access continues through
+-- User.id, so dedicated throttle indexes would only add write overhead.
+DO $$
+BEGIN
+  IF (
+    SELECT "is_nullable"
+    FROM information_schema.columns
+    WHERE "table_schema" = 'public'
+      AND "table_name" = 'User'
+      AND "column_name" = 'verificationEmailNextAllowedAt'
+  ) IS DISTINCT FROM 'YES'
+     OR (
+       SELECT "data_type"
+       FROM information_schema.columns
+       WHERE "table_schema" = 'public'
+         AND "table_name" = 'User'
+         AND "column_name" = 'verificationEmailNextAllowedAt'
+     ) IS DISTINCT FROM 'timestamp without time zone'
+     OR (
+       SELECT "datetime_precision"
+       FROM information_schema.columns
+       WHERE "table_schema" = 'public'
+         AND "table_name" = 'User'
+         AND "column_name" = 'verificationEmailNextAllowedAt'
+     ) IS DISTINCT FROM 3
+     OR (
+       SELECT "column_default"
+       FROM information_schema.columns
+       WHERE "table_schema" = 'public'
+         AND "table_name" = 'User'
+         AND "column_name" = 'verificationEmailNextAllowedAt'
+     ) IS NOT NULL THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: verification email cooldown column contract is invalid';
+  END IF;
+
+  IF (
+    SELECT "is_nullable"
+    FROM information_schema.columns
+    WHERE "table_schema" = 'public'
+      AND "table_name" = 'User'
+      AND "column_name" = 'verificationEmailResendWindowStartedAt'
+  ) IS DISTINCT FROM 'YES'
+     OR (
+       SELECT "data_type"
+       FROM information_schema.columns
+       WHERE "table_schema" = 'public'
+         AND "table_name" = 'User'
+         AND "column_name" = 'verificationEmailResendWindowStartedAt'
+     ) IS DISTINCT FROM 'timestamp without time zone'
+     OR (
+       SELECT "datetime_precision"
+       FROM information_schema.columns
+       WHERE "table_schema" = 'public'
+         AND "table_name" = 'User'
+         AND "column_name" = 'verificationEmailResendWindowStartedAt'
+     ) IS DISTINCT FROM 3
+     OR (
+       SELECT "column_default"
+       FROM information_schema.columns
+       WHERE "table_schema" = 'public'
+         AND "table_name" = 'User'
+         AND "column_name" = 'verificationEmailResendWindowStartedAt'
+     ) IS NOT NULL THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: verification email resend window column contract is invalid';
+  END IF;
+
+  IF (
+    SELECT "is_nullable"
+    FROM information_schema.columns
+    WHERE "table_schema" = 'public'
+      AND "table_name" = 'User'
+      AND "column_name" = 'verificationEmailResendCount'
+  ) IS DISTINCT FROM 'YES'
+     OR (
+       SELECT "data_type"
+       FROM information_schema.columns
+       WHERE "table_schema" = 'public'
+         AND "table_name" = 'User'
+         AND "column_name" = 'verificationEmailResendCount'
+     ) IS DISTINCT FROM 'integer'
+     OR (
+       SELECT "column_default"
+       FROM information_schema.columns
+       WHERE "table_schema" = 'public'
+         AND "table_name" = 'User'
+         AND "column_name" = 'verificationEmailResendCount'
+     ) IS NOT NULL THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: verification email resend count column contract is invalid';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_index AS catalog_index
+    JOIN pg_catalog.pg_class AS indexed_table
+      ON indexed_table.oid = catalog_index.indrelid
+    JOIN pg_catalog.pg_namespace AS table_namespace
+      ON table_namespace.oid = indexed_table.relnamespace
+    JOIN pg_catalog.pg_attribute AS indexed_column
+      ON indexed_column.attrelid = indexed_table.oid
+     AND indexed_column.attnum = catalog_index.indkey[0]
+    WHERE table_namespace.nspname = 'public'
+      AND indexed_table.relname = 'User'
+      AND indexed_column.attname IN (
+        'verificationEmailNextAllowedAt',
+        'verificationEmailResendWindowStartedAt',
+        'verificationEmailResendCount'
+      )
+      AND catalog_index.indnkeyatts = 1
+      AND catalog_index.indnatts = 1
+  ) THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: redundant verification throttle index exists';
+  END IF;
+
+  RAISE NOTICE 'PASS: verification email throttle expand contract is valid';
+END;
+$$;
+
 -- Auth-token compatibility expand: hash columns are nullable while old and
 -- new application versions overlap, plaintext indexes remain available, and
 -- PasswordReset has at most one row per user.

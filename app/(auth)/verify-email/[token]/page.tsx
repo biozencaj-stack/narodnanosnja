@@ -40,13 +40,21 @@ function InvalidTokenMessage() {
           Proverite da li ste otvorili ceo link iz najnovijeg emaila. Ako je
           email već potvrđen, možete odmah da se prijavite.
         </p>
-        <Link
-          href="/login"
-          className="inline-block bg-primary text-white px-6 py-3 rounded-lg
-                     hover:bg-primary-hover transition-colors font-medium"
-        >
-          Idi na prijavu
-        </Link>
+        <div className="space-y-3">
+          <Link
+            href="/verify-email/resend"
+            className="block bg-primary text-white px-6 py-3 rounded-lg
+                       hover:bg-primary-hover transition-colors font-medium"
+          >
+            Pošalji novi link za potvrdu
+          </Link>
+          <Link
+            href="/login"
+            className="inline-block text-primary hover:text-primary-hover transition-colors"
+          >
+            Idi na prijavu
+          </Link>
+        </div>
       </div>
     </div>
   );
@@ -130,6 +138,12 @@ export default async function VerifyEmailPage({
           className="inline-block text-primary hover:text-primary-hover transition-colors"
         >
           Već ste potvrdili email? Prijavite se
+        </Link>
+        <Link
+          href="/verify-email/resend"
+          className="block text-sm text-primary hover:text-primary-hover transition-colors"
+        >
+          Link nije stigao ili je istekao? Pošaljite novi
         </Link>
       </div>
     </div>

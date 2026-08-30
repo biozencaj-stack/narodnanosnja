@@ -83,6 +83,27 @@ export async function commitEmailVerification(
   verifiedAt = new Date(),
 ): Promise<void> {
   await database.$transaction(async (transaction) => {
+    // The user row is the serialization point shared with registration and
+    // verification-resend transactions. Mutating it first gives every flow the
+    // same lock order and prevents a resend from adding tokens underneath a
+    // verification that has already won the account claim.
+    const verifiedUser = await transaction.user.updateMany({
+      where: {
+        id: claim.userId,
+        emailVerified: null,
+      },
+      data: {
+        emailVerified: verifiedAt,
+        verificationEmailNextAllowedAt: null,
+        verificationEmailResendWindowStartedAt: null,
+        verificationEmailResendCount: null,
+      },
+    });
+
+    if (verifiedUser.count !== 1) {
+      throw new EmailVerificationConflictError();
+    }
+
     const storedCredential =
       claim.credential.kind === "hash"
         ? { tokenHash: claim.credential.tokenHash }
@@ -103,13 +124,10 @@ export async function commitEmailVerification(
     });
 
     if (consumed.count !== 1) {
+      // Throwing from the interactive transaction also rolls back the user
+      // mutation above, so an expired/replaced token can never verify a user.
       throw new EmailVerificationConflictError();
     }
-
-    await transaction.user.update({
-      where: { id: claim.userId },
-      data: { emailVerified: verifiedAt },
-    });
 
     await transaction.emailVerification.deleteMany({
       where: { userId: claim.userId },

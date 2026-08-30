@@ -221,10 +221,14 @@ Standardna sesija, JWT i sesija iz email-verification toka imaju isti rok od 24
 sata. `proxy.ts`, NextAuth i verify ruta moraju koristiti isti secret, isti
 secure-cookie izbor i isto ime cookie-ja. Verifikaciona ruta mora pre DB
 mutacije validirati konfiguraciju i redirect URL, potpisati sesiju i potpuno
-pripremiti odgovor sa cookie-jem. Tek zatim jedna transakcija conditional
-`deleteMany` claim-om troši još važeći token, postavlja `emailVerified` i briše
-sve sibling verification tokene. Svaka izmena tog redosleda mora zadržati unit
-testove za encode/response/commit greške i opt-in PostgreSQL concurrency test.
+pripremiti odgovor sa cookie-jem. Tek zatim jedna transakcija prvo conditional
+`updateMany` upisom claim-uje još neverifikovani `User` red, postavlja
+`emailVerified` i čisti resend throttle, pa conditional `deleteMany` upitom
+troši tačan još važeći token i briše sve sibling verification tokene. Bacanje
+konflikta na bilo kojoj token granici rollback-uje i prethodni User upis. Ovaj
+User-first redosled je zajednička lock invarijanta verify i resend toka; svaka
+izmena mora zadržati unit testove za encode/response/commit greške, kao i
+opt-in PostgreSQL verify-vs-resend concurrency test.
 
 Email verification je trajno prefetch-safe pravilo, ne privremeni UI detalj.
 Kanonski link iz emaila vodi na serversku `/verify-email/[token]` stranicu koja
@@ -311,10 +315,75 @@ dogovoreni grace period, proverava da nema legacy čitanja, i tek posebna
 contract migracija uklanja plaintext kolone/indekse. Ne preskači taj redosled i
 ne predstavljaj dual-write kao zaštitu credentiala od DB čitaoca.
 
-Ovo pravilo još ne znači da login sme globalno da odbije svaki nalog sa
-`emailVerified = NULL`. Pre verified-login enforcementa potrebni su audit i
-kontrolisani backfill postojećih naloga, atomska registracija, stvarni resend
-tok i bezbedan oporavak od SMTP greške.
+Migracija `20260830010000_expand_email_verification_cooldown` je zaseban
+expand-only korak za DB-backed verification-email throttling. Dodaje tri
+nullable kolone bez defaulta u `User`: `verificationEmailNextAllowedAt`,
+`verificationEmailResendWindowStartedAt` i `verificationEmailResendCount`.
+Nema backfill DML-a niti dedicated indeksa, pa legacy red sa sva tri `NULL`
+polja postaje podoban za svoj prvi resend. PostgreSQL dodavanje nullable kolona
+bez defaulta je metadata-only, ali `ALTER TABLE` ipak kratko zahteva
+`ACCESS EXCLUSIVE` lock; migracija zato koristi hardened `search_path`,
+`lock_timeout=10s` i `statement_timeout=2min`. Produkciona baza nije čitana i
+ova migracija nije produkcijski primenjena u trenutku implementacije.
+
+Registracija sada koristi centralni email normalizer, strogi request shape,
+trusted same-origin guard i centralnu bcrypt granicu od najviše 72 UTF-8 bajta.
+Application route zahteva odgovarajući JSON `Content-Type`, odbija svaki
+`Content-Encoding`, fail-closed proverava deklarisani `Content-Length` i čita
+body kroz streaming limit od najviše 4096 bajtova. Limit se sprovodi i kada
+dužina nije deklarisana, pre tokena, SMTP pripreme, bcrypt-a ili baze.
+Kanonski verification credential, hash, URL, SMTP transport i kompletna poruka
+pripremaju se pre persistence-a, a bcrypt se završava pre određivanja token
+TTL/cooldown početka. Taj početak se čita kao validirani PostgreSQL
+`clock_timestamp()` posle bcrypt-a, pa različit Node sat ne skraćuje ili
+produžava početni TTL, cooldown i allowance prozor. `User` i početni
+`EmailVerification` nastaju u jednoj
+transakciji. Novi User dobija jednočasovni token, 60-sekundni cooldown i
+fiksni 24-časovni allowance prozor sa brojačem `1`, jer se početna poruka računa
+u maksimum od pet verification emailova u tom prozoru.
+
+Unique-email race se klasifikuje kao postojeći nalog tek posle rollback-a i
+kanonskog lookup-a. Token/hash unique kolizija bez odgovarajućeg email naloga
+ostaje operativni failure, ne lažni „existing” ishod. Za nov i već postojeći
+email javni rezultat je byte-identical private HTTP 202. Account-dependent
+persistence put dobija 900 ms osnovni response floor sa kriptografskim
+0–200 ms jitterom kao defense-in-depth protiv timing enumeracije; to nije
+zamena za shared limiter niti durable queue. Existing-account put sme recovery
+da pokrene samo kroz isti resend servis i njegova cooldown/quota pravila.
+
+`POST /api/auth/verify-email/resend` takođe mora lokalno proveriti trusted
+same-origin pre limitera i body rada, zatim prihvatiti plain JSON objekat sa
+tačno jednim `email` poljem. Zahteva JSON media type, odbija encoded body i
+primenjuje 1024-byte deklarisani i stvarni streaming limit pre parsiranja. Za
+svaki sintaksno validan email čiji je callback
+registrovan vraća isti neposredni private HTTP 202; lookup naloga, verified
+stanje, cooldown, allowance, token i SMTP ostaju iza Next.js `after()`
+callbacka. Nepostojeći, već verifikovan, cooling-down ili quota-exhausted nalog
+je private no-op. Invalid input, account-independent IP limit, sinhroni limiter
+kvar i neuspešno samo zakazivanje mogu imati 400/429/503 jer nastaju pre
+account lookup-a.
+
+Resend transakcija zaključava `User` sa `FOR UPDATE`, zatim čita
+`clock_timestamp()` tek posle dobijenog lock-a. To sprečava da vreme provedeno
+u lock wait-u skrati cooldown ili TTL. U istom User-first transaction redu
+proverava email i `emailVerified`, 60-sekundni cooldown i fiksnu 24-časovnu
+kvotu od najviše pet poruka uključujući initial, atomarno uvećava brojač,
+briše samo istekle verification tokene i dodaje novi jednočasovni compat
+raw+hash credential. Ranije poslat neistekli link namerno ostaje važeći;
+uspešna verifikacija kasnije briše sve siblinge. SMTP se poziva tek posle
+commita. Ambiguous SMTP failure ne briše token i ne vraća cooldown/brojač.
+
+`after()` je lifecycle pomoć, ne durable queue. Pad procesa ili redeploy posle
+već vraćenog 202 može izgubiti registracionu/resend obradu. Transactional
+auth-email outbox, worker/retry, delivery monitoring i shutdown/redeploy smoke
+ostaju obavezni pre live-a. Završni lokalni/CI/PR dokaz za ovu etapu:
+`PENDING_FINAL_EVIDENCE`.
+
+Implementirana atomska registracija i resend još ne znače da login sme globalno
+da odbije svaki nalog sa `emailVerified = NULL`. Pre verified-login
+enforcementa ostaju obavezni read-only audit produkcionog legacy stanja,
+kontrolisani backfill, provera recovery toka i eksplicitan rollout plan. Do tog
+koraka login namerno ostaje kompatibilan sa postojećim nalozima.
 
 ## Zahtev za reset lozinke (v2)
 
@@ -366,6 +435,15 @@ uspešan STARTTLS. Validacija sertifikata je podrazumevana i obavezna van
 samo loopback SMTP host. Host, korisničko ime, lozinka, boolean TLS zastavica i
 port proveravaju se pre pravljenja transporta; produkcija ne sme tiho pasti na
 localhost, plaintext ili no-auth slanje.
+
+Auth email primalac mora prvo proći kroz centralni strogi email normalizer i
+proslediti se Nodemailer-u kao tačno jedan address objekat
+`{ name: "", address }`, nikada kao slobodan string koji može biti protumačen
+kao display name, grupa ili lista primalaca. Svaka dinamička vrednost u auth
+HTML-u, uključujući ime, naziv prodavnice, kontakt i URL, mora proći kroz
+`escapeHtmlText`; plain-text alternativa ostaje literalni tekst. Ovaj završeni
+auth-template presek ne predstavlja dokaz da su svi order/wishlist/contact
+template-i ili MIME/magic-byte pravila priloga već auditovani.
 
 ## Admin uloge (v2)
 
@@ -454,10 +532,15 @@ Release tag se ne pravi tokom običnog razvoja; live puštanje je poslednji kora
 - [ ] Pre primene auth-token expand migracije uraditi read-only audit i backup;
       svaki duplicate `PasswordReset.userId` eksplicitno razrešiti jer migracija
       namerno radi fail-closed bez automatskog DML-a
-- [ ] Atomska registracija, stvarni verification resend/cooldown i kontrolisani
-      `emailVerified` login rollout sa auditom/backfill-om
+- [ ] Produkcijski audit/backfill postojećeg `emailVerified` stanja, recovery
+      smoke i tek zatim kontrolisani verified-login enforcement
+- [ ] Kontrolisana primena auth-token i verification-cooldown expand migracija
+      uz read-only audit, backup/restore, lock plan i runtime dokaz
 - [ ] Session revocation posle resetovanja lozinke i sveža role provera
 - [ ] Shared auth/reset limiter i eksplicitan trusted-proxy/client-IP ugovor
+- [ ] Reverse-proxy request body/rate/timeout limiti usklađeni su sa završenim
+      application streaming limitima; aplikacionih 4096/1024 B nije zamena za
+      upstream zaštitu konekcija i bandwidth-a
 
 ## Bezbedno objavljivanje šeme
 

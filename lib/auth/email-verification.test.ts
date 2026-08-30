@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  EmailVerificationConflictError,
   commitEmailVerification,
   createStoredEmailVerificationClaim,
   prepareVerificationSuccessBeforeCommit,
@@ -58,7 +59,7 @@ test("verification claim prefers the stored hash and isolates legacy fallback", 
   );
 });
 
-test("legacy verification claim remains conditional on an empty hash column", async () => {
+test("verification locks the user first and keeps legacy claim conditional on an empty hash column", async () => {
   const calls: Array<{ operation: string; input?: unknown }> = [];
   const database = {
     async $transaction(
@@ -69,7 +70,10 @@ test("legacy verification claim remains conditional on an empty hash column", as
           }>;
         };
         user: {
-          update(input: { where: unknown; data: unknown }): Promise<unknown>;
+          updateMany(input: {
+            where: Record<string, unknown>;
+            data: Record<string, unknown>;
+          }): Promise<{ count: number }>;
         };
       }) => Promise<unknown>,
     ) {
@@ -81,9 +85,9 @@ test("legacy verification claim remains conditional on an empty hash column", as
           },
         },
         user: {
-          async update(input) {
-            calls.push({ operation: "user:update", input });
-            return {};
+          async updateMany(input) {
+            calls.push({ operation: "user:updateMany", input });
+            return { count: 1 };
           },
         },
       });
@@ -102,6 +106,21 @@ test("legacy verification claim remains conditional on an empty hash column", as
   );
 
   assert.deepEqual(calls[0], {
+    operation: "user:updateMany",
+    input: {
+      where: {
+        id: "user-1",
+        emailVerified: null,
+      },
+      data: {
+        emailVerified: verifiedAt,
+        verificationEmailNextAllowedAt: null,
+        verificationEmailResendWindowStartedAt: null,
+        verificationEmailResendCount: null,
+      },
+    },
+  });
+  assert.deepEqual(calls[1], {
     operation: "emailVerification:deleteMany",
     input: {
       where: {
@@ -113,6 +132,50 @@ test("legacy verification claim remains conditional on an empty hash column", as
       },
     },
   });
+  assert.deepEqual(calls[2], {
+    operation: "emailVerification:deleteMany",
+    input: { where: { userId: "user-1" } },
+  });
+});
+
+test("verification that loses the conditional user claim never touches tokens", async () => {
+  let tokenMutationAttempted = false;
+  const database = {
+    async $transaction(
+      work: (transaction: {
+        user: {
+          updateMany(): Promise<{ count: number }>;
+        };
+        emailVerification: {
+          deleteMany(): Promise<{ count: number }>;
+        };
+      }) => Promise<unknown>,
+    ) {
+      return work({
+        user: {
+          async updateMany() {
+            return { count: 0 };
+          },
+        },
+        emailVerification: {
+          async deleteMany() {
+            tokenMutationAttempted = true;
+            return { count: 0 };
+          },
+        },
+      });
+    },
+  } as unknown as Parameters<typeof commitEmailVerification>[0];
+
+  await assert.rejects(
+    commitEmailVerification(database, {
+      id: "verification-current",
+      userId: "user-1",
+      credential: { kind: "hash", tokenHash: TOKEN_HASH },
+    }),
+    EmailVerificationConflictError,
+  );
+  assert.equal(tokenMutationAttempted, false);
 });
 
 test("verification prepares the complete response before committing user mutations", async () => {

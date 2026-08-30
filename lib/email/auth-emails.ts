@@ -3,20 +3,40 @@ import {
   storeName,
   storePhone,
   storeEmail,
-  siteUrl,
 } from "@/lib/config/store";
 import { getStorefrontUrl } from "@/lib/config/storefront-url";
 import {
   createEmailVerificationUrl,
   createPasswordResetUrl,
 } from "@/lib/email/auth-email-links";
+import { normalizeEmailAddress } from "@/lib/auth/email-address";
+import { escapeHtmlText } from "@/lib/security/html";
 
 const FROM_EMAIL = process.env.EMAIL_FROM || `${storeName} <${storeEmail}>`;
+
+function singleMailboxRecipient(email: string): {
+  name: "";
+  address: string;
+} {
+  const address = normalizeEmailAddress(email);
+  if (!address) throw new Error("Auth email recipient is invalid");
+
+  // An address object prevents Nodemailer from interpreting caller input as a
+  // display name, group or comma-separated recipient list.
+  return { name: "", address };
+}
 
 /**
  * Email template wrapper - Black/White theme (no green)
  */
 function emailWrapper(title: string, content: string): string {
+  const logoUrl = new URL("/logo.png", getStorefrontUrl()).toString();
+  const safeLogoUrl = escapeHtmlText(logoUrl);
+  const safeStoreName = escapeHtmlText(storeName);
+  const safeStorePhone = escapeHtmlText(storePhone);
+  const safeStoreEmail = escapeHtmlText(storeEmail);
+  const safeTitle = escapeHtmlText(title);
+
   return `
     <!DOCTYPE html>
     <html>
@@ -29,8 +49,8 @@ function emailWrapper(title: string, content: string): string {
 
         <!-- Header - Black -->
         <div style="background-color: #4F46E5; padding: 32px 24px; text-align: center;">
-          <img src="${siteUrl}/logo.png" alt="${storeName}" style="height: 40px; width: auto;" />
-          <p style="color: #888888; margin: 12px 0 0; font-size: 12px; text-transform: uppercase; letter-spacing: 2px;">${title}</p>
+          <img src="${safeLogoUrl}" alt="${safeStoreName}" style="height: 40px; width: auto;" />
+          <p style="color: #888888; margin: 12px 0 0; font-size: 12px; text-transform: uppercase; letter-spacing: 2px;">${safeTitle}</p>
         </div>
 
         <!-- Content -->
@@ -44,10 +64,10 @@ function emailWrapper(title: string, content: string): string {
             Za sva pitanja možete nas kontaktirati:
           </p>
           <p style="color: #ffffff; font-size: 14px; margin: 0 0 12px; font-weight: 500;">
-            Tel: ${storePhone} | Email: ${storeEmail}
+            Tel: ${safeStorePhone} | Email: ${safeStoreEmail}
           </p>
           <p style="color: #666666; font-size: 12px; margin: 0;">
-            © ${new Date().getFullYear()} ${storeName}. Sva prava zadržana.
+            © ${new Date().getFullYear()} ${safeStoreName}. Sva prava zadržana.
           </p>
         </div>
       </div>
@@ -66,18 +86,21 @@ export async function sendPasswordResetEmail(
 ): Promise<void> {
   const resetUrl = createPasswordResetUrl(getStorefrontUrl(), token);
   if (!resetUrl) throw new Error("Password reset credential is invalid");
+  const safeFirstName = escapeHtmlText(firstName);
+  const safeStoreName = escapeHtmlText(storeName);
+  const safeResetUrl = escapeHtmlText(resetUrl);
 
   const content = `
     <h2 style="color: #4F46E5; font-size: 22px; margin: 0 0 20px;">Resetovanje lozinke</h2>
 
-    <p style="color: #444; margin: 0 0 16px;">Poštovani ${firstName},</p>
+    <p style="color: #444; margin: 0 0 16px;">Poštovani ${safeFirstName},</p>
 
-    <p style="color: #666; margin: 0 0 16px;">Primili smo zahtev za resetovanje lozinke vašeg ${storeName} naloga.</p>
+    <p style="color: #666; margin: 0 0 16px;">Primili smo zahtev za resetovanje lozinke vašeg ${safeStoreName} naloga.</p>
 
     <p style="color: #666; margin: 0 0 24px;">Kliknite na dugme ispod da biste postavili novu lozinku:</p>
 
     <div style="text-align: center; margin: 32px 0;">
-      <a href="${resetUrl}"
+      <a href="${safeResetUrl}"
          style="background-color: #4F46E5; color: white; padding: 14px 40px;
                 text-decoration: none; border-radius: 4px; display: inline-block;
                 font-weight: 600; text-transform: uppercase; letter-spacing: 1px; font-size: 14px;">
@@ -99,7 +122,7 @@ export async function sendPasswordResetEmail(
   const transporter = createSmtpTransport();
   await transporter.sendMail({
     from: FROM_EMAIL,
-    to: email,
+    to: singleMailboxRecipient(email),
     subject: `Resetovanje lozinke - ${storeName}`,
     html: emailWrapper("Reset lozinke", content),
     text: `
@@ -124,15 +147,19 @@ export async function sendWelcomeEmail(
   email: string,
   firstName: string
 ): Promise<void> {
+  const storefrontHomeUrl = new URL("/", getStorefrontUrl()).toString();
+  const safeFirstName = escapeHtmlText(firstName);
+  const safeStoreName = escapeHtmlText(storeName);
+  const safeStorefrontHomeUrl = escapeHtmlText(storefrontHomeUrl);
   const content = `
     <div style="text-align: center; margin-bottom: 24px;">
       <div style="font-size: 48px; margin-bottom: 16px;">👋</div>
-      <h2 style="color: #4F46E5; font-size: 24px; margin: 0;">Dobrodošli u ${storeName}!</h2>
+      <h2 style="color: #4F46E5; font-size: 24px; margin: 0;">Dobrodošli u ${safeStoreName}!</h2>
     </div>
 
-    <p style="color: #444; margin: 0 0 16px;">Poštovani ${firstName},</p>
+    <p style="color: #444; margin: 0 0 16px;">Poštovani ${safeFirstName},</p>
 
-    <p style="color: #666; margin: 0 0 24px;">Hvala vam što ste kreirali nalog na ${storeName} webshopu.</p>
+    <p style="color: #666; margin: 0 0 24px;">Hvala vam što ste kreirali nalog na ${safeStoreName} webshopu.</p>
 
     <div style="background-color: #f8f8f8; padding: 20px; border-radius: 8px; margin: 24px 0;">
       <p style="color: #4F46E5; margin: 0 0 12px; font-weight: 600;">Sa vašim nalogom možete:</p>
@@ -145,7 +172,7 @@ export async function sendWelcomeEmail(
     </div>
 
     <div style="text-align: center; margin: 32px 0;">
-      <a href="${siteUrl}"
+      <a href="${safeStorefrontHomeUrl}"
          style="background-color: #4F46E5; color: white; padding: 14px 40px;
                 text-decoration: none; border-radius: 4px; display: inline-block;
                 font-weight: 600; text-transform: uppercase; letter-spacing: 1px; font-size: 14px;">
@@ -157,7 +184,7 @@ export async function sendWelcomeEmail(
   const transporter = createSmtpTransport();
   await transporter.sendMail({
     from: FROM_EMAIL,
-    to: email,
+    to: singleMailboxRecipient(email),
     subject: `Dobrodošli u ${storeName} - Vaš nalog je kreiran`,
     html: emailWrapper("Dobrodošlica", content),
     text: `
@@ -170,7 +197,7 @@ Sa vašim nalogom možete:
 - Sačuvati adrese za bržu kupovinu
 - Pogledati istoriju kupovina
 
-Započnite kupovinu: ${siteUrl}
+Započnite kupovinu: ${storefrontHomeUrl}
 
 © ${new Date().getFullYear()} ${storeName}
     `,
@@ -178,15 +205,23 @@ Započnite kupovinu: ${siteUrl}
 }
 
 /**
- * Send an email verification link that opens an explicit confirmation page.
+ * Prepare an email verification delivery before the registration transaction.
+ *
+ * Canonical-link and SMTP configuration validation, transport construction and
+ * message rendering are all synchronous. The returned callback performs the
+ * only external side effect: handing the already prepared message to SMTP.
  */
-export async function sendVerificationEmail(
+export function prepareVerificationEmail(
   email: string,
   firstName: string,
   token: string
-): Promise<void> {
+): () => Promise<void> {
+  const recipient = singleMailboxRecipient(email);
   const verifyUrl = createEmailVerificationUrl(getStorefrontUrl(), token);
   if (!verifyUrl) throw new Error("Email verification credential is invalid");
+  const safeFirstName = escapeHtmlText(firstName);
+  const safeStoreName = escapeHtmlText(storeName);
+  const safeVerifyUrl = escapeHtmlText(verifyUrl);
 
   const content = `
     <div style="text-align: center; margin-bottom: 24px;">
@@ -194,16 +229,16 @@ export async function sendVerificationEmail(
       <h2 style="color: #4F46E5; font-size: 24px; margin: 0;">Potvrdite vaš email</h2>
     </div>
 
-    <p style="color: #444; margin: 0 0 16px;">Poštovani ${firstName},</p>
+    <p style="color: #444; margin: 0 0 16px;">Poštovani ${safeFirstName},</p>
 
-    <p style="color: #666; margin: 0 0 24px;">Hvala vam što ste se registrovali na ${storeName} webshopu.</p>
+    <p style="color: #666; margin: 0 0 24px;">Hvala vam što ste se registrovali na ${safeStoreName} webshopu.</p>
 
     <p style="color: #666; margin: 0 0 16px;">Dugme ispod otvara sigurnu stranicu za potvrdu emaila.</p>
 
     <p style="color: #666; margin: 0 0 24px;">Samo otvaranje linka neće promeniti vaš nalog. Na otvorenoj stranici izaberite „Potvrdi email“ da biste završili potvrdu i prijavu.</p>
 
     <div style="text-align: center; margin: 32px 0;">
-      <a href="${verifyUrl}" rel="noreferrer"
+      <a href="${safeVerifyUrl}" rel="noreferrer"
          style="background-color: #4F46E5; color: white; padding: 16px 48px;
                 text-decoration: none; border-radius: 4px; display: inline-block;
                 font-weight: 600; text-transform: uppercase; letter-spacing: 1px; font-size: 14px;">
@@ -222,10 +257,9 @@ export async function sendVerificationEmail(
     </p>
   `;
 
-  const transporter = createSmtpTransport();
-  await transporter.sendMail({
+  const mailOptions = {
     from: FROM_EMAIL,
-    to: email,
+    to: recipient,
     subject: `Potvrdite vaš email - ${storeName}`,
     html: emailWrapper("Verifikacija", content),
     text: `
@@ -242,5 +276,23 @@ Ako niste vi kreirali ovaj nalog, možete ignorisati ovaj email.
 
 © ${new Date().getFullYear()} ${storeName}
     `,
-  });
+  };
+  const transporter = createSmtpTransport();
+
+  return async () => {
+    await transporter.sendMail(mailOptions);
+  };
+}
+
+/**
+ * Send an email verification link that opens an explicit confirmation page.
+ * Kept as a compatibility wrapper for callers that do not need two-phase
+ * preparation.
+ */
+export async function sendVerificationEmail(
+  email: string,
+  firstName: string,
+  token: string
+): Promise<void> {
+  await prepareVerificationEmail(email, firstName, token)();
 }

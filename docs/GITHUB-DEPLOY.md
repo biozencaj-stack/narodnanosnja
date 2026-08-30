@@ -19,6 +19,12 @@ release mehanizam. Poseban `Potvrdi V2 release` job proverava tag, stablo i
 Git ancestry pre nego što se uopšte otvori `production` Environment gate;
 produkcijski job iste uslove ponavlja pre SSH pripreme.
 
+Registration/resend etapa ne menja ovu matricu. Njene izmene workflow-a samo
+uključuju dodatne opt-in PostgreSQL testove. Poseban main-push workflow koji će
+objaviti novu javnu verziju presentation sajta ostaje poslednji korisnički
+korak; ne aktivira se tokom auth/DB rada i nikada nije razlog da se V2 spoji u
+`main`.
+
 ## GitHub podešavanja
 
 U `Settings → Environments` najpre kreirati environment `production`. U
@@ -76,6 +82,12 @@ backup/migracije, kartice i operativni prozor pre odobravanja Environment-a.
   ime određuje `APP_NAME`;
 - PostgreSQL je dostupan i njegova šema je već usklađena sa Prisma šemom.
 
+Za auth registration/resend release „usklađena šema” znači da su obe kasnije
+auth expand migracije kontrolisano primenjene posle read-only audita,
+backup/restore i restore-clone probe. Ranije četiri produkcione migracije nisu
+dovoljne za kod koji očekuje compat token hash i tri verification throttle
+kolone. Workflow namerno neće popravljati taj nedostatak preko SSH-a.
+
 Reverse proxy mora prosleđivati zahteve na `APP_PORT`, a `SMOKE_PORT` mora biti
 slobodan na lokalnom interfejsu servera. Ako se promene `APP_NAME`, `APP_PORT`
 ili `DEPLOY_PATH`, PM2, reverse proxy i dozvole moraju biti usklađeni sa istim
@@ -121,6 +133,15 @@ instaliran.
    DB invariant smoke (uključujući očekivana odbijanja nevalidnih redova),
    proverava TypeScript, izvršava sigurnosne testove i pravi probni production
    build.
+
+   Registration/resend presek u ovom koraku postavlja
+   `RUN_REGISTRATION_DB_TESTS=true` i
+   `RUN_EMAIL_VERIFICATION_RESEND_DB_TESTS=true`. Time CI proverava atomic
+   User+credential registration, duplicate/rollback/hash-collision scenarije,
+   resend two-worker race, DB sat posle User lock wait-a, verify-vs-resend
+   lock redosled, fixed 24h allowance i rollback granice. DB smoke dodatno
+   proverava tri nullable/no-default throttle kolone i odsustvo dedicated
+   indeksa. Finalni exact-head/post-merge dokaz: `PENDING_FINAL_EVIDENCE`.
 2. Poseban, neprodukcijski release-gate job proverava strogi naziv taga, V2
    projektno stablo i da je označeni commit deo kanonske V2 istorije. Tek njegov
    uspeh dozvoljava otvaranje zaštićenog `production` Environment-a.
@@ -169,3 +190,23 @@ git push origin prodavnica-v2-YYYYMMDD-N
 
 Sam workflow ne kreira GitHub Environment, ruleset, secrets, server niti tag.
 `workflow_dispatch` može ponoviti proveru, ali nikada deploy.
+
+Pre required-reviewer odobrenja auth deo dodatno mora imati:
+
+- produkcioni legacy `emailVerified` audit, kontrolisani backfill i recovery
+  smoke pre verified-login enforcementa;
+- shared limiter i eksplicitan trusted-proxy/client-IP ugovor umesto procesnog
+  LRU-a i sirovog `x-forwarded-for` identiteta;
+- reverse-proxy body-size, rate, timeout i connection limite usklađene sa
+  završenim application cap-ovima: registration 4096 B, resend 1024 B;
+- transactional auth-email outbox/durable worker sa retry-em, monitoringom i
+  shutdown/redeploy dokazom, jer Next.js `after()` može izgubiti posao posle
+  već vraćenog HTTP 202;
+- kontrolisanu primenu auth-token i cooldown expand migracija;
+- potvrdu fixed 24h kvote od pet poruka uključujući initial, 60s cooldown-a i
+  retained ranije neisteklih verification linkova;
+- potvrdu da je 900+0–200 ms registration padding samo timing
+  defense-in-depth, ne zamena za shared abuse zaštitu.
+
+Dok ijedna od tih granica nema dokaz, ne pravi se release tag i ne odobrava se
+production Environment. Main-push live objavljivanje ostaje poslednji korak.

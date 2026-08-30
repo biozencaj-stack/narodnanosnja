@@ -119,6 +119,11 @@ test(
         passwordHash: "integration-test-only",
         firstName: "Auth",
         lastName: "Verification",
+        verificationEmailNextAllowedAt: new Date(
+          verifiedAt.getTime() + 60_000,
+        ),
+        verificationEmailResendWindowStartedAt: verifiedAt,
+        verificationEmailResendCount: 5,
       },
     });
 
@@ -326,7 +331,12 @@ test(
     const [storedUser, remainingTokens] = await Promise.all([
       prisma.user.findUnique({
         where: { id: user.id },
-        select: { emailVerified: true },
+        select: {
+          emailVerified: true,
+          verificationEmailNextAllowedAt: true,
+          verificationEmailResendWindowStartedAt: true,
+          verificationEmailResendCount: true,
+        },
       }),
       prisma.emailVerification.findMany({
         where: { userId: user.id },
@@ -334,6 +344,9 @@ test(
       }),
     ]);
     assert.equal(storedUser?.emailVerified?.getTime(), verifiedAt.getTime());
+    assert.equal(storedUser?.verificationEmailNextAllowedAt, null);
+    assert.equal(storedUser?.verificationEmailResendWindowStartedAt, null);
+    assert.equal(storedUser?.verificationEmailResendCount, null);
     assert.deepEqual(remainingTokens, []);
   },
 );

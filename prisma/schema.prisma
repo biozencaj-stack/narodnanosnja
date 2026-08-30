@@ -15,18 +15,21 @@ datasource db {
 // ============================================
 
 model User {
-  id              String    @id @default(cuid())
-  email           String    @unique
-  passwordHash    String
-  firstName       String
-  lastName        String
-  phone           String?
-  role            Role      @default(CUSTOMER)
-  emailVerified   DateTime?
-  newsletterOptIn Boolean   @default(false)
-  preferredLocale String    @default("sr") // sr | en for emails
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id                             String    @id @default(cuid())
+  email                          String    @unique
+  passwordHash                   String
+  firstName                      String
+  lastName                       String
+  phone                          String?
+  role                           Role      @default(CUSTOMER)
+  emailVerified                  DateTime?
+  verificationEmailNextAllowedAt        DateTime?
+  verificationEmailResendWindowStartedAt DateTime?
+  verificationEmailResendCount           Int?
+  newsletterOptIn                Boolean   @default(false)
+  preferredLocale                String    @default("sr") // sr | en for emails
+  createdAt                      DateTime  @default(now())
+  updatedAt                      DateTime  @updatedAt
 
   // Relacije
   addresses          Address[]

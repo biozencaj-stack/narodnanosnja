@@ -83,17 +83,33 @@ export default function LoginPage() {
         </div>
 
         {registered && (
-          <div className="mb-6 p-4 bg-success-light border border-success/20 rounded-xl text-success text-sm">
-            <strong>Nalog uspešno kreiran!</strong>
+          <div
+            className="mb-6 p-4 bg-success-light border border-success/20 rounded-xl text-success text-sm"
+            role="status"
+          >
+            <strong>Zahtev za registraciju je primljen.</strong>
             <p className="mt-1">
-              Za aktivaciju je potrebna email potvrda. Proverite prijemno
-              sanduče i spam; ako poruka ne stigne, kontaktirajte podršku.
+              Ako je registracija moguća, uputstvo za potvrdu biće poslato na
+              unetu adresu. Proverite prijemno sanduče i spam.
             </p>
+            <p className="mt-1">
+              Pre novog zahteva sačekajte najmanje jedan minut. Svaki ranije
+              primljen, neistekao link ostaje važeći.
+            </p>
+            <Link
+              href="/verify-email/resend"
+              className="mt-2 inline-block font-medium underline underline-offset-2"
+            >
+              Pošaljite novi link za potvrdu
+            </Link>
           </div>
         )}
 
         {errorMessage && (
-          <div className="mb-6 p-4 bg-error-light border border-error/20 rounded-xl text-error text-sm">
+          <div
+            className="mb-6 p-4 bg-error-light border border-error/20 rounded-xl text-error text-sm"
+            role="alert"
+          >
             {errorMessage}
           </div>
         )}
@@ -210,6 +226,15 @@ export default function LoginPage() {
               className="font-medium text-primary hover:text-primary-hover transition-colors"
             >
               Registrujte se
+            </Link>
+          </p>
+          <p className="mt-2 text-sm text-text-muted">
+            Niste dobili email?{" "}
+            <Link
+              href="/verify-email/resend"
+              className="font-medium text-primary hover:text-primary-hover transition-colors"
+            >
+              Pošaljite novi link
             </Link>
           </p>
         </div>
