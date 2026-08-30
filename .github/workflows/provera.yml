@@ -14,7 +14,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: provera-${{ github.repository }}-${{ github.head_ref || github.ref_name }}
+  group: >-
+    provera-${{ github.repository }}-${{ github.event_name }}-
+    ${{ github.event.pull_request.number || github.ref_name }}
   cancel-in-progress: true
 
 env:

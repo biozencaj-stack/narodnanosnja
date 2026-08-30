@@ -121,13 +121,14 @@ sekcije:
 1. proverava identitet prezentacionog projekta i JavaScript sintaksu, gradi
    sajt, proverava veze i uploaduje tačno taj `dist` artefakt;
 2. objavljuje artefakt na GitHub Pages, samo ako je ref tačno `main`;
-3. čeka da javni `verzija.json` vrati SHA trenutnog commita, pa pokreće
-   `proveri-uzivo.mjs` nad svim javnim stranicama i resursima.
+3. čeka da javni `verzija.json` vrati tačan SHA, run ID i run attempt trenutne
+   objave, pa pokreće `proveri-uzivo.mjs` nad svim javnim stranicama i resursima.
 
 `dist/verzija.json` pravi isključivo CI i ne commit-uje se. Sadrži javni Git
 SHA i identitet workflow run-a, bez tajni. Actions zavisnosti su pinovane na
 pregledane pune commit SHA vrednosti, a Pages/OIDC write dozvole ima samo
-deployment job.
+deployment job. Pages artefakt eksplicitno uključuje skrivenu `.nojekyll`
+datoteku koju pravi generator.
 
 Ručno `workflow_dispatch` pokretanje može da proveri i izgradi izabranu granu,
 ali job-level guard ne dozvoljava objavu ako ref nije `refs/heads/main`.

@@ -17,7 +17,7 @@ Projekat ima više zapisa i lako je otvoriti pogrešan. Redosled po dubini:
 | Ovaj fajl | `IZMENE.md` | Prezentacioni sajt — istorija i zamke |
 | `PREGLED_PROJEKTA_2026-08-29.md` | ovde, koren | Potpun read-only pregled celog repozitorijuma na dan 29. 8. — 770 linija, obe grane, bezbednosni i pravni blokatori |
 | `IZMENE.md` prodavnice | `narodnanosnja-prodavnica/` | Prodavnica — hronologija i odluke |
-| `docs/DETALJAN-DNEVNIK-IZMENA.md` | `narodnanosnja-prodavnica/docs/` | **Najdetaljniji zapis**, 2209 linija u 33 odeljka — svaka V2 izmena, fajl po fajl |
+| `docs/DETALJAN-DNEVNIK-IZMENA.md` | `narodnanosnja-prodavnica/docs/` | **Najdetaljniji zapis**, 2532 linije u 37 odeljaka — svaka V2 izmena, fajl po fajl |
 
 Ako tražiš „šta je tačno urađeno u kodu prodavnice“ — idi na
 `docs/DETALJAN-DNEVNIK-IZMENA.md`. Ostalo su pregledi i ulazne tačke.
@@ -99,11 +99,12 @@ Postojeći Pages workflow je podeljen u tri jasna produkcijska joba:
 
 1. **Izgradnja i provera** — potvrđuje da je checkout prezentacioni, a ne V2
    projekat, proverava browser JavaScript, gradi sa tačnim Pages base path-om,
-   proverava veze i pravi `verzija.json` sa commit SHA-om;
+   proverava veze i pravi `verzija.json` sa SHA/run identitetom;
 2. **GitHub Pages objava** — dobija Pages/OIDC write dozvole tek posle uspešne
    provere i objavljuje upravo provereni `dist` artefakt;
-3. **Potvrda objavljene verzije** — čeka da CDN vrati očekivani SHA, zatim
-   pokreće punu mrežnu proveru sitemap stranica, resursa i 404 odgovora.
+3. **Potvrda objavljene verzije** — čeka da CDN vrati očekivani SHA, run ID i
+   run attempt, zatim pokreće punu mrežnu proveru sitemap stranica, resursa i
+   404 odgovora.
 
 Dodatno je urađeno:
 
@@ -111,6 +112,7 @@ Dodatno je urađeno:
 - zvanične GitHub Actions verzije pinovane su na pune commit SHA vrednosti;
 - deploy ima sopstveni `refs/heads/main` guard;
 - build job više nema Pages/OIDC write privilegije;
+- Pages artefakt eksplicitno čuva generisani skriveni `.nojekyll` fajl;
 - workflow-i imaju timeout i concurrency pravila;
 - aktivan main deploy se ne prekida ako brzo stigne sledeći push;
 - verification run za istu feature granu otkazuje zastareli aktivni run;

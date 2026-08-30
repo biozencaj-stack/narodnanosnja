@@ -80,6 +80,7 @@ jobs:
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: dist
+          include-hidden-files: true
 
   # SEKCIJA 2: objavljivanje istog, prethodno proverenog artefakta
   objavi:
@@ -128,6 +129,10 @@ jobs:
         run: |
           set -euo pipefail
           VERSION_URL="${PAGE_URL%/}/verzija.json"
+          expected_response="$(
+            printf '{"sha":"%s","run_id":"%s","run_attempt":"%s"}' \
+              "$EXPECTED_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+          )"
 
           for attempt in $(seq 1 12); do
             response="$(
@@ -138,8 +143,8 @@ jobs:
                 2>/dev/null || true
             )"
 
-            if [[ "$response" == *"\"sha\":\"${EXPECTED_SHA}\""* ]]; then
-              echo "Javno je dostupan očekivani commit ${EXPECTED_SHA}."
+            if [[ "$response" == "$expected_response" ]]; then
+              echo "Javno je dostupna očekivana verzija ${EXPECTED_SHA}."
               exit 0
             fi
 
@@ -149,7 +154,7 @@ jobs:
             fi
           done
 
-          echo "Objavljena stranica ne vraća očekivani commit ${EXPECTED_SHA}." >&2
+          echo "Objavljena stranica ne vraća očekivani SHA/run identitet." >&2
           exit 1
 
       - name: Proveri sve javne stranice i resurse
