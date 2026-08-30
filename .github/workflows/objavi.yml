@@ -128,6 +128,8 @@ jobs:
           RUN_REGISTRATION_DB_TESTS: "true"
           RUN_EMAIL_VERIFICATION_RESEND_DB_TESTS: "true"
           RUN_VERIFIED_LOGIN_DB_TESTS: "true"
+          RUN_AUTH_SESSION_DB_TESTS: "true"
+          RUN_AUTH_SESSION_EXPAND_PREFLIGHT_DB_TESTS: "true"
         run: npm test
 
       - name: Instaliraj Chromium za browser smoke test

@@ -3,7 +3,7 @@
 Datum početka: 2026-08-30  
 Radna grana: `ispravka/v2-db-authoritative-sessions`  
 Polazni V2 SHA: `d926e152f51f363c66d37f46859fbecffbc634d2`  
-Status: **u radu; compatibility expand je implementiran lokalno, aktivacija nije izvršena**
+Status: **u radu; expand i dormantni core su implementirani, aktivacija nije izvršena**
 
 ## 1. Granica ove sekcije
 
@@ -111,6 +111,8 @@ definisanog ugovora.
 - dodaje metadata-safe `User.authSessionRevision NOT NULL DEFAULT 0`;
 - dodaje nullable/no-default Session metapodatke;
 - postojeći legacy Session redovi ostaju validni sa sva tri NULL polja;
+- poseban read-only preflight pre migracije odbija legacy token koji već
+  zauzima rezervisani `v1:<64 lowercase hex>` namespace;
 - kompletan V2 red mora imati revizije, issued-at, bounded expiry i HMAC digest;
 - dodaje singleton policy red u bezbednom početnom `audit` stanju;
 - ne menja auth callback, cookie ili postojeće JWT ponašanje.
@@ -138,8 +140,8 @@ definisanog ugovora.
 | Faza | Sadržaj | Status |
 | --- | --- | --- |
 | 0 | Nova grana iz tačno verifikovanog V2 head-a | završeno |
-| 1 | Compatibility expand šema, migracija i DB invarijante | lokalno implementirano; real-PG CI dokaz sledi |
-| 2 | Dormantni claim/HMAC/policy/DB validator moduli | nije započeto |
+| 1 | Compatibility expand šema, migracija i DB invarijante | završeno; PostgreSQL 16 CI dokaz zelen |
+| 2 | Dormantni claim/HMAC/policy/JWT/DB validator moduli | lokalno implementirano; real-PG CI dokaz sledi |
 | 3 | Revocation u reset/change/privileged/demo write tokovima | nije započeto |
 | 4 | Credentials i verification V2 session issuance/rotation | nije započeto |
 | 5 | Pouzdan current-session logout | nije započeto |
@@ -232,6 +234,167 @@ Na trenutnom lokalnom stablu završeno je:
 | `git diff --check` | PASS |
 | Fresh PostgreSQL 16 migration/invariant | čeka GitHub CI; lokalni PG16 nije korišćen |
 
+Prvi izolovani GitHub presek je naknadno potvrdio ovu fazu: draft PR #22 run
+`33326003849` prošao je Prisma validate, fresh migration deploy, drift, DB
+invariant, sve testove koji su postojali u schema commit-u `9316e0e`, browser
+smoke i production build. Dormantni validator i novi preflight fixture dodati
+su posle tog istorijskog run-a; njihov exact-head CI dokaz se ne tvrdi dok novi
+run stvarno ne završi. Release potvrda i deploy posao ostali su `SKIPPED`.
+
+### 6.5. Edge-safe claims i Node-only SID/HMAC granica
+
+Claim ugovor je namerno podeljen na dva modula:
+
+- `lib/auth/session-claims-edge.ts` sadrži strict parser, canonical SID proveru,
+  claim creation i expiry semantiku bez `node:*` importa i bez `Buffer` API-ja;
+- `lib/auth/session-claims.ts` je Node-only fasada za `randomBytes`, automatsko
+  generisanje SID-a i HMAC storage ključ.
+
+Zajedno uvode:
+
+- kriptografski nasumičan 32-byte `sid` u jedinoj canonical unpadded base64url
+  reprezentaciji od 43 znaka;
+- strict parser koji odbija padding, pogrešnu dužinu, necanonical encoding,
+  coercion i okolne razmake;
+- purpose/domain-separated HMAC-SHA256 lookup ključ
+  `v1:<64 lowercase hex>` izveden iz najmanje 32-byte server secret-a;
+- isti storage digest za insert, lookup i exact revoke; različit „revoke
+  purpose“ namerno nije dozvoljen jer bi proizveo drugi, neupotrebljiv ključ;
+- exact claim skup `sv/sub/sid/ur/pr/sat/sae`;
+- safe user/policy revision granice, bounded subject i cele epoch sekunde;
+- `sae > sat`, najviše 86.400 sekundi i exact `now >= sae` expiry;
+- immutable rezultate, bez vraćanja raw `sid` kao DB storage vrednosti.
+
+Test zaključava i tačan HMAC fixture. Nenamerna promena domena/algoritma zato
+ne može proći kao kompatibilna, jer bi u stvarnosti globalno odsekla sve
+postojeće Session redove. Poseban statički Edge-safety test čita stvarne source
+fajlove i obara proveru ako `session-jwt.ts` ponovo uveze Node fasadu ili ako se
+u njegov import lanac vrate `node:*`, `require("node:...")` ili `Buffer`.
+
+### 6.6. DB policy singleton parser i runtime autoritet
+
+`lib/auth/auth-policy-state.ts` ne veruje automatski Prisma tipu. Raw rezultat
+mora proći fail-closed parser:
+
+- `id` je tačno `1`;
+- `revision` je safe integer `>=1`;
+- politika je tačno `audit|staged|strict`;
+- staged tačno ima finite deadline;
+- audit/strict tačno imaju `NULL` deadline;
+- created/updated vrednosti su finite `Date` instance.
+
+Posle jednokratnog, kontrolisanog legacy→V2 auth preseka DB singleton je jedini
+runtime autoritet za policy i deadline. Request validator ne poredi DB stanje
+sa process env vrednošću: takvo exact poređenje bi pri svakoj rolling promeni
+politike napravilo neizbežan mixed-fleet 503 prozor. Budući policy writer mora
+koristiti operator-only CAS i u istom DB commitu promeniti policy/deadline i
+povećati revision. Time nove prijave odmah čitaju novu odluku, a sve sesije iz
+prethodne policy epohe odmah postaju nevažeće.
+
+Postojeći env-driven credentials tok ostaje nepromenjen dok se ne implementira
+atomsko V2 izdavanje. DB-only model se neće aktivirati delimično; prvi presek
+zahteva audit policy, maintenance/drain svih legacy instanci i versioned cookie.
+
+### 6.7. Nerolling NextAuth JWT codec
+
+Novi, još neaktivirani `lib/auth/session-jwt.ts` obavija postojeći NextAuth
+encode/decode ugovor:
+
+- uvozi samo Edge-safe claim modul, pa priprema decoder za Next 16 Proxy
+  bundle bez Node crypto/Buffer zavisnosti;
+- iz privremenog callback tokena izdvaja samo sedam pregledanih V2 claim-ova;
+- stale role/profile/principal polja nikada se ne upisuju u šifrovani token;
+- svaki refresh dobija najviše `sae - now`, ne novi 24-časovni rok;
+- originalni `sae` se nikada ne pomera;
+- decode uklanja standardna `iat/exp/jti` i druga prolazna polja;
+- kriptografski kvar, legacy/malformed claim ili `now >= sae` daju zatvoren
+  `null`/odbijanje bez privatnog detalja;
+- stvarni NextAuth v4 encode/decode round-trip test potvrđuje kompatibilnost.
+
+Codec još nije povezan u `authOptions`; postojeći korisnički tok zato ovom
+etapom nije promenjen.
+
+### 6.8. Jedan DB snapshot za autoritativnu validaciju
+
+`lib/auth/authoritative-session-database.ts` sada sadrži dormantni adapter.
+Jedan PostgreSQL statement čita:
+
+- HMAC-indeksirani Session red;
+- pripadajući User red i svežu role/profile/verification sliku;
+- tačno jedan `AuthPolicyState` red i ukupan broj policy redova;
+- `(clock_timestamp() AT TIME ZONE 'UTC')::timestamp(3)`.
+
+Validator exact poredi JWT, Session, User i policy revision vrednosti, user ID,
+issued-at i absolute expiry. Eksplicitna UTC-naive konverzija DB sata odgovara
+Prisma `DateTime`/PostgreSQL `timestamp(3) without time zone` ugovoru i pri
+čitanju ne zavisi od session `TimeZone` podešavanja. To nije dokaz da su
+istorijski/default timestamp upisi napravljeni u UTC: pre aktivacije DB
+role/database TimeZone mora biti zaključan i readiness-proveren kao UTC, uz
+real-PG negativan test upisa iz ne-UTC sesije. Expiry se konačno meri DB satom.
+Aktuelna DB politika se ponovo izvršava; strict/staged denial invalidira inače
+potpisan i strukturno validan token.
+
+Rezultati su eksplicitni:
+
+- `valid` vraća samo svež principal bez `sid`, JWT-a ili storage digest-a;
+- `invalid` pokriva missing/deleted/expired/revoked/mismatch/policy-denied
+  sesiju;
+- `unavailable` pokriva DB kvar, missing/duplicate/nevalidan singleton ili
+  oštećen persisted state.
+
+Nema pozitivnog cross-request cache-a. Dodat je exact current-session delete,
+locked Session insert i locked logout-all helper. Poslednja dva namerno traže
+caller-owned transakciju i dokumentovan User→policy lock redosled; helper ne
+skriva niti izmišlja lock.
+
+### 6.9. Novi testovi i CI wiring
+
+Dodati testovi pokrivaju canonical SID, stabilan HMAC, malformed claims,
+revision/expiry granice, strict DB-only policy singleton, nerolling
+encode/decode, DB principal freshness, strict denial, missing/expired/mismatch
+ishode, exact revoke, locked insert i logout-all ugovor.
+
+Real-PostgreSQL test je iza `RUN_AUTH_SESSION_DB_TESTS=true` i koristi postojeći
+loopback/test-database guard. On proverava:
+
+- da DB čuva digest, a ne raw `sid`;
+- tačne revision/issuedAt/expires vrednosti;
+- validan svež principal;
+- User revision bump kao trenutnu invalidaciju;
+- policy revision bump kao trenutnu invalidaciju;
+- svežu role projekciju iz DB-a;
+- stabilno čitanje postojećeg UTC fixture-a unutar transakcije čiji je
+  `TimeZone=Europe/Belgrade`;
+- exact current revoke i replay denial.
+
+Pre same expand migracije dodat je odvojen
+`scripts/auth-session-expand-preflight.sql`. On je `REPEATABLE READ READ ONLY`,
+uzima samo `ACCESS SHARE`, koristi UTC i ograničene timeout-e, proverava strict
+baseline `Session.sessionToken` ugovor i ispisuje samo
+`preflight.session.legacy_reserved_v1_token|count`. Nenulti nalaz — uključujući
+istekao Session red — završava `psql` statusom `3`, bez tokena, ID-a ili PII.
+Opt-in PG fixture izvršava baš tu skriptu nad izolovanom test šemom i dokazuje
+clean i fail-closed collision slučaj. Preflight nikada ne briše sesije.
+
+V2 verification workflow dobio je samo dva nova test env prekidača za DB
+validator i expand-preflight fixture. Trigger, release uslov i deploy posao
+nisu menjani.
+
+Lokalni zbir posle dormantne faze:
+
+| Provera | Rezultat |
+| --- | --- |
+| Novi fokusirani testovi | `34` ukupno / `32` pass / `2` očekivana real-PG skip / `0` fail |
+| Kompletan `npm test` | `350` ukupno / `331` pass / `19` očekivanih real-PG skip / `0` fail |
+| ESLint quiet | PASS |
+| TypeScript bez emitovanja | PASS |
+| `git diff --check` | PASS |
+
+Ova faza još nije auth aktivacija. Password/role/verification write tokovi još
+ne bump-uju revision, NextAuth callback još ne insertuje/revalidira Session, a
+server/proxy guardovi još nisu prebačeni. Ti koraci ostaju naredne faze i
+preflight JWT blocker ostaje namerno aktivan.
+
 Stvarni `.env`, produkcijska baza i produkcijski credentiali nisu pregledani.
 Za lokalne komande korišćene su eksplicitne test konfiguracione vrednosti;
 opt-in real-DB testovi nisu lažno predstavljeni kao izvršeni.
@@ -290,17 +453,19 @@ same-origin POST
 Ako DB revoke zakaže, endpoint vraća coarse retryable 503; ne tvrdi da je
 sesija opozvana samo zato što je browser cookie obrisan.
 
-## 8. Test matrica koja još mora biti izvedena
+## 8. Test matrica
 
-Naredne faze moraju dodati unit i real-PostgreSQL dokaze za:
+Faza 2 već zaključava canonical 32-byte SID, stabilan domain-separated HMAC,
+odsustvo raw SID-a u DB-u, strict claim oblik, exact expiry, revision mismatch,
+fresh DB principal, strict/staged policy odluku, exact revoke, UTC stabilnost i
+legacy reserved-namespace preflight.
 
-- canonical 32-byte base64url `sid` i strogi claim parser;
-- HMAC purpose separation i odsustvo raw `sid` u bazi/logovima;
+Naredne faze još moraju dodati unit, bundle/E2E i real-PostgreSQL dokaze za:
+
 - immutable `sae` kroz proizvoljno mnogo session refresh zahteva;
-- exact expiry granicu po DB satu;
-- missing/deleted/expired Session;
-- User i policy revision mismatch;
-- role/profile freshness iz DB-a;
+- stvarni Next 16 Proxy/Edge production bundle sa custom decoderom;
+- Credentials sign-in → refresh → exact expiry sa atomski upisanim DB redom;
+- DB/role UTC readiness i timestamp write ponašanje iz ne-UTC sesije;
 - login-vs-reset/change/role race;
 - policy bump-vs-session issuance race;
 - verification rotation, rollback i cross-device rezultat;
@@ -325,8 +490,16 @@ Naredne faze moraju dodati unit i real-PostgreSQL dokaze za:
    rutu.
 4. **Expiry cleanup i indeks.** `Session_expires_idx` omogućava bounded cleanup;
    worker i operativne metrike dolaze pre live-a.
-5. **Policy izmena je kontrolna operacija.** Mora atomski povećati revision i
-   imati pregledan CLI/runbook; ručni update bez revision bump-a je zabranjen.
+5. **Policy izmena je DB-only kontrolna operacija posle cutovera.** Mora
+   atomski povećati revision i imati operator-only CAS CLI/runbook; ručni
+   update bez revision bump-a i env↔DB dual-read su zabranjeni.
+6. **Legacy token može slučajno ličiti na V2 digest.** Expand preflight zato
+   proverava sve Session redove pre migracije. Nenulti aggregate se ručno
+   remediira i ponavlja do nule; migracija niti preflight ne kriju auto-delete.
+7. **`timestamp without time zone` upisi zahtevaju UTC ugovor.** UTC-normalized
+   read clock nije dovoljan ako DB default pod ne-UTC sesijom upiše lokalni
+   zidni sat. Aktivacija zato čeka eksplicitan UTC DB role/database readiness
+   gate i real-PG write test.
 
 ## 10. Preostali redosled posle ove sekcije
 
@@ -348,10 +521,11 @@ red nije tvrdnja o uspehu.
 | Dokaz | Vrednost |
 | --- | --- |
 | Base V2 SHA | `d926e152f51f363c66d37f46859fbecffbc634d2` |
-| Feature commit | čeka stabilan commit |
-| V2-only PR | čeka push/PR |
-| Exact-head CI run | čeka GitHub CI |
-| PostgreSQL 16 migration/invariant | čeka GitHub CI |
+| Prvi expand commit | `9316e0eb5fff627d577badc9fdaf2c0b2a73734b` |
+| V2-only PR | [draft PR #22](https://github.com/biozencaj-stack/narodnanosnja/pull/22) |
+| Prvi expand CI run | [run `33326003849`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33326003849), attempt 1, `SUCCESS` |
+| PostgreSQL 16 migration/invariant | `PASS` u run-u `33326003849` |
+| Dormantni core exact-head CI run | čeka novi GitHub CI run |
 | Feature merge SHA | nije izvršen |
 | Post-merge V2 run | nije izvršen |
 | Release/deploy jobs | moraju ostati `SKIPPED` |

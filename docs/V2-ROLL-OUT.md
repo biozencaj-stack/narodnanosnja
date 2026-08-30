@@ -63,18 +63,21 @@ Pre bilo kakvog live-a obavezno je sledeće.
 Strogi end-to-end redosled za ovu auth etapu je:
 
 1. pokrenuti legacy aggregate audit nad još neproširenom produkcionom šemom;
-2. poslovno pregledati agregate bez automatskog `emailVerified` backfill-a;
-3. napraviti/proveriti backup i restore klon, pa na klonu probati sva tri auth
-   expand koraka;
-4. posle expand-a pokrenuti current aggregate audit;
-5. eventualni grace DML pregledati kao zasebnu data promenu samo za odobrene
+2. pokrenuti zaseban authoritative-session expand preflight nad legacy
+   `Session` namespace-om;
+3. poslovno pregledati agregate bez automatskog `emailVerified` backfill-a ili
+   automatskog brisanja sesija;
+4. napraviti/proveriti backup i restore klon, pa na klonu probati sva četiri
+   auth expand koraka;
+5. posle expand-a pokrenuti current aggregate audit;
+6. eventualni grace DML pregledati kao zasebnu data promenu samo za odobrene
    legacy `CUSTOMER` redove, sa jednim deadline-om i rollback planom;
-6. uvesti i dokazati JWT session revision/revalidation/revocation;
-7. uvesti shared limiter i trusted-proxy/client-IP ugovor;
-8. pokrenuti staged preflight, koji do završetka tačaka 6–7 mora ostati crven;
-9. tek posebnim odobrenjem uključiti staged i pratiti recovery period;
-10. posle isteka grace-a koristiti novi, zaseban strict gate;
-11. main-push/live workflow napraviti ili aktivirati isključivo kao poslednji
+7. uvesti i dokazati JWT session revision/revalidation/revocation;
+8. uvesti shared limiter i trusted-proxy/client-IP ugovor;
+9. pokrenuti staged preflight, koji do završetka tačaka 7–8 mora ostati crven;
+10. tek posebnim odobrenjem uključiti staged i pratiti recovery period;
+11. posle isteka grace-a koristiti novi, zaseban strict gate;
+12. main-push/live workflow napraviti ili aktivirati isključivo kao poslednji
     korak ukupnog plana.
 
 ### Šema i podaci
@@ -91,11 +94,15 @@ Strogi end-to-end redosled za ovu auth etapu je:
 4. Na istom klonu primeniti
    `20260830020000_expand_verified_login_grace`. Potvrditi jednu nullable
    `timestamp(3)` kolonu bez defaulta, backfill DML-a i dedicated indeksa.
-5. Izmeriti lock trajanje. Cooldown i grace ALTER-i su metadata-only bez
-   defaulta, ali ipak kratko uzimaju `ACCESS EXCLUSIVE`; sva tri auth SQL fajla
-   imaju 10s lock i 2min statement timeout koji nisu zamena za maintenance plan.
-6. Pokrenuti kompletan `scripts/db-invariant-smoke.sql` u rollback režimu.
-7. Evidentirati tačan recovery postupak. Failed migracija se ne ponavlja
+5. Pre `20260830030000_expand_authoritative_sessions` pokrenuti
+   `scripts/auth-session-expand-preflight.sql`, zatim na klonu primeniti
+   migraciju i potvrditi User/Session/policy constraint-e, singleton i indeks.
+6. Izmeriti lock trajanje. Cooldown, grace i session metadata ALTER-i ne rade
+   backfill preko defaulta, ali ipak kratko uzimaju `ACCESS EXCLUSIVE`; sva
+   četiri auth SQL fajla imaju 10s lock i 2min statement timeout koji nisu
+   zamena za maintenance plan.
+7. Pokrenuti kompletan `scripts/db-invariant-smoke.sql` u rollback režimu.
+8. Evidentirati tačan recovery postupak. Failed migracija se ne ponavlja
    naslepo; `migrate resolve --rolled-back` je dozvoljen tek posle potvrđenog
    rollback-a i otklanjanja uzroka.
 
@@ -352,7 +359,7 @@ Za svaku buduću postojeću bazu, pre backup-a i bilo kakve migracije pokrenuti
 read-only proveru:
 
 ```bash
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/db-legacy-preflight.sql
+psql -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/db-legacy-preflight.sql
 ```
 
 Skripta radi u `READ ONLY` transakciji, postavlja `lock_timeout=5s` i
@@ -362,6 +369,22 @@ veličina, nevalidne nazive veličina, negativne cene/zalihe/mere/order iznose,
 nevalidnu količinu ili aktivan legacy proizvod bez ijednog stock reda. Svaki
 nalaz mora biti očišćen kontrolisanom, posebno pregledanom data migracijom, a
 preflight potom ponovljen do uspeha.
+
+Neposredno pre authoritative-session expand migracije pokrenuti i namenski
+Session namespace gate (on ne zamenjuje opšti legacy preflight):
+
+```bash
+psql -X "$PSQL_DATABASE_URL" \
+  -v ON_ERROR_STOP=1 \
+  -f scripts/auth-session-expand-preflight.sql
+```
+
+Gate potvrđuje baseline `Session.sessionToken` ugovor i broji sve legacy
+tokene oblika `v1:<64 lowercase hex>`, uključujući istekle. Ispisuje samo
+`preflight.session.legacy_reserved_v1_token|count`; nenulti nalaz završava
+statusom `3`, bez tokena, ID-a ili PII. Takve sesije se opozivaju/rotiraju samo
+kroz posebno pregledanu operativnu odluku, nikada automatskim DML-om iz
+preflighta. Posle remedijacije obavezno ponoviti isti gate do nule.
 
 Produkcijski postupak za migraciju postojeće baze je:
 
@@ -383,7 +406,7 @@ lock ili blokirati upise, zato se ovaj expand ne pušta pod redovnim saobraćaje
 Ako lock ili statement timeout prekine migraciju, ne ponavljati je naslepo:
 zaustaviti rollout, pregledati `_prisma_migrations` i PostgreSQL stanje i
 napraviti eksplicitan recovery/resolve plan. Četiri već primenjena
-`migration.sql` fajla su nepromenljiva produkcijska istorija, a sva tri kasnija
+`migration.sql` fajla su nepromenljiva produkcijska istorija, a sva četiri kasnija
 auth SQL fajla takođe se ne prepravljaju radi lakšeg rollout-a. Svaka buduća
 promena ide u novu migraciju, nikada izmenom postojećeg sadržaja ili checksum-a.
 

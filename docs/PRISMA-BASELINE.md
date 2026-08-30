@@ -24,7 +24,7 @@ Prethodna parcijalna localized-JSON migracija zato je uklonjena iz aktivnog
 
 ## Aktivni lanac naspram produkciono primenjenog stanja
 
-Aktivni Git lanac trenutno ima sedam SQL migracija. To nije isto što i sedam
+Aktivni Git lanac trenutno ima osam SQL migracija. To nije isto što i osam
 produkcijski primenjenih migracija:
 
 | Redosled | Migracija | Produkcijski status ovog preseka |
@@ -35,13 +35,14 @@ produkcijski primenjenih migracija:
 | 4 | `20260829020000_expand_v2_platform` | primenjena |
 | 5 | `20260830000000_expand_hashed_auth_tokens` | dokazana samo na praznoj izolovanoj CI bazi; nije primenjena na produkciju |
 | 6 | `20260830010000_expand_email_verification_cooldown` | PASS u exact-head run-u `33317607438` i post-merge run-u `33317787952` na praznoj izolovanoj PostgreSQL 16 bazi; nije primenjena na produkciju |
-| 7 | `20260830020000_expand_verified_login_grace` | proverena samo u lokalnom/izolovanom razvojnom paketu; nije primenjena na produkciju i za ovaj presek još nema završen release dokaz |
+| 7 | `20260830020000_expand_verified_login_grace` | PASS u exact-head run-u `33324304744` i post-merge run-u `33324541873` na praznoj izolovanoj PostgreSQL 16 bazi; nije primenjena na produkciju |
+| 8 | `20260830030000_expand_authoritative_sessions` | PASS u prvom izolovanom draft-PR run-u `33326003849` na praznoj PostgreSQL 16 bazi; nije primenjena na produkciju, a runtime aktivacija nije izvršena |
 
 Zato je tačna produkcijska tvrdnja i dalje: četiri završene migracije iz ranijeg
-kontrolisanog prozora. Prisustvo pete, šeste i sedme migracije u repozitorijumu
-nije dokaz da ih produkciona `_prisma_migrations` tabela sadrži ili da server
-može bez dodatne probe da pokrene novi kod. Produkciona baza nije migrirana,
-čitana niti menjana tokom verified-login etape.
+kontrolisanog prozora. Prisustvo pete, šeste, sedme i osme migracije u
+repozitorijumu nije dokaz da ih produkciona `_prisma_migrations` tabela sadrži
+ili da server može bez dodatne probe da pokrene novi kod. Produkciona baza nije
+migrirana, čitana niti menjana tokom verified-login/session etape.
 
 ## Produkciona baza
 
@@ -59,7 +60,7 @@ Ova komanda je upisala Prisma migracionu evidenciju; nije izvršila baseline SQL
 nad postojećim tabelama. Izvršena je tačno jednom, a zatim su tri tada postojeće
 V2 expand migracije primenjene sa `prisma migrate deploy`. Završne provere tog
 istorijskog prozora potvrđuju četiri završene migracije, nulti schema drift i
-očuvane postojeće podatke. Tri kasnije auth migracije nisu deo te tvrdnje.
+očuvane postojeće podatke. Četiri kasnije auth migracije nisu deo te tvrdnje.
 
 ## Auth-token compat expand
 
@@ -182,6 +183,38 @@ revalidacija/revokacija rolling JWT sesija i shared limiter sa pregledanim
 trusted-proxy/client-IP ugovorom. Read-only preflight namerno uvek emituje
 `preflight.jwt_session_revalidation.unavailable|1` i završava neuspehom dok se
 taj zasebni bezbednosni paket ne implementira i gate ne izmeni.
+
+## DB-authoritative session compatibility expand
+
+`20260830030000_expand_authoritative_sessions` je compatibility expand, ne
+runtime aktivacija. Dodaje `User.authSessionRevision`, nullable V2 metapodatke
+na `Session`, indeks isteka i strogo ograničen `AuthPolicyState` singleton koji
+počinje u `(revision=1, policy='audit')`. Legacy Session red ostaje dozvoljen
+samo ako su sva tri nova metadata polja `NULL` i njegov token ne koristi
+rezervisani V2 namespace `v1:<64 lowercase hex>`.
+
+Zbog poslednjeg uslova, pre ove migracije se na restore klonu, a zatim ponovo u
+odobrenom maintenance prozoru, obavezno pokreće zaseban aggregate-only gate:
+
+```bash
+psql -X "$PSQL_DATABASE_URL" \
+  -v ON_ERROR_STOP=1 \
+  -f scripts/auth-session-expand-preflight.sql
+```
+
+`PSQL_DATABASE_URL` ovde znači odobren libpq/psql URI bez Prisma-only
+`schema=public` parametra. Skripta radi u `REPEATABLE READ READ ONLY`
+transakciji, uzima samo `ACCESS SHARE`, koristi UTC i ograničene timeout-e i
+ispisuje tačno zbirni nalaz
+`preflight.session.legacy_reserved_v1_token|count`. Proverava sve Session
+redove, uključujući istekle. Ne ispisuje token, row/user ID, email ili vreme.
+
+Nulti nalaz završava uspešno. Nenulti nalaz završava `psql` statusom `3` i mora
+se rešiti posebno odobrenom revokacijom/rotacijom legacy sesija, pa gate
+ponoviti. Skripta ništa ne briše; automatsko brisanje Session redova nije
+dozvoljena preflight radnja. Posle expand-a postojeći JWT tok i dalje ostaje
+nepromenjen sve dok se atomsko izdavanje, revokacija, DB guardovi, logout i
+race testovi ne aktiviraju u kontrolisanom V2 preseku.
 
 ## Read-only email-verification audit granice
 
