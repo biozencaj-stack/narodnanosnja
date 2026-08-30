@@ -3,7 +3,7 @@
 Datum početka: 2026-08-30  
 Radna grana: `ispravka/v2-db-authoritative-sessions`  
 Polazni V2 SHA: `d926e152f51f363c66d37f46859fbecffbc634d2`  
-Status: **u radu; dormantni core ima zelen CI dokaz, security revocation tokovi su lokalno implementirani, aktivacija nije izvršena**
+Status: **u radu; faze 1–3 imaju zelen exact-head CI dokaz, a dormantna credentials/verification V2 issuance jezgra su lokalno implementirana; aktivacija nije izvršena**
 
 ## 1. Granica ove sekcije
 
@@ -142,8 +142,8 @@ definisanog ugovora.
 | 0 | Nova grana iz tačno verifikovanog V2 head-a | završeno |
 | 1 | Compatibility expand šema, migracija i DB invarijante | završeno; PostgreSQL 16 CI dokaz zelen |
 | 2 | Dormantni claim/HMAC/policy/JWT/DB validator moduli | završeno; exact-head PostgreSQL 16 CI dokaz zelen |
-| 3 | Revocation u reset/change/privileged/demo write tokovima | lokalno implementirano; novi real-PG CI dokaz sledi |
-| 4 | Credentials i verification V2 session issuance/rotation | nije započeto |
+| 3 | Revocation u reset/change/privileged/demo write tokovima | završeno; exact-head PostgreSQL 16 CI dokaz zelen |
+| 4 | Credentials i verification V2 session issuance/rotation | dormantna jezgra lokalno implementirana; real-PG CI dokaz čeka |
 | 5 | Pouzdan current-session logout | nije započeto |
 | 6 | Customer/ownership/admin server guard migracija | nije započeto |
 | 7 | Session contract migracija | nije započeto |
@@ -177,7 +177,7 @@ postavlja i `SET LOCAL TIME ZONE 'UTC'`, jer Prisma `DateTime` kolone koriste
 `timestamp(3) without time zone` i taj migracioni upis ne sme naslediti
 operatorov lokalni zidni sat. `SET LOCAL` važi samo u migracionoj transakciji:
 ne podešava buduće runtime konekcije, DB role niti database default. Zato
-poseban runtime UTC readiness gate iz odeljka 10 ostaje obavezan pre aktivacije.
+poseban runtime UTC readiness gate iz odeljka 11 ostaje obavezan pre aktivacije.
 Ako potrebni lock nije brzo dostupan, rollout treba da stane i bude ponovljen u
 pregledanom prozoru umesto da neograničeno blokira aplikaciju.
 
@@ -492,13 +492,134 @@ role writeri su privileged CLI i eksplicitno zaštićen demo seed.
 | ESLint quiet | PASS |
 | `git diff --check` | PASS |
 | Kompletan `npm test` | `361` ukupno / `340` pass / `21` očekivan real-PG skip / `0` fail |
-| Novi real-PG rollback/revocation fixture-i | čeka GitHub PostgreSQL 16 CI |
+| Novi real-PG rollback/revocation fixture-i | PASS u run-u `33328617960` |
 
 Workflow dobija samo `RUN_DEMO_USER_SYNC_DB_TESTS=true`; postojeći reset,
 password-change i privileged integration testovi već koriste ranije uključene
 DB prekidače. Triggeri, release uslov i deploy posao ostaju nepromenjeni.
 
-## 8. Obavezni transakcioni redosledi narednih faza
+### 7.7. Exact-head CI dokaz faze 3
+
+Commit `0790ccdb8e686b3a7e2358e8aecf11b2255bdbdc` potvrđen je na draft PR-u
+#22 run-om `33328617960`, attempt 1. PostgreSQL 16 migracije, drift, DB
+invarijante, svi opt-in security/session fixture-i, lint, TypeScript, browser
+smoke i production build završili su sa `SUCCESS`. Time je potvrđen i naknadno
+dodat migracioni `SET LOCAL TIME ZONE 'UTC'` red koji stariji expand run nije
+obuhvatao. Release i produkcijski deploy poslovi ostali su `SKIPPED`; nije bilo
+merge-a, taga, deployment zapisa niti pristupa produkciji.
+
+## 8. Dnevnik — faza 4: dormantni V2 issuance i verification rotation
+
+### 8.1. Zašto jezgra još nisu povezana na aktivni auth tok
+
+Implementacija ove faze je namerno dormantna. Novi moduli nisu povezani na
+`authorizeCredentialsLogin`, `authOptions`, aktivni verification route,
+`signOut()` niti `proxy.ts`. Parcijalni cutover nije bezbedan zato što trenutni
+proxy još donosi role odluku iz legacy JWT snapshot-a, dok strogi V2 JWT nosi
+samo sedam security claim-ova i nema role/profile podatke. Uključivanje samo
+issuance-a ostavilo bi legacy cookie ili proxy-only autorizacioni put koji ne
+poštuje DB revokaciju.
+
+Stvarno povezivanje zato ostaje jedan budući, pregledan activation paket:
+
+- versioned V2 auth-cookie ime i cleanup svih legacy/chunked imena;
+- custom NextAuth encode/decode bez rolling `sae`;
+- DB revalidacija i jasno razlikovanje `invalid` od `unavailable`;
+- current-session DB revoke pre cookie cleanup-a;
+- centralni Node server guardovi i fail-closed Proxy ponašanje.
+
+Do tog preseka verified-login JWT/session preflight blocker ostaje aktivan.
+
+### 8.2. Dormantni credentials V2 session issuer
+
+Novi `lib/auth/credentials-session-issuance.ts` prima samo kandidat koji je
+upravo prošao realno bcrypt poređenje: exact User ID, canonical email i
+podržani cost-12 bcrypt hash. Hash je isključivo lokalni CAS dokaz i nikada se
+ne prenosi u NextAuth User/JWT/cookie rezultat.
+
+Pre transakcije se generiše canonical 256-bitni SID. Jedna transakcija zatim:
+
+1. zaključava exact `User` sa `FOR UPDATE` i ponovo čita password, email,
+   profil, verification stanje i `authSessionRevision`;
+2. odbija obrisan nalog, promenjen email/hash ili nevalidnu user revision;
+3. čita `AuthPolicyState(id=1)` sa `FOR SHARE`, a zatim zahteva ukupan count
+   tačno jedan i strict `parseAuthPolicyState` rezultat;
+4. uzima jedan materialized UTC-normalized PostgreSQL sat: precizni
+   `evaluatedAt timestamp(3)` koristi za policy odluku, a iz istog uzorka
+   izvodi second-aligned `issuedAt` za claim/Session;
+5. ocenjuje verified-login pravilo isključivo iz zaključanog DB singletona i
+   svežeg User reda, bez env policy fallback-a;
+6. formira immutable V2 claims sa exact user/policy revision vrednostima i
+   `sae - sat = 86400`;
+7. preko postojećeg locked inserta čuva samo purpose-separated HMAC digest,
+   nikada raw SID, i vraća fresh principal+claims tek posle commita.
+
+Policy `FOR SHARE` i dalje blokira konkurentni policy `UPDATE`, ali dozvoljava
+paralelne login issuance transakcije različitih korisnika; time singleton nije
+globalni login mutex. Svaki snapshot, policy, clock, SID ili insert kvar daje
+jedan coarse `null` ishod. Budući NextAuth encode kvar posle uspešnog commita
+može ostaviti samo nedostupan, bounded orphan Session red; browser credential
+ne postoji, validator ga ne može pogoditi bez raw SID-a, a expiry cleanup ga
+uklanja.
+
+### 8.3. Dormantni email-verification session rotation
+
+Novi `lib/auth/email-verification-session-rotation.ts` zadržava postojeći
+hash-first/legacy-fallback credential claim, ali verification i novu sesiju
+spaja u jednu transakciju. SID se generiše i secret proverava pre transakcije,
+a zatim sledi tačan redosled:
+
+1. `User FOR UPDATE`, sa exact nepromenjenim email/password/role/name snapshotom
+   i non-overflow `authSessionRevision`;
+2. `AuthPolicyState FOR SHARE`, singleton count i strict DB-only parse;
+3. exact `EmailVerification FOR UPDATE`, uključujući zabranu hash→plaintext
+   downgrade-a;
+4. precizni UTC-naive PostgreSQL `verifiedAt timestamp(3)` posle sva tri lock
+   wait-a, exact expiry i policy odluka kao upravo verifikovan korisnik;
+5. second-aligned `issuedAt`, `nextRevision` i immutable V2 claims;
+6. JWE/kompletan HTTP rezultat preko callback-a pre prve mutacije, ali bez
+   vraćanja odgovora pre commita;
+7. conditional User verification write i revision `+1`;
+8. brisanje svih legacy/V2 sesija, pa insert tačno jednog novog HMAC-only V2
+   Session reda sa zaključanom policy revision;
+9. exact consume pobedničkog credentiala i cleanup svih verification siblinga;
+10. commit, pa tek tada vraćanje unapred pripremljenog rezultata.
+
+Exact claim konflikt i DB expiry ostaju posebni bezbedni ishodi. Malformed
+policy/clock/revision, invalid secret/SID, response/JWE kvar i persistence kvar
+postaju jedan coarse unavailable ishod. Svaki kvar posle write-a rollback-uje
+email verification, revision, grace/resend throttle polja, stare sesije, novu
+sesiju i verification credential.
+
+### 8.4. Lokalni dokaz faze 4
+
+| Provera | Rezultat |
+| --- | --- |
+| Fokus credentials issuer + verification rotation | `14` ukupno / `11` pass / `3` očekivana real-PG skip / `0` fail |
+| Kompletan `npm test` | `375` ukupno / `351` pass / `24` očekivana real-PG skip / `0` fail |
+| TypeScript bez emitovanja | PASS |
+| ESLint quiet | PASS |
+| `git diff --check` | PASS |
+| Novi real-PG issuance/rotation fixture-i | čeka GitHub PostgreSQL 16 CI |
+
+Credentials fixture pod postojećim `RUN_VERIFIED_LOGIN_DB_TESTS=true` pokriva
+HMAC-only upis, authoritative validation, rollback insertovanog reda, stvarni
+stale bcrypt snapshot i `Europe/Belgrade` transaction TimeZone. Rotation
+fixture-i pod postojećim `RUN_AUTH_VERIFICATION_DB_TESTS=true` pokrivaju
+legacy+V2 → tačno jedan novi V2 red, revision `+1`, precizni `emailVerified`,
+second-aligned claim/DB vreme pod ne-UTC sesijom i potpuni rollback na
+injected Session-insert i credential-cleanup kvar. Workflow ne dobija novi
+trigger niti novi env prekidač.
+
+## 9. Obavezni transakcioni redosledi aktivacije i narednih faza
+
+Faze 4 i 5 prvo grade i testiraju dormantne orkestracione jezgre. One se ne
+povezuju parcijalno na aktivni `authOptions`, verification route, `signOut()`
+ili `proxy.ts`: V2 cookie nema role/profile snapshot, dok trenutni proxy još
+veruje legacy JWT ulozi. Stvarni cutover zato mora biti jedan pregledan paket
+sa versioned cookie imenom, custom encode/decode lancem, pouzdanim logoutom i
+centralnim Node DB guardovima. Pre tog preseka preflight JWT blocker ostaje
+aktivan.
 
 ### Login/session issuance
 
@@ -527,16 +648,19 @@ User FOR UPDATE
 ### Email verification rotacija
 
 ```text
+generiši canonical SID pre transakcije
 User FOR UPDATE
-  → exact EmailVerification FOR UPDATE
   → AuthPolicyState lock
+  → exact EmailVerification FOR UPDATE
   → DB clock i expiry provera
-  → User verified + revision bump
+  → strict snapshot/policy odluka i next revision claims
+  → pripremi JWE i kompletan HTTP odgovor, ali ga još ne vraćaj
+  → conditional User verified + revision bump
   → delete svih starih Session redova
   → insert tačno nove Session digest vrednosti
-  → consume verification siblings
+  → exact consume i cleanup verification siblings
   → commit
-  → vrati unapred pripremljen cookie/response
+  → tek sada vrati unapred pripremljen cookie/response
 ```
 
 ### Current-session logout
@@ -552,22 +676,24 @@ same-origin POST
 Ako DB revoke zakaže, endpoint vraća coarse retryable 503; ne tvrdi da je
 sesija opozvana samo zato što je browser cookie obrisan.
 
-## 9. Test matrica
+## 10. Test matrica
 
 Faza 2 već zaključava canonical 32-byte SID, stabilan domain-separated HMAC,
 odsustvo raw SID-a u DB-u, strict claim oblik, exact expiry, revision mismatch,
 fresh DB principal, strict/staged policy odluku, exact revoke, UTC stabilnost i
 legacy reserved-namespace preflight.
 
-Naredne faze još moraju dodati unit, bundle/E2E i real-PostgreSQL dokaze za:
+Faza 4 je lokalno dodala izolovane real-PG fixture-e za HMAC-only credentials
+insert, stale bcrypt CAS, non-UTC clock, verification rotation i rollback.
+Activation/race faze još moraju dodati sledeće integrisane dokaze:
 
 - immutable `sae` kroz proizvoljno mnogo session refresh zahteva;
 - stvarni Next 16 Proxy/Edge production bundle sa custom decoderom;
 - Credentials sign-in → refresh → exact expiry sa atomski upisanim DB redom;
-- DB/role UTC readiness i timestamp write ponašanje iz ne-UTC sesije;
+- DB role/database UTC readiness za default/runtime write putanje;
 - login-vs-reset/change/role race;
 - policy bump-vs-session issuance race;
-- verification rotation, rollback i cross-device rezultat;
+- konkurentna verification rotacija i cross-device HTTP/cookie rezultat;
 - logout jednog uređaja uz očuvanje drugog;
 - replay obrisanog session tokena;
 - DB outage kao 503, nikada kao guest ili stara JWT dozvola;
@@ -576,7 +702,7 @@ Naredne faze još moraju dodati unit, bundle/E2E i real-PostgreSQL dokaze za:
   call-site-ova;
 - schema expand→contract prelaz i fail-closed invalid fixture-e.
 
-## 10. Rollout i rollback rizici
+## 11. Rollout i rollback rizici
 
 1. **Mešani old/new app pool nije dozvoljen pri aktivaciji.** Stari proces može
    izdati JWT koji nema DB allowlist red. Budući rollout mora koristiti drain,
@@ -600,7 +726,7 @@ Naredne faze još moraju dodati unit, bundle/E2E i real-PostgreSQL dokaze za:
    zidni sat. Aktivacija zato čeka eksplicitan UTC DB role/database readiness
    gate i real-PG write test.
 
-## 11. Preostali redosled posle ove sekcije
+## 12. Preostali redosled posle ove sekcije
 
 Kada DB-authoritative session paket dobije exact-head i post-merge V2 dokaz,
 redosled ukupnog projekta ostaje:
@@ -612,7 +738,7 @@ redosled ukupnog projekta ostaje:
 5. sadržaj, pravni, payment, observability i ostali live checklist gate-ovi;
 6. tek na kraju main-push GitHub workflow i stvarno live puštanje.
 
-## 12. Git/CI evidencija ove sekcije
+## 13. Git/CI evidencija ove sekcije
 
 Ova tabela se popunjava isključivo stvarnim dokazima. Trenutno nijedan pending
 red nije tvrdnja o uspehu.
@@ -629,7 +755,10 @@ red nije tvrdnja o uspehu.
 | Dormantni core exact-head CI run | [run `33327741687`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33327741687), attempt 1, `SUCCESS` |
 | Dormantni core PostgreSQL/session/preflight fixture-i | `PASS` u run-u `33327741687` |
 | Dormantni core E2E/build | `PASS` u run-u `33327741687` |
-| Faza 3 revocation commit/CI | čeka stabilan commit i novi GitHub run |
+| Faza 3 revocation commit | `0790ccdb8e686b3a7e2358e8aecf11b2255bdbdc` |
+| Faza 3 exact-head CI | [run `33328617960`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33328617960), attempt 1, `SUCCESS` |
+| Faza 3 PostgreSQL/session/E2E/build | `PASS`; release i deploy poslovi `SKIPPED` |
+| Faza 4 dormant issuance/rotation commit/CI | čeka stabilan commit i novi exact-head GitHub run |
 | Feature merge SHA | nije izvršen |
 | Post-merge V2 run | nije izvršen |
 | Release/deploy jobs | moraju ostati `SKIPPED` |

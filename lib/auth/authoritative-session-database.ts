@@ -31,11 +31,12 @@ export type AuthoritativeSessionValidation =
 /**
  * Input for a new authoritative Session row.
  *
- * The caller MUST already be inside a transaction which holds `FOR UPDATE`
- * locks for both the target User and the AuthPolicyState singleton. This
- * primitive deliberately does not acquire those locks: doing it here would
- * conceal an unsafe lock order from the authentication mutation that owns the
- * wider state transition.
+ * The caller MUST already be inside a transaction which holds `FOR UPDATE` on
+ * the target User and a policy-row lock that conflicts with policy writes
+ * (`FOR SHARE` or stronger) on the AuthPolicyState singleton. This primitive
+ * deliberately does not acquire those locks: doing it here would conceal an
+ * unsafe lock order from the authentication mutation that owns the wider state
+ * transition.
  */
 export interface InsertLockedAuthoritativeSessionInput {
   sid: string;
@@ -341,8 +342,9 @@ export function createAuthoritativeSessionDatabase(
     },
 
     /**
-     * Inserts one v2 session row after the caller acquired User then policy
-     * locks in the surrounding transaction. Do not call outside that lock.
+     * Inserts one v2 session row after the caller acquired User then a
+     * write-conflicting policy lock in the surrounding transaction. Do not
+     * call outside that lock.
      */
     async insertLockedSession(
       transaction: Prisma.TransactionClient,
