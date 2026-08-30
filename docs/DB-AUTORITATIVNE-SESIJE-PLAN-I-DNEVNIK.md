@@ -3,7 +3,7 @@
 Datum početka: 2026-08-30  
 Radna grana: `ispravka/v2-db-authoritative-sessions`  
 Polazni V2 SHA: `d926e152f51f363c66d37f46859fbecffbc634d2`  
-Status: **u radu; faze 1–5 i prvi dormantni server-guard paket faze 6 imaju zelen exact-head PostgreSQL/browser/build CI dokaz; tranzicioni legacy-only facade ima lokalni dokaz, call-site migracija i V2 aktivacija nisu izvršene**
+Status: **u radu; faze 1–5, dormantni server guard i tranzicioni legacy-only facade faze 6 imaju zelen exact-head PostgreSQL/browser/build CI dokaz; call-site migracija i V2 aktivacija nisu izvršene**
 
 ## 1. Granica ove sekcije
 
@@ -145,7 +145,7 @@ definisanog ugovora.
 | 3 | Revocation u reset/change/privileged/demo write tokovima | završeno; exact-head PostgreSQL 16 CI dokaz zelen |
 | 4 | Credentials i verification V2 session issuance/rotation | završeno kao dormantni paket; exact-head run `33330847915` zelen |
 | 5 | Pouzdan current-session logout | završen kao dormantni paket; exact-head run `33331632579` zelen |
-| 6 | Customer/ownership/admin server guard migracija | dormantni Node guard/access ugovor ima zelen exact-head CI; neutralni legacy-only facade lokalno završen, call-site migracija sledi |
+| 6 | Customer/ownership/admin server guard migracija | dormantni Node guard/access i neutralni legacy-only facade imaju zelen exact-head CI; source inventory gate lokalno završen i čeka CI; call-site migracija sledi |
 | 7 | Session contract migracija | nije započeto |
 | 8 | Real-PG race/E2E matrica i uklanjanje preflight blockera | nije započeto |
 | 9 | Završna dokumentacija, exact-head i post-merge V2 dokaz | nije započeto |
@@ -1023,6 +1023,13 @@ autoritativnim V2 principal-om.
 | Kompletan ESLint quiet | PASS |
 | `git diff --check` | PASS |
 
+Commit `d08fa32e40b1476b8d587ef596ff5119be4f7f59` i exact-head PR run
+`33334129994`, attempt 1, potvrdili su facade paket. PostgreSQL 16 migracije,
+drift/invarijante, svi security/DB testovi, lint, TypeScript, Chromium, mobilni
+smoke i probni production build završili su sa `SUCCESS`. Draft PR je ostao
+clean prema kanonskoj V2 grani; release i production deploy poslovi ostali su
+`SKIPPED`.
+
 Facade još nema nijedan aplikacioni potrošač, pa ova izmena ne menja login,
 cookie, autorizaciju, response ni korisničko ponašanje. Sledeći redosled je:
 
@@ -1036,6 +1043,86 @@ cookie, autorizaciju, response ni korisničko ponašanje. Sledeći redosled je:
    može da autorizuje, ali session outage bez validne alternative ostaje `503`;
 6. tek sa nulom direktnih aktivnih call-site-ova pripremiti jedan V2-only
    cookie/codec/issuance/verification/logout/proxy cutover bez downgrade puta.
+
+### 10.8. Mrtvi route cleanup i tranzicioni source-inventory gate
+
+Pre prvog stvarnog call-site batch-a uklonjena su dva neizvezena
+`legacyPOST` stabla iz `app/api/order/route.ts` i `app/api/orders/route.ts`.
+Oba fajla su i pre cleanup-a imala isti jedini javni runtime eksport:
+
+```ts
+export { POST } from "@/lib/checkout/order-handler";
+```
+
+Privatni handleri, njihovi tipovi, validatori i importi nisu bili eksportovani
+niti pozvani. Cleanup zato uklanja `419` mrtvih source linija i dva neizvršiva
+`getServerSession(authOptions)` poziva bez promene URL-a ili identiteta aktivnog
+`POST` handlera. Novi `lib/checkout/order-route-aliases.test.ts` čita oba stvarna
+route fajla i zahteva tačno jednu identičnu re-export liniju, pa se paralelni
+stari checkout handler ne može tiho vratiti. Aktivni zajednički
+`lib/checkout/order-handler.ts` i dalje koristi legacy sesiju; ovaj cleanup nije
+V2 aktivacija niti menja checkout ponašanje.
+
+Novi `lib/auth/server-session-callsite-inventory.test.ts` parsira production
+TypeScript i JavaScript preko compiler AST-a, bez oslanjanja na tekstualni
+`rg` broj. Ne prati symlinkove, ne čita testove, generated/build output,
+migracije, dokumentaciju ni dependency direktorijume. Za svaki preostali
+credential potrošač zaključava source fajl, originalni named import, local
+binding, broj direktnih poziva i exact `authOptions` argument.
+
+Tranzicioni snapshot sada zahteva:
+
+- tačno `97` aktivnih consumer poziva u `54` fajla;
+- tačno jedan centralni legacy read u `lib/auth/server-session.ts`, odnosno
+  ukupno `98` production poziva u `55` fajlova;
+- tačno dva izdvojena `getToken` poziva: `proxy.ts` i verification ruta;
+- `authOptions` statički import samo u preostalim consumer fajlovima i
+  NextAuth handleru, dok facade-ov lazy wiring ostaje posebno zaključan;
+- nula `unstable_getServerSession`, namespace/property/computed poziva,
+  dynamic/template/konkatenisanih `next-auth` importa, CommonJS `require` ili
+  `module.require`, import-equals zaobilazaka, raw/namespace/default re-exporta i
+  prosleđivanja/aliasovanja credential bindinga; namespace, property, computed,
+  dynamic i re-export `authOptions` putevi su takođe zatvoreni. Ceo Node
+  `module`/`node:module` runtime builtin, a time i `createRequire`
+  loader-factory, zabranjen je u production source-u, jer bi bez punog data-flow
+  engine-a omogućio da se modul i član sakriju iza lokalnih konstanti; projekat
+  nema legitiman runtime potrošač tog builtin-a. Bare CommonJS `module` je
+  takođe zabranjen; jedini uski izuzetak su postojeće leve strane
+  `module.exports = ...` u `ecosystem.config.js` i `postcss.config.js`.
+  `process`/`node:process` importi, aliasi i computed pristupi su zabranjeni;
+  globalni `process` sme samo kroz postojeći direktni allowlist (`env`, `cwd`,
+  `exit`, `stdin`, `stdout`, `argv`, `exitCode`), čime su zatvoreni i
+  `mainModule`, `binding` i Node 24 `getBuiltinModule` loader putevi.
+
+Bypass fixture-i dodatno zaključavaju kanonski i `/index` oblik auth modula,
+relativno razrešavanje do `lib/auth/index`, originalno ime aliased destructuring
+polja, statički konkatenisane computed članove, named-default `NextAuth` import,
+default re-export i pokušaj iznošenja odobrene `NextAuth` fabrike kroz drugi
+binding. Jedini dozvoljeni dinamički auth import ostaje precizno provereni
+`const { authOptions } = await import("./index")` unutar centralnog facade-a;
+binding mora biti `const` i imati samo jedan direktan `getServerSession`
+potrošač. Alias, initializer, dodatno destructured polje, drugi fajl, drugi
+module put ili drugo čitanje ne dobija taj izuzetak.
+
+Snapshot je namerno „shrinking allowlist“: svaki naredni migration batch briše
+ili smanjuje postojeće stavke. Nova stavka ili novi direktni credential put ruši
+test. Kada consumer mapa postane prazna, facade mora biti jedini legacy reader;
+na V2 cutoveru i taj izuzetak nestaje, bez zamene runtime prekidačem ili
+downgrade fallbackom.
+
+| Lokalna provera cleanup/source-gate paketa | Rezultat |
+| --- | --- |
+| Exact order route alias test | `1` pass / `0` fail |
+| AST shrinking-allowlist inventory + bypass fixture-i | `2` pass / `0` fail; `97/54` consumer, `98/55` ukupno, `2/2` getToken |
+| Kompletan `npm test` | `429` ukupno / `403` pass / `26` očekivanih real-PG skip / `0` fail |
+| TypeScript bez emitovanja | PASS |
+| ESLint sa nula upozorenja za izmenjene fajlove | PASS |
+| `git diff --check` | PASS |
+
+Ovaj paket još ne menja nijedan izvršivi session consumer. Prvi planirani
+funkcionalni batch je read-only `app/api/user/checkout-data/route.ts`, uz
+eksplicitno `anonymous → 401`, `unavailable → no-store 503` i DB lookup samo sa
+`authenticated.principal.id`.
 
 ## 11. Obavezni transakcioni redosledi aktivacije i narednih faza
 
@@ -1198,7 +1285,9 @@ red nije tvrdnja o uspehu.
 | Faza 5 zeleni exact-head dokaz | [run `33331632579`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33331632579), attempt 1, PostgreSQL/session/E2E/build `SUCCESS`; release/deploy `SKIPPED` |
 | Faza 6 dormantni guard commit | `c9f7849691fbeee1922d40c5d3959454961d5aab` |
 | Faza 6 dormantni guard exact-head dokaz | [run `33333262290`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33333262290), attempt 1, PostgreSQL/session/E2E/build `SUCCESS`; release/deploy `SKIPPED` |
-| Faza 6 tranzicioni legacy-only facade commit/CI | lokalni paket završen; čeka stabilan commit i exact-head run |
+| Faza 6 tranzicioni legacy-only facade commit | `d08fa32e40b1476b8d587ef596ff5119be4f7f59` |
+| Faza 6 tranzicioni facade exact-head dokaz | [run `33334129994`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33334129994), attempt 1, PostgreSQL/session/E2E/build `SUCCESS`; release/deploy `SKIPPED` |
+| Faza 6 mrtvi route cleanup/source inventory gate | lokalni paket završen; čeka stabilan commit i exact-head run |
 | Feature merge SHA | nije izvršen |
 | Post-merge V2 run | nije izvršen |
 | Release/deploy jobs | moraju ostati `SKIPPED` |
