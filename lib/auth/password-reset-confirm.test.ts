@@ -17,6 +17,9 @@ function createDatabase(
     token: null,
     tokenHash: "v1:stored-hash",
   },
+  sessionDeleteFailure = false,
+  sessionDeleteCount = 2,
+  userUpdateCount = 1,
 ) {
   const calls: Array<{ operation: string; input?: unknown }> = [];
   const database: PasswordResetConfirmDatabase = {
@@ -61,10 +64,19 @@ function createDatabase(
               };
             },
           },
+          session: {
+            async deleteMany(input) {
+              calls.push({ operation: "session:deleteMany", input });
+              if (sessionDeleteFailure) {
+                throw new Error("Injected session revocation failure");
+              }
+              return { count: sessionDeleteCount };
+            },
+          },
           user: {
             async updateMany(input) {
               calls.push({ operation: "user:updateMany", input });
-              return { count: 1 };
+              return { count: userUpdateCount };
             },
           },
         });
@@ -112,8 +124,15 @@ test("current hash uses User-first ordering and rolls back the prepared password
       operation: "user:updateMany",
       input: {
         where: { id: "user-id" },
-        data: { passwordHash: PASSWORD_HASH },
+        data: {
+          passwordHash: PASSWORD_HASH,
+          authSessionRevision: { increment: 1 },
+        },
       },
+    },
+    {
+      operation: "session:deleteMany",
+      input: { where: { userId: "user-id" } },
     },
     {
       operation: "passwordReset:deleteMany",
@@ -148,7 +167,7 @@ test("legacy claim uses the exact stored plaintext value, never an assumed hash 
     PASSWORD_HASH,
   );
 
-  assert.deepEqual(calls[5], {
+  assert.deepEqual(calls[6], {
     operation: "passwordReset:deleteMany",
     input: {
       where: {
@@ -161,7 +180,7 @@ test("legacy claim uses the exact stored plaintext value, never an assumed hash 
   });
 });
 
-test("a lost claim rolls back the User-first password write and never touches siblings", async () => {
+test("a lost claim rolls back password revision and session revocation", async () => {
   const { database, calls } = createDatabase(0, {
     token: null,
     tokenHash: "v1:lost-race",
@@ -184,7 +203,83 @@ test("a lost claim rolls back the User-first password write and never touches si
       "query:reset-for-update",
       "query:clock",
       "user:updateMany",
+      "session:deleteMany",
       "passwordReset:deleteMany",
+      "transaction:rollback",
+    ],
+  );
+});
+
+test("session revocation failure rolls back the password revision before credential cleanup", async () => {
+  const { database, calls } = createDatabase(
+    1,
+    { token: null, tokenHash: "v1:stored-hash" },
+    true,
+  );
+
+  await assert.rejects(
+    commitPasswordResetConfirmation(
+      database,
+      claim({ kind: "current-hash", storedValue: "v1:stored-hash" }),
+      PASSWORD_HASH,
+    ),
+    /Injected session revocation failure/,
+  );
+  assert.deepEqual(
+    calls.map(({ operation }) => operation),
+    [
+      "transaction:start",
+      "query:user-for-update",
+      "query:reset-for-update",
+      "query:clock",
+      "user:updateMany",
+      "session:deleteMany",
+      "transaction:rollback",
+    ],
+  );
+});
+
+test("zero existing sessions is a successful idempotent revocation", async () => {
+  const { database, calls } = createDatabase(
+    1,
+    { token: null, tokenHash: "v1:stored-hash" },
+    false,
+    0,
+  );
+
+  await commitPasswordResetConfirmation(
+    database,
+    claim({ kind: "current-hash", storedValue: "v1:stored-hash" }),
+    PASSWORD_HASH,
+  );
+  assert.equal(calls.at(-1)?.operation, "transaction:commit");
+});
+
+test("a failed password revision CAS rolls back before Session deletion", async () => {
+  const { database, calls } = createDatabase(
+    1,
+    { token: null, tokenHash: "v1:stored-hash" },
+    false,
+    2,
+    0,
+  );
+
+  await assert.rejects(
+    commitPasswordResetConfirmation(
+      database,
+      claim({ kind: "current-hash", storedValue: "v1:stored-hash" }),
+      PASSWORD_HASH,
+    ),
+    PasswordResetConfirmConflictError,
+  );
+  assert.deepEqual(
+    calls.map(({ operation }) => operation),
+    [
+      "transaction:start",
+      "query:user-for-update",
+      "query:reset-for-update",
+      "query:clock",
+      "user:updateMany",
       "transaction:rollback",
     ],
   );

@@ -54,6 +54,9 @@ function createHarness(options: {
       updates.push(input);
       return true;
     },
+    async deleteSessions(userId) {
+      events.push(`delete-sessions:${userId}`);
+    },
     async deletePasswordResets(userId) {
       events.push(`delete-password-resets:${userId}`);
     },
@@ -120,6 +123,7 @@ test("successful change compares before a User-first atomic cleanup", async () =
     "transaction:start",
     `lock-user:${USER_ID}`,
     "update-password",
+    `delete-sessions:${USER_ID}`,
     `delete-password-resets:${USER_ID}`,
     `delete-email-verifications:${USER_ID}`,
     "transaction:commit",
@@ -222,13 +226,46 @@ test("token cleanup failure rolls the password write back and stays coarse", asy
       error.stage === "COMMIT" &&
       !error.message.includes(privateFailure),
   );
+  assert.deepEqual(harness.events.slice(-6), [
+    "transaction:start",
+    `lock-user:${USER_ID}`,
+    "update-password",
+    `delete-sessions:${USER_ID}`,
+    `delete-password-resets:${USER_ID}`,
+    "transaction:rollback",
+  ]);
+  assert.equal(
+    harness.events.includes(`delete-email-verifications:${USER_ID}`),
+    false,
+  );
+});
+
+test("session cleanup failure rolls back the password/revision write and skips credential cleanup", async () => {
+  const privateFailure = `session cleanup failed for ${USER_ID}`;
+  const harness = createHarness();
+  harness.transaction.deleteSessions = async () => {
+    harness.events.push(`delete-sessions:${USER_ID}`);
+    throw new Error(privateFailure);
+  };
+
+  await assert.rejects(
+    changeWithHarness(harness),
+    (error) =>
+      error instanceof PasswordChangeError &&
+      error.stage === "COMMIT" &&
+      !error.message.includes(privateFailure),
+  );
   assert.deepEqual(harness.events.slice(-5), [
     "transaction:start",
     `lock-user:${USER_ID}`,
     "update-password",
-    `delete-password-resets:${USER_ID}`,
+    `delete-sessions:${USER_ID}`,
     "transaction:rollback",
   ]);
+  assert.equal(
+    harness.events.includes(`delete-password-resets:${USER_ID}`),
+    false,
+  );
   assert.equal(
     harness.events.includes(`delete-email-verifications:${USER_ID}`),
     false,
@@ -300,11 +337,12 @@ test("invalid prepared input stops before credential lookup", async () => {
   assert.deepEqual(harness.events, []);
 });
 
-test("Prisma adapter binds User lock and performs cleanup after CAS update", async () => {
+test("Prisma adapter binds User lock, advances revision and revokes sessions after CAS update", async () => {
   const events: string[] = [];
   const queries: Array<{ sql: string; values: unknown[] }> = [];
   const lookups: unknown[] = [];
   const updates: unknown[] = [];
+  const sessionDeletes: unknown[] = [];
   const resetDeletes: unknown[] = [];
   const verificationDeletes: unknown[] = [];
 
@@ -319,6 +357,13 @@ test("Prisma adapter binds User lock and performs cleanup after CAS update", asy
         events.push("prisma:update-password");
         updates.push(input);
         return { count: 1 };
+      },
+    },
+    session: {
+      async deleteMany(input: unknown) {
+        events.push("prisma:delete-sessions");
+        sessionDeletes.push(input);
+        return { count: 4 };
       },
     },
     passwordReset: {
@@ -384,6 +429,7 @@ test("Prisma adapter binds User lock and performs cleanup after CAS update", asy
     "prisma:transaction:start",
     "query:user-for-update",
     "prisma:update-password",
+    "prisma:delete-sessions",
     "prisma:delete-password-resets",
     "prisma:delete-email-verifications",
     "prisma:transaction:commit",
@@ -401,9 +447,13 @@ test("Prisma adapter binds User lock and performs cleanup after CAS update", asy
   assert.deepEqual(updates, [
     {
       where: { id: USER_ID, passwordHash: CURRENT_HASH },
-      data: { passwordHash: CHANGED_HASH },
+      data: {
+        passwordHash: CHANGED_HASH,
+        authSessionRevision: { increment: 1 },
+      },
     },
   ]);
+  assert.deepEqual(sessionDeletes, [{ where: { userId: USER_ID } }]);
   assert.deepEqual(resetDeletes, [{ where: { userId: USER_ID } }]);
   assert.deepEqual(verificationDeletes, [
     { where: { userId: USER_ID } },

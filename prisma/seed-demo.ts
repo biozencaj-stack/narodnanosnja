@@ -1,6 +1,10 @@
 import { PrismaClient, Role, OrderStatus, PaymentMethod, PaymentStatus, PromotionType } from "@prisma/client";
 import { hashPassword } from "../lib/auth/password";
 import { requireSafeDemoSeedTarget } from "../lib/database/demo-seed-safety";
+import {
+  createPrismaDemoUserDatabase,
+  synchronizeDemoUser,
+} from "../lib/database/demo-user-sync";
 
 const prisma = new PrismaClient();
 
@@ -963,39 +967,17 @@ async function main() {
   ];
 
   const userIds: Record<string, string> = {};
+  const demoUserDatabase = createPrismaDemoUserDatabase(prisma);
   for (const u of usersData) {
     const verifiedAt = new Date();
-    const user = await prisma.$transaction(async (transaction) => {
-      const storedUser = await transaction.user.upsert({
-        where: { email: u.email },
-        update: {
-          firstName: u.firstName,
-          lastName: u.lastName,
-          role: u.role,
-          passwordHash,
-          emailVerified: verifiedAt,
-          emailVerificationLoginGraceUntil: null,
-          verificationEmailNextAllowedAt: null,
-          verificationEmailResendWindowStartedAt: null,
-          verificationEmailResendCount: null,
-        },
-        create: {
-          ...u,
-          passwordHash,
-          createdAt: verifiedAt,
-          emailVerified: verifiedAt,
-          emailVerificationLoginGraceUntil: null,
-          newsletterOptIn: true,
-        },
-      });
-      await transaction.emailVerification.deleteMany({
-        where: { userId: storedUser.id },
-      });
-      await transaction.passwordReset.deleteMany({
-        where: { userId: storedUser.id },
-      });
-      return storedUser;
-    });
+    const user = await synchronizeDemoUser(
+      {
+        ...u,
+        passwordHash,
+        verifiedAt,
+      },
+      demoUserDatabase,
+    );
     userIds[u.email] = user.id;
   }
   console.log("  Users created");

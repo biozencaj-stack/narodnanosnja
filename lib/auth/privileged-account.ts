@@ -69,6 +69,13 @@ export interface PrivilegedAccountTransaction {
     userId: string,
     input: PrivilegedAccountSecurityWrite,
   ) => Promise<boolean>;
+  /**
+   * Must run after the locked security write. It advances the user-wide
+   * session epoch and revokes every device in the same transaction.
+   */
+  bumpAuthSessionRevisionAndRevokeSessions: (
+    userId: string,
+  ) => Promise<boolean>;
   deleteEmailVerifications: (userId: string) => Promise<void>;
   deletePasswordResets: (userId: string) => Promise<void>;
 }
@@ -174,6 +181,13 @@ export async function provisionPrivilegedAccount(
       if (existingUser) {
         const updated = await transaction.updateUser(existingUser.id, write);
         if (!updated) {
+          throw new PrivilegedAccountError("PERSISTENCE_FAILURE");
+        }
+        const sessionsRevoked =
+          await transaction.bumpAuthSessionRevisionAndRevokeSessions(
+            existingUser.id,
+          );
+        if (!sessionsRevoked) {
           throw new PrivilegedAccountError("PERSISTENCE_FAILURE");
         }
         await transaction.deleteEmailVerifications(existingUser.id);
@@ -291,6 +305,30 @@ function prismaTransactionAdapter(
         data: input,
       });
       return updated.count === 1;
+    },
+
+    async bumpAuthSessionRevisionAndRevokeSessions(userId) {
+      const rows = await transaction.$queryRaw<
+        Array<{ securityEpochAdvanced: boolean }>
+      >`
+        WITH bumped_user AS MATERIALIZED (
+          UPDATE public."User"
+          SET "authSessionRevision" = "authSessionRevision" + 1
+          WHERE "id" = ${userId}
+            AND "authSessionRevision" < 2147483647
+          RETURNING "id"
+        ), revoked_sessions AS MATERIALIZED (
+          DELETE FROM public."Session" AS session
+          USING bumped_user
+          WHERE session."userId" = bumped_user."id"
+          RETURNING session."id"
+        )
+        SELECT EXISTS (SELECT 1 FROM bumped_user) AS "securityEpochAdvanced"
+      `;
+      return (
+        rows.length === 1 &&
+        rows[0]?.securityEpochAdvanced === true
+      );
     },
 
     async deleteEmailVerifications(userId) {

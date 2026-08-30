@@ -39,6 +39,8 @@ export interface PasswordChangeTransaction {
     expectedPasswordHash: string;
     newPasswordHash: string;
   }) => Promise<boolean>;
+  /** Deletes every active session after the locked password/revision write. */
+  deleteSessions: (userId: string) => Promise<void>;
   deletePasswordResets: (userId: string) => Promise<void>;
   deleteEmailVerifications: (userId: string) => Promise<void>;
 }
@@ -113,6 +115,11 @@ export async function commitPasswordChange(
     if (!updated) {
       throw new PasswordChangeError("COMMIT");
     }
+
+    // The conditional password write also advances the user session epoch.
+    // The User lock remains held while every active session is deleted, so
+    // this is one atomic logout-all transition rather than best-effort cleanup.
+    await transaction.deleteSessions(input.userId);
 
     // User is already locked. Downstream credential cleanup is atomic with
     // the password write and follows the same serialization point as reset
@@ -234,9 +241,16 @@ function prismaPasswordChangeTransactionAdapter(
           id: input.userId,
           passwordHash: input.expectedPasswordHash,
         },
-        data: { passwordHash: input.newPasswordHash },
+        data: {
+          passwordHash: input.newPasswordHash,
+          authSessionRevision: { increment: 1 },
+        },
       });
       return updated.count === 1;
+    },
+
+    async deleteSessions(userId) {
+      await transaction.session.deleteMany({ where: { userId } });
     },
 
     async deletePasswordResets(userId) {

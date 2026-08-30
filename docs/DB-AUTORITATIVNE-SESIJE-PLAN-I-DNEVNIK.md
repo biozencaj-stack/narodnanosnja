@@ -3,7 +3,7 @@
 Datum početka: 2026-08-30  
 Radna grana: `ispravka/v2-db-authoritative-sessions`  
 Polazni V2 SHA: `d926e152f51f363c66d37f46859fbecffbc634d2`  
-Status: **u radu; expand i dormantni core su implementirani, aktivacija nije izvršena**
+Status: **u radu; dormantni core ima zelen CI dokaz, security revocation tokovi su lokalno implementirani, aktivacija nije izvršena**
 
 ## 1. Granica ove sekcije
 
@@ -141,8 +141,8 @@ definisanog ugovora.
 | --- | --- | --- |
 | 0 | Nova grana iz tačno verifikovanog V2 head-a | završeno |
 | 1 | Compatibility expand šema, migracija i DB invarijante | završeno; PostgreSQL 16 CI dokaz zelen |
-| 2 | Dormantni claim/HMAC/policy/JWT/DB validator moduli | lokalno implementirano; real-PG CI dokaz sledi |
-| 3 | Revocation u reset/change/privileged/demo write tokovima | nije započeto |
+| 2 | Dormantni claim/HMAC/policy/JWT/DB validator moduli | završeno; exact-head PostgreSQL 16 CI dokaz zelen |
+| 3 | Revocation u reset/change/privileged/demo write tokovima | lokalno implementirano; novi real-PG CI dokaz sledi |
 | 4 | Credentials i verification V2 session issuance/rotation | nije započeto |
 | 5 | Pouzdan current-session logout | nije započeto |
 | 6 | Customer/ownership/admin server guard migracija | nije započeto |
@@ -150,7 +150,7 @@ definisanog ugovora.
 | 8 | Real-PG race/E2E matrica i uklanjanje preflight blockera | nije započeto |
 | 9 | Završna dokumentacija, exact-head i post-merge V2 dokaz | nije započeto |
 
-## 6. Dnevnik — faza 1: compatibility expand
+## 6. Dnevnik — faze 1–2: expand i dormantni core
 
 ### 6.1. Prisma šema
 
@@ -172,9 +172,14 @@ NULL) i V2 grupu (sva tri non-NULL i potpuno validna).
 ### 6.2. Migracija `20260830030000_expand_authoritative_sessions`
 
 Migracija je atomska i postavlja `search_path`, `lock_timeout=10s` i
-`statement_timeout=2min`. Ako potrebni lock nije brzo dostupan, rollout treba
-da stane i bude ponovljen u pregledanom prozoru umesto da neograničeno blokira
-aplikaciju.
+`statement_timeout=2min`. Pre svog početnog policy `INSERT`-a eksplicitno
+postavlja i `SET LOCAL TIME ZONE 'UTC'`, jer Prisma `DateTime` kolone koriste
+`timestamp(3) without time zone` i taj migracioni upis ne sme naslediti
+operatorov lokalni zidni sat. `SET LOCAL` važi samo u migracionoj transakciji:
+ne podešava buduće runtime konekcije, DB role niti database default. Zato
+poseban runtime UTC readiness gate iz odeljka 10 ostaje obavezan pre aktivacije.
+Ako potrebni lock nije brzo dostupan, rollout treba da stane i bude ponovljen u
+pregledanom prozoru umesto da neograničeno blokira aplikaciju.
 
 Dodati DB CHECK ugovori zahtevaju:
 
@@ -390,16 +395,110 @@ Lokalni zbir posle dormantne faze:
 | TypeScript bez emitovanja | PASS |
 | `git diff --check` | PASS |
 
-Ova faza još nije auth aktivacija. Password/role/verification write tokovi još
-ne bump-uju revision, NextAuth callback još ne insertuje/revalidira Session, a
-server/proxy guardovi još nisu prebačeni. Ti koraci ostaju naredne faze i
-preflight JWT blocker ostaje namerno aktivan.
+Commit `baa39bdc0dfb4184c42e8d12c5c13a6a45baf39b` i PR run `33327741687`
+naknadno su potvrdili oba opt-in PostgreSQL testa, kompletan suite, browser
+smoke i production build. Release i deploy poslovi ostali su `SKIPPED`.
+
+Ova faza nije auth aktivacija. Na njenom exact-head preseku security write
+tokovi još nisu bumpovali revision, a NextAuth callback nije insertovao niti
+revalidirao Session. Faza 3 ispod zatvara prvi deo tog duga; issuance,
+verification rotation, logout i server/proxy guardovi i dalje ostaju naredne
+faze i preflight JWT blocker ostaje namerno aktivan.
 
 Stvarni `.env`, produkcijska baza i produkcijski credentiali nisu pregledani.
 Za lokalne komande korišćene su eksplicitne test konfiguracione vrednosti;
 opt-in real-DB testovi nisu lažno predstavljeni kao izvršeni.
 
-## 7. Obavezni transakcioni redosledi narednih faza
+## 7. Dnevnik — faza 3: atomska security revokacija
+
+### 7.1. Password reset confirm
+
+Uspešan reset već zaključava `User`, zatim tačan `PasswordReset` red i meri DB
+sat tek posle oba moguća čekanja. U istoj transakciji sada:
+
+1. exact User password write povećava `authSessionRevision` za jedan;
+2. brišu se svi legacy i V2 `Session` redovi tog korisnika;
+3. tek zatim se claim-uje reset credential i brišu njegovi sibling reset i
+   email-verification credentiali.
+
+Ako revision write, Session delete, exact credential claim ili kasniji cleanup
+zakaže, cela transakcija se vraća. Unit test zaključava redosled i zero-session
+idempotency. Real-PG fixture dodaje i legacy i kompletan V2 Session, potvrđuje
+jednog reset pobednika, revision `+1`, nula sesija i rollback koji vraća i
+password, revision, reset red i Session.
+
+### 7.2. Authenticated password change
+
+Bcrypt poređenje i novi hash ostaju izvan write transakcije. Posle
+`User FOR UPDATE` i exact password-hash CAS-a, isti User write sada zajedno
+menja hash i radi `authSessionRevision + 1`, zatim briše sve Session redove pre
+reset/verification cleanup-a. Stale bcrypt snapshot ne menja revision i ne
+briše sesije. Session-cleanup kvar ostaje coarse `COMMIT` i vraća ceo write.
+
+### 7.3. Privileged account provisioning
+
+Create putanja ostaje eksplicitno nova epoha `0`, bez izmišljene revokacije.
+Kada se postojeći nalog menja uz odobreni `updateExisting=true`, User red je već
+zaključan, password/role/verified write je završen u istoj transakciji, a zatim
+jedan PostgreSQL data-changing CTE:
+
+- povećava `authSessionRevision` tačno jednom;
+- odbija write na PostgreSQL `integer` maksimumu umesto da dozvoli overflow;
+- briše sve Session redove tog User-a;
+- vraća samo boolean dokaz da je epoha zaista promenjena.
+
+Tek posle toga se brišu verification/reset credentiali. ADMIN i OPERATOR
+real-PG fixture-i proveravaju revision `0→1` i legacy+V2 sesije `2→0`;
+postojeći injected-cleanup test dokazuje rollback security write-a, revisiona
+i sesija.
+
+### 7.4. Demo user seed
+
+`prisma/seed-demo.ts` više ne koristi nevidljiv security `upsert` koji bi
+zamenio javnu demo lozinku/role, a ostavio stare sesije. Novi
+`lib/database/demo-user-sync.ts` koristi isti ugovor:
+
+- canonical demo email i cost-12 bcrypt ulaz se proveravaju pre transakcije;
+- postojeći User se zaključava, revision se CAS-uje na `+1`, pa se sve sesije
+  brišu pre credential cleanup-a;
+- nedostajući email se serijalizuje transaction advisory lock-om i novi User
+  se kreira sa revision `0`;
+- svi javni kvarovi su coarse i ne nose email, hash, ID ili DB exception.
+
+Unit test pokriva redosled, create/update razliku, revision granicu, CAS i
+Session-delete kvar. Opt-in PostgreSQL fixture prvo namerno obara Session
+cleanup i dokazuje potpun rollback, zatim potvrđuje uspešan revision bump,
+brisanje legacy+V2 sesija i create revision `0`.
+
+### 7.5. Namerno odloženi i isključeni tokovi
+
+Email verification nije u ovoj fazi parcijalno izmenjen. Ona mora u jednom
+kasnijem User→AuthPolicyState→credential commitu bumpovati revision, obrisati
+stare sesije i izdati tačno jednu novu V2 sesiju; samo logout-all bez rotacije
+bi vratio cookie koji je odmah nevažeći.
+
+Newsletter, profilna polja i verification-resend throttle nisu security
+credential/role mutacije i zato ne bumpuju revision. Registracija kreira novog
+User-a na DB default revision `0` i nema prethodne sesije za opoziv. U projektu
+ne postoji zasebna runtime admin ruta za promenu User role/statusa; postojeći
+role writeri su privileged CLI i eksplicitno zaštićen demo seed.
+
+### 7.6. Lokalni dokaz faze 3
+
+| Provera | Rezultat |
+| --- | --- |
+| Fokus reset/change/privileged/demo | `39` ukupno / `31` pass / `8` očekivanih real-PG skip / `0` fail |
+| TypeScript bez emitovanja | PASS |
+| ESLint quiet | PASS |
+| `git diff --check` | PASS |
+| Kompletan `npm test` | `361` ukupno / `340` pass / `21` očekivan real-PG skip / `0` fail |
+| Novi real-PG rollback/revocation fixture-i | čeka GitHub PostgreSQL 16 CI |
+
+Workflow dobija samo `RUN_DEMO_USER_SYNC_DB_TESTS=true`; postojeći reset,
+password-change i privileged integration testovi već koriste ranije uključene
+DB prekidače. Triggeri, release uslov i deploy posao ostaju nepromenjeni.
+
+## 8. Obavezni transakcioni redosledi narednih faza
 
 ### Login/session issuance
 
@@ -453,7 +552,7 @@ same-origin POST
 Ako DB revoke zakaže, endpoint vraća coarse retryable 503; ne tvrdi da je
 sesija opozvana samo zato što je browser cookie obrisan.
 
-## 8. Test matrica
+## 9. Test matrica
 
 Faza 2 već zaključava canonical 32-byte SID, stabilan domain-separated HMAC,
 odsustvo raw SID-a u DB-u, strict claim oblik, exact expiry, revision mismatch,
@@ -477,7 +576,7 @@ Naredne faze još moraju dodati unit, bundle/E2E i real-PostgreSQL dokaze za:
   call-site-ova;
 - schema expand→contract prelaz i fail-closed invalid fixture-e.
 
-## 9. Rollout i rollback rizici
+## 10. Rollout i rollback rizici
 
 1. **Mešani old/new app pool nije dozvoljen pri aktivaciji.** Stari proces može
    izdati JWT koji nema DB allowlist red. Budući rollout mora koristiti drain,
@@ -501,7 +600,7 @@ Naredne faze još moraju dodati unit, bundle/E2E i real-PostgreSQL dokaze za:
    zidni sat. Aktivacija zato čeka eksplicitan UTC DB role/database readiness
    gate i real-PG write test.
 
-## 10. Preostali redosled posle ove sekcije
+## 11. Preostali redosled posle ove sekcije
 
 Kada DB-authoritative session paket dobije exact-head i post-merge V2 dokaz,
 redosled ukupnog projekta ostaje:
@@ -513,7 +612,7 @@ redosled ukupnog projekta ostaje:
 5. sadržaj, pravni, payment, observability i ostali live checklist gate-ovi;
 6. tek na kraju main-push GitHub workflow i stvarno live puštanje.
 
-## 11. Git/CI evidencija ove sekcije
+## 12. Git/CI evidencija ove sekcije
 
 Ova tabela se popunjava isključivo stvarnim dokazima. Trenutno nijedan pending
 red nije tvrdnja o uspehu.
@@ -525,7 +624,12 @@ red nije tvrdnja o uspehu.
 | V2-only PR | [draft PR #22](https://github.com/biozencaj-stack/narodnanosnja/pull/22) |
 | Prvi expand CI run | [run `33326003849`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33326003849), attempt 1, `SUCCESS` |
 | PostgreSQL 16 migration/invariant | `PASS` u run-u `33326003849` |
-| Dormantni core exact-head CI run | čeka novi GitHub CI run |
+| Kasniji `SET LOCAL TIME ZONE 'UTC'` red u expand migraciji | nije obuhvaćen starim run-om `33326003849`; mora proći novi exact-head PostgreSQL run |
+| Dormantni core commit | `baa39bdc0dfb4184c42e8d12c5c13a6a45baf39b` |
+| Dormantni core exact-head CI run | [run `33327741687`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33327741687), attempt 1, `SUCCESS` |
+| Dormantni core PostgreSQL/session/preflight fixture-i | `PASS` u run-u `33327741687` |
+| Dormantni core E2E/build | `PASS` u run-u `33327741687` |
+| Faza 3 revocation commit/CI | čeka stabilan commit i novi GitHub run |
 | Feature merge SHA | nije izvršen |
 | Post-merge V2 run | nije izvršen |
 | Release/deploy jobs | moraju ostati `SKIPPED` |

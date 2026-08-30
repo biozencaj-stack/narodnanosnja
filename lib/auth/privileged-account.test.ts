@@ -28,6 +28,7 @@ function createHarness(existingUserId: string | null = null) {
   }> = [];
   const deletedVerificationUserIds: string[] = [];
   const deletedPasswordResetUserIds: string[] = [];
+  const revokedSessionUserIds: string[] = [];
 
   const transaction: PrivilegedAccountTransaction = {
     async lockUserByEmail(normalizedEmail) {
@@ -46,6 +47,11 @@ function createHarness(existingUserId: string | null = null) {
     async updateUser(userId, input) {
       events.push("update-user");
       updates.push({ userId, input });
+      return true;
+    },
+    async bumpAuthSessionRevisionAndRevokeSessions(userId) {
+      events.push("bump-session-revision-and-revoke");
+      revokedSessionUserIds.push(userId);
       return true;
     },
     async deleteEmailVerifications(userId) {
@@ -78,6 +84,7 @@ function createHarness(existingUserId: string | null = null) {
     deletedPasswordResetUserIds,
     deletedVerificationUserIds,
     events,
+    revokedSessionUserIds,
     transaction,
     updates,
   };
@@ -168,6 +175,7 @@ test("explicit update verifies and resets verification state in one transaction"
     "lock:privileged@example.com",
     "clock",
     "update-user",
+    "bump-session-revision-and-revoke",
     "delete-email-verifications",
     "delete-password-resets",
     "transaction:commit",
@@ -179,6 +187,9 @@ test("explicit update verifies and resets verification state in one transaction"
     },
   ]);
   assert.deepEqual(harness.deletedVerificationUserIds, [
+    "private-existing-user-id",
+  ]);
+  assert.deepEqual(harness.revokedSessionUserIds, [
     "private-existing-user-id",
   ]);
   assert.deepEqual(harness.deletedPasswordResetUserIds, [
@@ -255,6 +266,7 @@ test("verification cleanup failure rolls the whole privileged write back", async
     "lock:privileged@example.com",
     "clock",
     "update-user",
+    "bump-session-revision-and-revoke",
     "delete-email-verifications",
     "transaction:rollback",
   ]);
@@ -282,10 +294,39 @@ test("password-reset cleanup failure rolls back the privileged write", async () 
     "lock:privileged@example.com",
     "clock",
     "update-user",
+    "bump-session-revision-and-revoke",
     "delete-email-verifications",
     "delete-password-resets",
     "transaction:rollback",
   ]);
+});
+
+test("session revision/revocation failure rolls back before credential cleanup", async () => {
+  const harness = createHarness("private-existing-user-id");
+  harness.transaction.bumpAuthSessionRevisionAndRevokeSessions = async () => {
+    harness.events.push("bump-session-revision-and-revoke");
+    return false;
+  };
+
+  await assert.rejects(
+    provisionPrivilegedAccount(
+      { ...INPUT, updateExisting: true },
+      harness.database,
+    ),
+    (error) =>
+      error instanceof PrivilegedAccountError &&
+      error.code === "PERSISTENCE_FAILURE",
+  );
+  assert.deepEqual(harness.events, [
+    "transaction:start",
+    "lock:privileged@example.com",
+    "clock",
+    "update-user",
+    "bump-session-revision-and-revoke",
+    "transaction:rollback",
+  ]);
+  assert.deepEqual(harness.deletedVerificationUserIds, []);
+  assert.deepEqual(harness.deletedPasswordResetUserIds, []);
 });
 
 interface RawQueryCall {
@@ -320,6 +361,10 @@ function fakePrismaClient(
       if (sql.includes("clock_timestamp()")) {
         events.push("query:clock");
         return [{ currentTimestamp: DATABASE_TIME }];
+      }
+      if (sql.includes('UPDATE public."User"')) {
+        events.push("query:bump-session-revision-and-revoke");
+        return [{ securityEpochAdvanced: true }];
       }
       throw new Error("unexpected raw query");
     },
@@ -388,6 +433,7 @@ test("Prisma adapter locks User and reads clock afterward using bound values", a
     "query:user-for-update",
     "query:clock",
     "prisma:update-user",
+    "query:bump-session-revision-and-revoke",
     "prisma:delete-verifications",
     "prisma:delete-password-resets",
     "prisma:transaction:commit",
@@ -399,6 +445,13 @@ test("Prisma adapter locks User and reads clock afterward using bound values", a
   );
   assert.deepEqual(fake.queries[0]?.values, ["privileged@example.com"]);
   assert.match(fake.queries[1]?.sql ?? "", /clock_timestamp\(\)/);
+  assert.match(fake.queries[2]?.sql ?? "", /"authSessionRevision" = "authSessionRevision" \+ 1/);
+  assert.match(
+    fake.queries[2]?.sql ?? "",
+    /"authSessionRevision" < 2147483647/,
+  );
+  assert.match(fake.queries[2]?.sql ?? "", /DELETE FROM public\."Session"/);
+  assert.deepEqual(fake.queries[2]?.values, ["private-existing-user-id"]);
   assert.deepEqual(fake.updates, [
     {
       where: { id: "private-existing-user-id" },

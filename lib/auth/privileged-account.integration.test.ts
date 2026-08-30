@@ -251,11 +251,13 @@ test(
         passwordHash: true,
         role: true,
         emailVerified: true,
+        authSessionRevision: true,
       },
     });
     assert.equal(stored.passwordHash, ADMIN_HASH);
     assert.equal(stored.role, "ADMIN");
     assert.ok(stored.emailVerified instanceof Date);
+    assert.equal(stored.authSessionRevision, 0);
   },
 );
 
@@ -389,6 +391,108 @@ test(
 );
 
 test(
+  "existing ADMIN i OPERATOR update atomarno menjaju epoch i opozivaju sve Session redove",
+  { skip: !RUN_DATABASE_TESTS, timeout: 45_000 },
+  async (testContext) => {
+    const expectedDatabaseName = assertSafeTestDatabase();
+    const { PrismaClient } = await import("@prisma/client");
+    const prisma = new PrismaClient();
+    const runId = randomUUID();
+    const accounts = [
+      {
+        email: `privileged-admin-session-${runId}@example.invalid`,
+        role: "ADMIN" as const,
+        passwordHash: ADMIN_HASH,
+      },
+      {
+        email: `privileged-operator-session-${runId}@example.invalid`,
+        role: "OPERATOR" as const,
+        passwordHash: OPERATOR_HASH,
+      },
+    ];
+
+    testContext.after(async () => {
+      try {
+        await prisma.user.deleteMany({
+          where: { email: { in: accounts.map((account) => account.email) } },
+        });
+      } finally {
+        await prisma.$disconnect();
+      }
+    });
+
+    await assertDatabaseIdentity(prisma, expectedDatabaseName);
+    const database = createPrismaPrivilegedAccountDatabase(prisma);
+    const policy = await prisma.authPolicyState.findUniqueOrThrow({
+      where: { id: 1 },
+      select: { revision: true },
+    });
+    const issuedAt = new Date(Math.floor(Date.now() / 1_000) * 1_000);
+    const expires = new Date(issuedAt.getTime() + 60_000);
+
+    for (const [index, account] of accounts.entries()) {
+      const user = await prisma.user.create({
+        data: {
+          email: account.email,
+          passwordHash: OLD_HASH,
+          firstName: "Privileged",
+          lastName: "ExistingSession",
+          role: account.role,
+        },
+        select: { id: true, authSessionRevision: true },
+      });
+      assert.equal(user.authSessionRevision, 0);
+      await prisma.session.createMany({
+        data: [
+          {
+            sessionToken: `privileged-existing-session-${runId}-${index}`,
+            userId: user.id,
+            expires,
+          },
+          {
+            sessionToken: `v1:${randomBytes(32).toString("hex")}`,
+            userId: user.id,
+            expires,
+            issuedAt,
+            authSessionRevision: user.authSessionRevision,
+            authPolicyRevision: policy.revision,
+          },
+        ],
+      });
+      assert.equal(await prisma.session.count({ where: { userId: user.id } }), 2);
+
+      assert.deepEqual(
+        await provisionPrivilegedAccount(
+          {
+            email: account.email,
+            passwordHash: account.passwordHash,
+            role: account.role,
+            updateExisting: true,
+          },
+          database,
+        ),
+        { kind: "updated" },
+      );
+
+      const updated = await prisma.user.findUniqueOrThrow({
+        where: { id: user.id },
+        select: {
+          authSessionRevision: true,
+          emailVerified: true,
+          passwordHash: true,
+          role: true,
+        },
+      });
+      assert.equal(updated.authSessionRevision, 1);
+      assert.ok(updated.emailVerified instanceof Date);
+      assert.equal(updated.passwordHash, account.passwordHash);
+      assert.equal(updated.role, account.role);
+      assert.equal(await prisma.session.count({ where: { userId: user.id } }), 0);
+    }
+  },
+);
+
+test(
   "PasswordReset cleanup kvar vraća User i oba tokena, a retry uspeva",
   { skip: !RUN_DATABASE_TESTS, timeout: 45_000 },
   async (testContext) => {
@@ -452,6 +556,13 @@ test(
         expires,
       },
     });
+    await observer.session.create({
+      data: {
+        sessionToken: `privileged-rollback-session-${runId}`,
+        userId: user.id,
+        expires,
+      },
+    });
 
     const events: string[] = [];
     const failingClient = {
@@ -479,11 +590,13 @@ test(
                     passwordHash: true,
                     role: true,
                     emailVerified: true,
+                    authSessionRevision: true,
                   },
                 });
                 assert.equal(insideUser.passwordHash, ADMIN_HASH);
                 assert.equal(insideUser.role, "ADMIN");
                 assert.ok(insideUser.emailVerified instanceof Date);
+                assert.equal(insideUser.authSessionRevision, 1);
                 assert.equal(
                   await transaction.emailVerification.count({
                     where: { userId: user.id },
@@ -495,6 +608,10 @@ test(
                     where: { userId: user.id },
                   }),
                   1,
+                );
+                assert.equal(
+                  await transaction.session.count({ where: { userId: user.id } }),
+                  0,
                 );
                 throw new Error("Injected PasswordReset cleanup failure");
               },
@@ -533,12 +650,14 @@ test(
         passwordHash: true,
         role: true,
         emailVerified: true,
+        authSessionRevision: true,
       },
     });
     assert.deepEqual(rolledBackUser, {
       passwordHash: OLD_HASH,
       role: "CUSTOMER",
       emailVerified: null,
+      authSessionRevision: 0,
     });
     assert.deepEqual(
       await Promise.all([
@@ -547,6 +666,7 @@ test(
       ]),
       [1, 1],
     );
+    assert.equal(await observer.session.count({ where: { userId: user.id } }), 1);
 
     const retryDatabase = createPrismaPrivilegedAccountDatabase(retryWorker);
     assert.deepEqual(
@@ -559,11 +679,13 @@ test(
         passwordHash: true,
         role: true,
         emailVerified: true,
+        authSessionRevision: true,
       },
     });
     assert.equal(retriedUser.passwordHash, ADMIN_HASH);
     assert.equal(retriedUser.role, "ADMIN");
     assert.ok(retriedUser.emailVerified instanceof Date);
+    assert.equal(retriedUser.authSessionRevision, 1);
     assert.deepEqual(
       await Promise.all([
         observer.passwordReset.count({ where: { userId: user.id } }),
@@ -571,5 +693,6 @@ test(
       ]),
       [0, 0],
     );
+    assert.equal(await observer.session.count({ where: { userId: user.id } }), 0);
   },
 );

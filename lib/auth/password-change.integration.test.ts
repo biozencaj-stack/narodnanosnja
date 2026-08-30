@@ -60,7 +60,7 @@ function assertSafeTestDatabase(): string {
 }
 
 test(
-  "password change atomski čisti tokene i odbija hash mutiran posle bcrypt-a",
+  "password change atomski menja revision, briše sesije/tokene i odbija stale bcrypt snapshot",
   { skip: !RUN_DATABASE_TESTS, timeout: 45_000 },
   async (testContext) => {
     const expectedDatabaseName = assertSafeTestDatabase();
@@ -95,7 +95,7 @@ test(
           firstName: "Password",
           lastName: "ChangeTest",
         },
-        select: { id: true },
+        select: { id: true, authSessionRevision: true },
       });
       userIds.push(user.id);
       const resetToken = randomBytes(32).toString("hex");
@@ -126,6 +126,20 @@ test(
           expires,
         },
       });
+      await prisma.session.createMany({
+        data: [
+          {
+            userId: user.id,
+            sessionToken: `password-change-session-a-${purpose}-${runId}`,
+            expires,
+          },
+          {
+            userId: user.id,
+            sessionToken: `password-change-session-b-${purpose}-${runId}`,
+            expires,
+          },
+        ],
+      });
       return user;
     }
 
@@ -143,11 +157,15 @@ test(
     );
     const successAfter = await prisma.user.findUniqueOrThrow({
       where: { id: successUser.id },
-      select: { passwordHash: true },
+      select: { passwordHash: true, authSessionRevision: true },
     });
     assert.equal(
       await verifyPassword(newPassword, successAfter.passwordHash),
       true,
+    );
+    assert.equal(
+      successAfter.authSessionRevision,
+      successUser.authSessionRevision + 1,
     );
     assert.deepEqual(
       await Promise.all([
@@ -155,8 +173,9 @@ test(
         prisma.emailVerification.count({
           where: { userId: successUser.id },
         }),
+        prisma.session.count({ where: { userId: successUser.id } }),
       ]),
-      [0, 0],
+      [0, 0, 0],
     );
 
     const staleUser = await createCredentialFixtures("stale");
@@ -211,8 +230,9 @@ test(
         prisma.emailVerification.count({
           where: { userId: staleUser.id },
         }),
+        prisma.session.count({ where: { userId: staleUser.id } }),
       ]),
-      [1, 1],
+      [1, 1, 2],
     );
   },
 );

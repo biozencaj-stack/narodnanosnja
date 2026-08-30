@@ -52,7 +52,15 @@ interface PasswordResetConfirmTransaction {
   user: {
     updateMany(input: {
       where: { id: string };
-      data: { passwordHash: string };
+      data: {
+        passwordHash: string;
+        authSessionRevision: { increment: 1 };
+      };
+    }): Promise<{ count: number }>;
+  };
+  session: {
+    deleteMany(input: {
+      where: { userId: string };
     }): Promise<{ count: number }>;
   };
 }
@@ -152,11 +160,21 @@ export async function commitPasswordResetConfirmation(
 
     const updatedUser = await transaction.user.updateMany({
       where: { id: claim.userId },
-      data: { passwordHash },
+      data: {
+        passwordHash,
+        authSessionRevision: { increment: 1 },
+      },
     });
     if (updatedUser.count !== 1) {
       throw new PasswordResetConfirmConflictError();
     }
+
+    // The User lock and revision bump make every pre-reset DB-authoritative
+    // session stale. Delete both v2 and legacy rows in this same transaction
+    // before any reset/verification credential cleanup can complete.
+    await transaction.session.deleteMany({
+      where: { userId: claim.userId },
+    });
 
     const claimed = await transaction.passwordReset.deleteMany({
       where: {

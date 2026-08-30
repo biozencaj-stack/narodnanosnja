@@ -3,6 +3,10 @@
 -- application cutover and the later contract migration.
 BEGIN;
 SET LOCAL search_path = pg_catalog, public;
+-- All Prisma DateTime columns are timestamp(3) without time zone. Normalize
+-- migration-owned defaults/seeds explicitly instead of inheriting an operator
+-- session TimeZone.
+SET LOCAL TIME ZONE 'UTC';
 -- Metadata changes and the expiry index still take locks. Fail instead of
 -- waiting indefinitely so the migration can be retried in a reviewed window.
 SET LOCAL lock_timeout = '10s';

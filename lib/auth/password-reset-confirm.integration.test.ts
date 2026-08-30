@@ -200,6 +200,9 @@ function failingAfterClaimDeleteAdapter(
               throw new Error("Injected reset sibling cleanup failure");
             },
           },
+          session: {
+            deleteMany: (input) => transaction.session.deleteMany(input),
+          },
           user: {
             updateMany: (input) => transaction.user.updateMany(input),
           },
@@ -340,6 +343,29 @@ test(
         expires,
       },
     });
+    const policyState = await prisma.authPolicyState.findUniqueOrThrow({
+      where: { id: 1 },
+      select: { revision: true },
+    });
+    const sessionIssuedAt = new Date(Math.floor(Date.now() / 1_000) * 1_000);
+    const sessionExpiresAt = new Date(sessionIssuedAt.getTime() + 60_000);
+    await prisma.session.createMany({
+      data: [
+        {
+          sessionToken: `legacy-reset-${randomUUID()}`,
+          userId: hashUser.id,
+          expires: sessionExpiresAt,
+        },
+        {
+          sessionToken: `v1:${randomBytes(32).toString("hex")}`,
+          userId: hashUser.id,
+          expires: sessionExpiresAt,
+          authSessionRevision: hashUser.authSessionRevision,
+          authPolicyRevision: policyState.revision,
+          issuedAt: sessionIssuedAt,
+        },
+      ],
+    });
 
     const barrier = createTwoWorkerBarrier();
     const hashFailures: PasswordResetConfirmFailure[] = [];
@@ -377,7 +403,7 @@ test(
 
     const hashUserAfter = await prisma.user.findUniqueOrThrow({
       where: { id: hashUser.id },
-      select: { passwordHash: true },
+      select: { passwordHash: true, authSessionRevision: true },
     });
     const winnerIndex = winnerIndexes[0];
     assert.equal(
@@ -404,6 +430,16 @@ test(
       }),
       0,
       "successful reset must revoke the real verification credential",
+    );
+    assert.equal(
+      hashUserAfter.authSessionRevision,
+      hashUser.authSessionRevision + 1,
+      "successful reset must invalidate every pre-reset session revision",
+    );
+    assert.equal(
+      await prisma.session.count({ where: { userId: hashUser.id } }),
+      0,
+      "successful reset must revoke both legacy and v2 Session rows",
     );
 
     // Legacy fixture proves hash-first miss followed by the compatibility key.
@@ -479,6 +515,13 @@ test(
         expires,
       },
     });
+    await prisma.session.create({
+      data: {
+        sessionToken: `legacy-rollback-${randomUUID()}`,
+        userId: rollbackUser.id,
+        expires: new Date(Date.now() + 60_000),
+      },
+    });
     const rollbackClaim: PasswordResetConfirmClaim = {
       id: rollbackRow.id,
       userId: rollbackUser.id,
@@ -498,15 +541,18 @@ test(
       ),
       /Injected reset sibling cleanup failure/,
     );
-    const [rowAfterRollback, userAfterRollback] = await Promise.all([
+    const [rowAfterRollback, userAfterRollback, sessionsAfterRollback] = await Promise.all([
       prisma.passwordReset.findUnique({ where: { id: rollbackRow.id } }),
       prisma.user.findUniqueOrThrow({
         where: { id: rollbackUser.id },
-        select: { passwordHash: true },
+        select: { passwordHash: true, authSessionRevision: true },
       }),
+      prisma.session.count({ where: { userId: rollbackUser.id } }),
     ]);
     assert.ok(rowAfterRollback);
     assert.equal(userAfterRollback.passwordHash, rollbackUser.passwordHash);
+    assert.equal(userAfterRollback.authSessionRevision, rollbackUser.authSessionRevision);
+    assert.equal(sessionsAfterRollback, 1);
 
     await commitPasswordResetConfirmation(
       databaseAdapter(prisma),
