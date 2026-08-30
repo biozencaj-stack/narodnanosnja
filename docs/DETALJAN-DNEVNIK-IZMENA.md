@@ -2887,7 +2887,8 @@ podizanja PostgreSQL 16 i primene migracija. Lokalno bez bezbedne test baze oba
 opt-in DB testa ostaju namerno preskočena. Aktuelni lokalni paket ima 115
 testova: 113 prolazi, 2 DB testa su očekivano preskočena, a nema padova.
 `actionlint`, `git diff --check`, ciljani auth testovi, ESLint i TypeScript
-takođe prolaze. GitHub PostgreSQL/Chromium CI dokaz ostaje obavezan pre merge-a.
+takođe prolaze. GitHub PostgreSQL/Chromium CI bio je obavezan pre merge-a i
+završen je dokazima iz odeljka 39.7.
 
 ### 39.6. Granice etape i sledeći auth koraci
 
@@ -2917,3 +2918,33 @@ PR mora biti otvoren isključivo ka kanonskoj V2 grani. Običan push i ručni
 workflow ostaju verification-only; produkcijski poslovi moraju biti preskočeni.
 Live release, Environment pravila, tajne, server i kartice ostaju poslednja,
 posebno odobrena faza.
+
+### 39.7. PR #10, exact-head i post-merge dokaz
+
+P1 auth presek je integrisan bez dodirivanja presentation `main` grane:
+
+1. feature commit `db35f6efce16535e6f831fcf98549934c018d0cf`
+   pushovan je na `ispravka/v2-auth-secret-verifikacija`, bez release taga;
+2. [PR #10](https://github.com/biozencaj-stack/narodnanosnja/pull/10) otvoren
+   je sa base granom `verzija/v2.0-univerzalna-platforma`, bio je non-draft,
+   mergeable i clean;
+3. exact-head pull-request run
+   [`33305077539`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33305077539)
+   završio je SUCCESS za 2 min 46 s;
+4. `Provera verzije` prošla je instalaciju zaključanih zavisnosti, Prisma
+   validaciju, sve migracije, drift, DB invarijante, lint, TypeScript, kompletan
+   test paket sa oba uključena PostgreSQL testa, mobilni Chromium COD E2E i
+   produkcijski build;
+5. `Potvrdi V2 release` i `Objavi na produkciju` bili su SKIPPED;
+6. PR je spojen samo u kanonsku V2 granu kao
+   `d6d44c806447d5e7211c9312fcaa0d98ef8f2c1b`;
+7. post-merge push run
+   [`33305210714`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33305210714)
+   ponovio je ceo pipeline uspešno za 2 min 45 s;
+8. oba release posla bila su ponovo SKIPPED.
+
+Read-only GitHub API provera nakon merge-a potvrdila je da PR zaista ima V2
+base, tačan head i navedeni merge commit, kao i da repozitorijum i dalje ima 0
+`production` deployment zapisa. Nisu menjana Environment pravila, required
+reviewer, secrets/variables, server ili produkciona baza. Nije napravljen
+release tag, nije uspostavljen SSH i V2 nije pušten live.
