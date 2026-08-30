@@ -6,6 +6,21 @@ const KNOWN_INSECURE_AUTH_SECRETS = new Set([
 
 export const AUTH_SESSION_MAX_AGE_SECONDS = 24 * 60 * 60;
 
+/**
+ * Canonical host-only base names for the legacy and future V2 auth cookies.
+ * A future V2 cutover must configure its issuer/decoder from this contract;
+ * logout cleanup deliberately covers every entry during migration.
+ */
+export const AUTH_SESSION_COOKIE_BASE_NAMES = Object.freeze([
+  "next-auth.v2.session-token",
+  "__Secure-next-auth.v2.session-token",
+  "next-auth.session-token",
+  "__Secure-next-auth.session-token",
+] as const);
+
+/** Browser cookie limits leave ample room for 1,000 canonical chunk indices. */
+export const MAX_AUTH_SESSION_COOKIE_CHUNK_INDEX = 999;
+
 export const VERIFIED_LOGIN_POLICIES = [
   "audit",
   "staged",
@@ -201,6 +216,15 @@ export function authSessionCookieName(
   environment: AuthEnvironment = process.env,
 ): string {
   return shouldUseSecureAuthCookies(environment)
-    ? "__Secure-next-auth.session-token"
-    : "next-auth.session-token";
+    ? AUTH_SESSION_COOKIE_BASE_NAMES[3]
+    : AUTH_SESSION_COOKIE_BASE_NAMES[2];
+}
+
+/** Future V2 issuer/decoder name, derived from the cleanup name contract. */
+export function authSessionV2CookieName(
+  environment: AuthEnvironment = process.env,
+): string {
+  return shouldUseSecureAuthCookies(environment)
+    ? AUTH_SESSION_COOKIE_BASE_NAMES[1]
+    : AUTH_SESSION_COOKIE_BASE_NAMES[0];
 }

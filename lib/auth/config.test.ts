@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  AUTH_SESSION_COOKIE_BASE_NAMES,
   AUTH_SESSION_MAX_AGE_SECONDS,
   AuthConfigurationError,
   authSessionCookieName,
+  authSessionV2CookieName,
   resolveAuthSecret,
   resolveVerifiedLoginGraceDeadline,
   resolveVerifiedLoginPolicy,
@@ -161,11 +163,29 @@ test("auth cookie security follows the canonical NextAuth URL", () => {
     authSessionCookieName(secureEnvironment),
     "__Secure-next-auth.session-token",
   );
+  assert.equal(
+    authSessionV2CookieName(secureEnvironment),
+    "__Secure-next-auth.v2.session-token",
+  );
   assert.equal(shouldUseSecureAuthCookies(localEnvironment), false);
   assert.equal(
     authSessionCookieName(localEnvironment),
     "next-auth.session-token",
   );
+  assert.equal(
+    authSessionV2CookieName(localEnvironment),
+    "next-auth.v2.session-token",
+  );
+});
+
+test("auth cookie cleanup contract enumerates only the canonical legacy and V2 bases", () => {
+  assert.equal(Object.isFrozen(AUTH_SESSION_COOKIE_BASE_NAMES), true);
+  assert.deepEqual(AUTH_SESSION_COOKIE_BASE_NAMES, [
+    "next-auth.v2.session-token",
+    "__Secure-next-auth.v2.session-token",
+    "next-auth.session-token",
+    "__Secure-next-auth.session-token",
+  ]);
 });
 
 test("auth cookie security fails closed for an invalid configured URL", () => {
