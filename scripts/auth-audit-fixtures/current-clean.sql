@@ -2,7 +2,11 @@
 
 \if :{?fixture_grace_deadline}
 \else
-  \quit 2
+  DO $missing_fixture_grace_deadline$
+  BEGIN
+    RAISE EXCEPTION 'Current clean auth audit fixture requires fixture_grace_deadline';
+  END;
+  $missing_fixture_grace_deadline$;
 \endif
 
 BEGIN;

@@ -4797,7 +4797,9 @@ Fixture matrica dokazuje:
 - tačan set i broj current blocked/clean kategorija;
 - legacy skripta odbija current šemu;
 - current skripta odbija legacy šemu;
-- nedostajuće preflight promenljive daju status `2`;
+- nedostajuće preflight promenljive i obavezne fixture promenljive bez ikakvog
+  DML-a daju status `3` preko sanitizovanog SQL `RAISE EXCEPTION` pod
+  `ON_ERROR_STOP`;
 - staged blocked i clean daju očekivani status `3`;
 - clean ostaje blokiran isključivo JWT blockerom;
 - strict je odbijen;
@@ -4808,6 +4810,14 @@ Fixture matrica dokazuje:
 Workflow taj runner izvršava nad zasebnim PostgreSQL 16 servisom pre ostatka
 testova. Lokalni računar nema odobren psql/test-DB dokaz, pa lokalni DB skip
 nije predstavljen kao PASS; kompletan dokaz mora dati exact-head CI.
+
+Prvi exact-head pokušaj je otkrio bitnu psql prenosivost: `\quit 2` i
+`\quit 3` ne postavljaju proizvoljan procesni exit code u PostgreSQL 16, već
+završavaju normalno statusom `0`. Zato su svi kontrolisani negativni izlazi
+prebačeni na generički `RAISE EXCEPTION`; psql dokumentovano vraća script-error
+status `3`, stderr ne sadrži podatke naloga, a aggregate blocker izveštaj ostaje
+na stdout-u pre završnog rollback-a i greške. Runner sada zasebno dokazuje i da
+oba current fixture-a odbijaju nedostajuće obavezne promenljive.
 
 ### 44.5. Grace expand migracija i invariant smoke
 

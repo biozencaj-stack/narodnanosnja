@@ -1645,9 +1645,13 @@ legacy_cutoff=YYYY-MM-DDTHH:MM:SS.mmmZ
 grace_deadline=YYYY-MM-DDTHH:MM:SS.mmmZ
 ```
 
-Nedostajuća promenljiva prekida psql statusom 2. Vrednosti vremena prolaze
-tačan ASCII UTC-millisecond format i round-trip proveru, umesto tolerantnog
-parsera. `legacy_cutoff` ne sme biti u budućnosti. `grace_deadline` mora biti
+Nedostajuća promenljiva prekida psql script-error statusom `3`, preko
+sanitizovanog SQL `RAISE EXCEPTION` pod `ON_ERROR_STOP` i pre transakcije.
+PostgreSQL 16 CI je dokazao da `\quit 2`/`\quit 3` ne postavljaju proizvoljan
+procesni kod, već završavaju statusom `0`; zato je taj fail-open oblik uklonjen
+i iz preflight-a i iz oba current fixture-a. Vrednosti vremena prolaze tačan
+ASCII UTC-millisecond format i round-trip proveru, umesto tolerantnog parsera.
+`legacy_cutoff` ne sme biti u budućnosti. `grace_deadline` mora biti
 najmanje sedam, a najviše trideset dana posle DB vremena preflight-a. Granica
 je tačna: `createdAt < legacy_cutoff` označava legacy nalog, dok je nalog sa
 `createdAt >= legacy_cutoff` post-cutoff i ne sme dobiti grace.

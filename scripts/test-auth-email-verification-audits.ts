@@ -329,7 +329,8 @@ function runSqlFile(
   targetUrl: string,
   relativePath: string,
   variables: PsqlVariables = {},
-): void {
+  allowedStatuses: readonly number[] = [0],
+): CommandResult {
   const args = [
     '-X',
     '--quiet',
@@ -337,7 +338,7 @@ function runSqlFile(
   ];
   appendPsqlVariables(args, variables);
   args.push(`--file=${path.join(repositoryRoot, relativePath)}`, targetUrl);
-  run('psql', args);
+  return run('psql', args, allowedStatuses);
 }
 
 function applyLegacyBaseline(targetUrl: string): void {
@@ -465,6 +466,22 @@ function main(): void {
     );
     assert.equal(legacyAgainstCurrent.stdout.trim(), '');
 
+    const blockedFixtureMissingCutoff = runSqlFile(
+      blockedUrl,
+      'scripts/auth-audit-fixtures/current-blocked.sql',
+      { fixture_grace_deadline: fixtureGraceDeadline },
+      [3],
+    );
+    assert.equal(blockedFixtureMissingCutoff.stdout.trim(), '');
+
+    const blockedFixtureMissingGraceDeadline = runSqlFile(
+      blockedUrl,
+      'scripts/auth-audit-fixtures/current-blocked.sql',
+      { fixture_legacy_cutoff: fixtureCutoff },
+      [3],
+    );
+    assert.equal(blockedFixtureMissingGraceDeadline.stdout.trim(), '');
+
     runSqlFile(blockedUrl, 'scripts/auth-audit-fixtures/current-blocked.sql', {
       fixture_grace_deadline: fixtureGraceDeadline,
       fixture_legacy_cutoff: fixtureCutoff,
@@ -483,7 +500,7 @@ function main(): void {
       {
         graceDeadline: fixtureGraceDeadline,
         targetPolicy: 'staged',
-        allowedStatuses: [2],
+        allowedStatuses: [3],
       },
     );
     assert.equal(missingCutoff.stdout.trim(), '');
@@ -494,7 +511,7 @@ function main(): void {
       {
         cutoff: fixtureCutoff,
         targetPolicy: 'staged',
-        allowedStatuses: [2],
+        allowedStatuses: [3],
       },
     );
     assert.equal(missingGraceDeadline.stdout.trim(), '');
@@ -505,7 +522,7 @@ function main(): void {
       {
         cutoff: fixtureCutoff,
         graceDeadline: fixtureGraceDeadline,
-        allowedStatuses: [2],
+        allowedStatuses: [3],
       },
     );
     assert.equal(missingTargetPolicy.stdout.trim(), '');
@@ -525,6 +542,15 @@ function main(): void {
     const cleanUrl = createDatabase(baseUrl, testDatabases.clean);
     createdDatabases.push(testDatabases.clean);
     applyAllMigrations(cleanUrl);
+
+    const cleanFixtureMissingGraceDeadline = runSqlFile(
+      cleanUrl,
+      'scripts/auth-audit-fixtures/current-clean.sql',
+      {},
+      [3],
+    );
+    assert.equal(cleanFixtureMissingGraceDeadline.stdout.trim(), '');
+
     runSqlFile(cleanUrl, 'scripts/auth-audit-fixtures/current-clean.sql', {
       fixture_grace_deadline: fixtureGraceDeadline,
     });

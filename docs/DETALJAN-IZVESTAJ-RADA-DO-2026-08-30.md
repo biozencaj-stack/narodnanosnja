@@ -3908,7 +3908,12 @@ psql ... \
 Datumi u primeru su samo format, ne odobrene produkcijske vrednosti. Stvarne
 vrednosti moraju proći review i biti zabeležene uz audit dokaz.
 
-Ako bilo koja od tri promenljive nedostaje, psql izlazi statusom 2. Oba
+Ako bilo koja od tri promenljive nedostaje, sanitizovani SQL
+`RAISE EXCEPTION` pod `ON_ERROR_STOP` prekida skriptu dokumentovanim psql
+script-error statusom `3`, pre transakcije i bez DML-a. Isto pravilo važi za
+nedostajuće obavezne promenljive izolovanih fixture-a. Raniji oblik
+`\quit 2`/`\quit 3` uklonjen je nakon što je exact-head PostgreSQL 16 CI dokazao
+da broj uz `\quit` nije procesni exit code i da takav izlaz vraća `0`. Oba
 timestampa moraju biti tačan ASCII `YYYY-MM-DDTHH:MM:SS.mmmZ`, proći PostgreSQL
 parse i UTC round-trip bez normalizacije. Cutoff mora biti finite i ne sme biti
 posle jednokratno uzorkovanog DB vremena. Deadline mora biti finite i između

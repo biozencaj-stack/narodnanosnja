@@ -2,11 +2,19 @@
 
 \if :{?fixture_legacy_cutoff}
 \else
-  \quit 2
+  DO $missing_fixture_legacy_cutoff$
+  BEGIN
+    RAISE EXCEPTION 'Current blocked auth audit fixture requires fixture_legacy_cutoff';
+  END;
+  $missing_fixture_legacy_cutoff$;
 \endif
 \if :{?fixture_grace_deadline}
 \else
-  \quit 2
+  DO $missing_fixture_grace_deadline$
+  BEGIN
+    RAISE EXCEPTION 'Current blocked auth audit fixture requires fixture_grace_deadline';
+  END;
+  $missing_fixture_grace_deadline$;
 \endif
 
 BEGIN;

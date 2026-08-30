@@ -8,7 +8,10 @@
 -- sessions. This revision intentionally remains blocked until a separately
 -- reviewed JWT policy-revalidation design is implemented and this gate is
 -- revised with it.
--- Output is strictly category|count; a blocker exits psql with status 3.
+-- Output is strictly category|count. Missing required inputs and reported
+-- blockers deliberately raise a sanitized SQL error so psql exits with its
+-- documented ON_ERROR_STOP script-error status 3. `\quit N` must not be used:
+-- PostgreSQL 16 treats N as an ignored argument and exits successfully.
 \set ON_ERROR_STOP on
 \set QUIET 1
 \pset format unaligned
@@ -18,15 +21,27 @@
 
 \if :{?legacy_cutoff}
 \else
-  \quit 2
+  DO $missing_legacy_cutoff$
+  BEGIN
+    RAISE EXCEPTION 'Verified-login preflight requires legacy_cutoff';
+  END;
+  $missing_legacy_cutoff$;
 \endif
 \if :{?grace_deadline}
 \else
-  \quit 2
+  DO $missing_grace_deadline$
+  BEGIN
+    RAISE EXCEPTION 'Verified-login preflight requires grace_deadline';
+  END;
+  $missing_grace_deadline$;
 \endif
 \if :{?target_policy}
 \else
-  \quit 2
+  DO $missing_target_policy$
+  BEGIN
+    RAISE EXCEPTION 'Verified-login preflight requires target_policy';
+  END;
+  $missing_target_policy$;
 \endif
 
 BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
@@ -511,5 +526,9 @@ SELECT pg_catalog.current_setting(
   ROLLBACK;
 \else
   ROLLBACK;
-  \quit 3
+  DO $blocked_preflight$
+  BEGIN
+    RAISE EXCEPTION 'Verified-login preflight reported blocking categories';
+  END;
+  $blocked_preflight$;
 \endif
