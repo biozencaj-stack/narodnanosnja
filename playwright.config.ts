@@ -30,7 +30,7 @@ export default defineConfig({
     env: {
       NEXTAUTH_URL: baseURL,
       NEXT_PUBLIC_SITE_URL: baseURL,
-      NEXTAUTH_SECRET: "e2e-nextauth-secret",
+      NEXTAUTH_SECRET: "e2e-nextauth-secret-with-at-least-32-bytes",
       ORDER_ACCESS_SECRET: "e2e-order-access-secret",
       NEXT_PUBLIC_DEFAULT_COUNTRY: "Srbija",
       NEXT_PUBLIC_CASH_ON_DELIVERY_ENABLED: "true",

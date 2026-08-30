@@ -208,6 +208,34 @@ potpisani POST nakon izričitog klika atomarno deaktivira korisničku i gostuju�
 pretplatu. Uspešan odgovor je idempotentan i ne otkriva da li email postoji u
 bazi.
 
+## Autentifikacija i email verifikacija (v2)
+
+`lib/auth/config.ts` je jedini izvor `NEXTAUTH_SECRET`, auth session/JWT roka i
+izbora secure session cookie-ja. Ne uvoditi fallback secret niti ponavljati
+NextAuth cookie heuristiku u ruti ili proxy-ju. Secret mora biti najmanje 32
+UTF-8 bajta, bez okolnih razmaka, nov i kriptografski nasumičan; poznati javni
+placeholder-i su namerno odbijeni. U produkciji su obavezni `NEXTAUTH_URL` i
+HTTPS, dok `NEXT_PUBLIC_SITE_URL` prolazi kroz `getStorefrontUrl()`.
+
+Standardna sesija, JWT i sesija iz email-verification toka imaju isti rok od 24
+sata. `proxy.ts`, NextAuth i verify ruta moraju koristiti isti secret, isti
+secure-cookie izbor i isto ime cookie-ja. Verifikaciona ruta mora pre DB
+mutacije validirati konfiguraciju i redirect URL, potpisati sesiju i potpuno
+pripremiti odgovor sa cookie-jem. Tek zatim jedna transakcija conditional
+`deleteMany` claim-om troši još važeći token, postavlja `emailVerified` i briše
+sve sibling verification tokene. Svaka izmena tog redosleda mora zadržati unit
+testove za encode/response/commit greške i opt-in PostgreSQL concurrency test.
+
+Trenutni klijentski redirect na GET auto-login rutu je prelazno stanje, ne
+obrazac za nove tokove. Sledeća auth etapa treba da uvede eksplicitnu
+prefetch-safe korisničku potvrdu i POST mutaciju, kako email skener ili link
+preview ne bi prerano potrošio verification token.
+
+Ovo pravilo još ne znači da login sme globalno da odbije svaki nalog sa
+`emailVerified = NULL`. Pre verified-login enforcementa potrebni su audit i
+kontrolisani backfill postojećih naloga, atomska registracija, stvarni resend
+tok i bezbedan oporavak od SMTP greške.
+
 ## SMTP i slanje emaila (v2)
 
 Svaki email tok mora praviti transport isključivo kroz

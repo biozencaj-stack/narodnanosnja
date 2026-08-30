@@ -3,8 +3,9 @@
 > Datum preseka: 30. avgust 2026.<br>
 > Glavni projekat: `narodnanosnja-prodavnica`<br>
 > V2 grana: `verzija/v2.0-univerzalna-platforma`<br>
-> Poslednji V2 merge pre ovog izveštaja: `79216213a3ad45d8d3be372aeb5f62dd5371cbe7`<br>
-> Testirano Git stablo: `762f004ce8774ef24f61b9231394b4afb8b84331`<br>
+> Aktuelni kanonski V2 merge pre P1 auth grane: `328b4027f1ed3f357ced86564f52dfefa36b85a1`<br>
+> P1 auth radna grana: `ispravka/v2-auth-secret-verifikacija`<br>
+> Raniji konsolidovani test tree: `762f004ce8774ef24f61b9231394b4afb8b84331`<br>
 > Produkcijski status: V2 aplikacija nije deployovana; kartice su isključene; `main` nije menjan ovim V2 radom<br>
 > Svrha: samostalan, konsolidovan i detaljan opis svega što je urađeno do ovog preseka
 
@@ -40,6 +41,7 @@
 28. [Produkcioni kontrolni spisak](#28-produkcioni-kontrolni-spisak)
 29. [Referentna dokumentacija](#29-referentna-dokumentacija)
 30. [P0 release granica za V2](#30-p0-release-granica-za-v2)
+31. [P1 auth secret i atomska email verifikacija](#31-p1-auth-secret-i-atomska-email-verifikacija)
 
 ---
 
@@ -65,18 +67,15 @@ uvek tumače ovako:
   uključivanja određene capability funkcije.
 
 Istorijski brojevi testova, poput 33, 40, 43 ili 82, ostaju korisni kao dokaz
-pojedinačnih preseka. Aktuelni objedinjeni lokalni presek je 103 testa: 102
-prolaze, a jedan opt-in PostgreSQL test se lokalno namerno preskače. U CI-ju se
-taj test obavezno uključuje.
+pojedinačnih preseka. Aktuelni P1 auth radni presek ima 115 testova: 113
+prolazi, a dva opt-in PostgreSQL testa se lokalno namerno preskaču. CI obavezno
+uključuje i reservation-cleanup i email-verification DB scenario.
 
-Ovaj izveštaj opisuje stanje koda pre dodavanja samog izveštaja. Poslednji
-remote V2 merge je `7921621`; njegov sadržaj je kriptografski isti kao CI-
-testirani head `4816b93`.
-
-Operativna dopuna u odeljku 30 opisuje naknadno implementiranu P0 release
-granicu. Raniji commitovi, PR-ovi i CI runovi ostaju istorijski dokazi svog
-vremenskog preseka; aktuelna pravila okidanja i deploya tumače se prema
-odeljcima 16, 26, 28 i 30.
+Osnovni deo izveštaja čuva prvobitni vremenski presek. Operativne dopune u
+odeljcima 30 i 31 opisuju naknadno implementiranu P0 release granicu i aktuelni
+P1 auth rad. Raniji commitovi, PR-ovi, test brojevi i CI runovi ostaju
+istorijski dokazi svog preseka; aktuelna pravila i status tumače se prema
+odeljcima 26, 28, 30 i 31.
 
 ---
 
@@ -1486,9 +1485,9 @@ nije napravljen.
 
 ## 20. Testovi i dokazi
 
-### 20.1. Aktuelni lokalni presek
+### 20.1. Istorijski lokalni presek pre P0/P1 dopuna
 
-Poslednji objedinjeni lokalni test pre ovog izveštaja daje:
+Ovo je istorijski lokalni presek pre P0 i nove P1 auth sekcije:
 
 - 103 ukupna testa;
 - 102 prolaze;
@@ -1496,6 +1495,9 @@ Poslednji objedinjeni lokalni test pre ovog izveštaja daje:
 - 1 je namerno preskočen;
 - preskočeni test je opt-in PostgreSQL reservation-cleanup race scenario;
 - CI ga uključuje sa `RUN_RESERVATION_CLEANUP_DB_TESTS=true`.
+
+Aktuelni radni presek i drugi opt-in DB test opisani su u odeljku 31.4: 115
+ukupno, 113 prolazi, 2 lokalno preskočena PostgreSQL scenarija i 0 padova.
 
 Pored unit/integration testova provereni su lint, TypeScript, Prisma validacija,
 produkcijski build i mobilni COD browser scenario u odgovarajućim presecima.
@@ -2006,11 +2008,25 @@ Potrebno je:
 
 ### 26.2. P1 — auth, recovery i sesije
 
-Aktuelni kod još ima sledeće nalaze:
+Prva dva koraka preporučenog redosleda implementirana su i lokalno proverena na
+grani `ispravka/v2-auth-secret-verifikacija`:
 
-- verify-email ruta ima javni `fallback-secret`;
-- ista ruta menja korisnika/briše token pre nego što JWT encode uspe;
-- auth cookie traje 30 dana, dok osnovna auth sesija traje 24 sata;
+- javni `fallback-secret` je uklonjen, a jedini resolver odbija nedostajući,
+  slab, razmacima okružen ili poznati placeholder ključ;
+- produkcijski `NEXTAUTH_URL` je obavezan HTTPS URL;
+- NextAuth, proxy i verification ruta dele secret, secure-cookie odluku i ime
+  session cookie-ja;
+- session, JWT i verification cookie dele isti rok od 24 sata;
+- sesija i kompletan redirect/cookie odgovor pripremaju se pre DB mutacije;
+- token claim, postavljanje `emailVerified` i brisanje sibling tokena rade u
+  jednoj transakciji sa exactly-once konfliktom;
+- dodat je opt-in real-PostgreSQL test sa determinističkim preklapanjem dva
+  verification radnika, a CI ga obavezno uključuje.
+
+Preostali auth nalazi su:
+
+- verification još koristi GET auto-login mutaciju posle klijentskog
+  preusmerenja i treba preći na eksplicitnu prefetch-safe POST potvrdu;
 - login nema poseban rate limit/lockout;
 - login ne zahteva `emailVerified`;
 - registracija guta SMTP kvar, a korisniku pominje resend koji nije
@@ -2023,15 +2039,21 @@ Aktuelni kod još ima sledeće nalaze:
 
 Preporučeni redosled popravke je:
 
-1. centralni fail-closed auth secret;
-2. atomski verify tok i usklađeno trajanje session/cookie;
+1. **Implementirano lokalno:** centralni fail-closed auth secret/URL/cookie
+   ugovor;
+2. **Implementirano lokalno:** atomski verify tok i usklađeno trajanje
+   session/JWT/cookie;
 3. generički, ne-enumerabilan reset odgovor i isti SMTP failure oblik;
-4. concurrency-safe resend sa jednim aktivnim tokenom;
-5. produkcioni audit/backfill `emailVerified` stanja;
-6. tek zatim verified-login enforcement;
-7. hashovani jednokratni tokeni;
-8. `sessionVersion`/revocation i sveža role provera za osetljive radnje;
-9. shared login limiter, lockout politika i po mogućstvu MFA za admin.
+4. prefetch-safe POST potvrda umesto GET auto-login mutacije;
+5. hashovani jednokratni verification/reset tokeni;
+6. atomska registracija i concurrency-safe resend sa jednim aktivnim tokenom;
+7. produkcioni audit/backfill `emailVerified` stanja;
+8. tek zatim verified-login enforcement;
+9. `sessionVersion`/revocation i sveža role provera za osetljive radnje;
+10. shared login limiter, lockout politika i po mogućstvu MFA za admin.
+
+Prva dva koraka još zahtevaju exact-head PR CI, integraciju samo u kanonsku V2
+granu i post-merge CI dokaz. To nije live aktivacija.
 
 ### 26.3. P1 — production dependency ranjivosti
 
@@ -2164,8 +2186,8 @@ Pre deploya nezavisno potvrditi:
 
 Pre javnog release-a dodati testove za:
 
-- fail-closed NextAuth secret i atomski verify;
-- session/cookie trajanje i session revocation;
+- route-level auth redirect/cookie integraciju uz nevalidnu konfiguraciju;
+- session revocation posle promene/resetovanja lozinke i role;
 - login rate limit/lockout i `emailVerified` matricu;
 - reset enumeration i SMTP failure uniformnost;
 - resend concurrency i jedan aktivni token;
@@ -2276,14 +2298,18 @@ privlačnosti funkcije.
 
 ### Faza 2 — zatvoriti neposredne security P1 nalaze
 
-1. Nadograditi/trijažirati critical/high zavisnosti, posebno Next/NextAuth.
-2. Popraviti auth secret, verify/reset/resend i session revocation.
-3. Uvesti shared rate limiting i trusted-proxy ugovor.
-4. Zatvoriti COD stock-abuse lifecycle.
-5. Uvesti newsletter double opt-in i popraviti wishlist maintenance ugovor.
-6. Centralizovati email escaping i ojačati priloge.
+1. Dovršiti exact-head i post-merge CI za implementirani auth secret/atomski
+   verify presek.
+2. Popraviti reset privacy, hashovane tokene, atomsku registraciju i resend.
+3. Posle audita/backfill-a uvesti verified-login, session revocation i svežu
+   role proveru.
+4. Nadograditi/trijažirati critical/high zavisnosti, posebno Next/NextAuth.
+5. Uvesti shared rate limiting i trusted-proxy ugovor.
+6. Zatvoriti COD stock-abuse lifecycle.
+7. Uvesti newsletter double opt-in i popraviti wishlist maintenance ugovor.
+8. Centralizovati email escaping i ojačati priloge.
 
-Posle svake logičke grupe: ciljani testovi, kompletnih 103+ testova, lint,
+Posle svake logičke grupe: ciljani testovi, kompletan rastući test paket, lint,
 typecheck, Prisma provere, E2E i build.
 
 ### Faza 3 — pravni i produkcioni readiness
@@ -2657,11 +2683,123 @@ posebnu spoljnu zaštitu i eksplicitno odobren poslednji korak.
 
 ---
 
+## 31. P1 auth secret i atomska email verifikacija
+
+Prva P1 auth sekcija radi se na grani
+`ispravka/v2-auth-secret-verifikacija`, izvedenoj iz kanonskog V2 stanja
+`328b4027f1ed3f357ced86564f52dfefa36b85a1`. Cilj preseka je uzak: ukloniti
+javni fallback ključ, uskladiti sve auth session/cookie parametre i dokazati da
+email verifikacija ne može ostaviti parcijalno stanje. Password reset, resend,
+verified-login rollout i revokacija sesija ostaju naredne odvojene sekcije.
+
+### 31.1. Urađena konfiguraciona granica
+
+`lib/auth/config.ts` je novi jedini izvor za:
+
+- `NEXTAUTH_SECRET` validaciju;
+- session/JWT/cookie rok od tačno 86.400 sekundi;
+- produkcijski HTTPS zahtev za `NEXTAUTH_URL`;
+- secure/non-secure NextAuth session cookie odluku i ime.
+
+Konfiguracija radi fail-closed. Secret ne sme nedostajati, biti prazan, imati
+okolne razmake, biti kraći od 32 UTF-8 bajta ili biti poznati javni placeholder.
+Produkcija ne prihvata izostavljen ili HTTP `NEXTAUTH_URL`. Ne koristi se
+heuristika karaktera kao lažni dokaz entropije: operater i dalje mora da
+generiše novi CSPRNG ključ, a `.env.example` javni primer je namerno odbijen.
+
+`lib/auth/index.ts`, `proxy.ts` i verify ruta koriste isti resolver. NextAuth
+session i JWT eksplicitno imaju isti 24h `maxAge`. Proxy prosleđuje
+`getToken()` i isti secret i eksplicitni secure-cookie kriterijum i centralno
+ime cookie-ja; više ne može da izabere drugi cookie na osnovu sopstvene URL
+heuristike. Verification cookie je HttpOnly, SameSite=Lax, path `/`, sa istim
+24h rokom.
+
+### 31.2. Nova verification failure granica
+
+Pre DB pristupa ruta sada:
+
+1. validira `NEXT_PUBLIC_SITE_URL` kroz postojeći `getStorefrontUrl()`;
+2. konstruiše sve redirect mete;
+3. validira auth secret i cookie konfiguraciju.
+
+Za važeći token redosled je zatim strogo:
+
+1. JWT encode;
+2. kompletna priprema success redirecta i cookie-ja u memoriji;
+3. atomski DB commit;
+4. vraćanje pripremljenog odgovora.
+
+`prepareVerificationSuccessBeforeCommit()` ne poziva DB commit ako JWT encode
+ili response/cookie priprema zakažu, a ne vraća uspešan odgovor ako commit
+zakaže. Time se uklanja raniji slučaj u kome je korisnik mogao biti potvrđen i
+token obrisan, a da klijent ipak dobije failure zbog kasnije infrastrukturne
+greške.
+
+### 31.3. Exactly-once DB transakcija
+
+`commitEmailVerification()` u jednoj Prisma transakciji:
+
+1. conditional `deleteMany` upitom claim-uje tačno isti ID/user/token samo ako
+   je `expires > verifiedAt`;
+2. zahteva `count === 1`, inače baca kontrolisani
+   `EmailVerificationConflictError`;
+3. postavlja `User.emailVerified`;
+4. briše sve sibling verification tokene korisnika.
+
+Claim brisanje, user update i sibling invalidacija zajedno commit-uju ili se
+zajedno rollback-uju. Paralelna dva pokušaja zato ne mogu oba uspešno potrošiti
+isti token. Ovaj presek ne menja Prisma šemu niti istoriju migracija.
+
+### 31.4. Dokazi u aktuelnom radnom stablu
+
+| Provera | Rezultat |
+| --- | --- |
+| nezavisni read-only pregled auth diff-a | cookie heuristika i response-before-commit ivice pronađene i ispravljene pre commita |
+| `git diff --check` | prolazi |
+| `actionlint .github/workflows/objavi.yml` | prolazi |
+| ciljani auth testovi | 12 ukupno; 11 prolazi; 1 opt-in PostgreSQL test lokalno preskočen |
+| `npm run lint -- --quiet` | prolazi |
+| `npm run typecheck` | prolazi |
+| `npm test` | 115 ukupno; 113 prolazi; 2 opt-in DB testa lokalno preskočena |
+| produkcijski build sa lažnim CI vrednostima | prolazi; bez lokalne baze koristi postojeće safe-default grane |
+
+Novi PostgreSQL test nije običan serijski replay. Two-worker barijera zaustavlja
+oba radnika unutar već otvorenih interaktivnih transakcija pre claim upita.
+Test zahteva eksplicitni flag, lokalni PostgreSQL host i jasno test ime baze,
+zatim proverava jednog pobednika, jednog konfliktnog radnika, tačan
+`emailVerified` timestamp i nula preostalih tokena. CI uključuje test preko
+`RUN_AUTH_VERIFICATION_DB_TESTS=true` nakon migracija nad PostgreSQL 16.
+
+Lokalni dokaz još nije zamena za exact-head GitHub CI. Pre integracije je
+obavezno otvoriti PR isključivo ka `verzija/v2.0-univerzalna-platforma`, proći
+PostgreSQL, migracije/drift/invarijante, sve DB testove, Chromium E2E i build,
+uz preskočene release/deploy poslove. Posle merge-a isti uslov važi za V2 push
+run.
+
+### 31.5. Šta ostaje i šta nije aktivirano
+
+Sledeći auth koraci su:
+
+1. reset privacy i SMTP-failure uniformnost;
+2. prefetch-safe POST potvrda umesto GET auto-login mutacije;
+3. hashovani jednokratni verification/reset tokeni;
+4. atomska registracija i pravi resend tok sa concurrency/cooldown zaštitom;
+5. audit/backfill `emailVerified` i tek zatim login enforcement;
+6. session revocation i sveža role provera;
+7. shared login limiter, trusted-proxy ugovor i bezbedna lockout politika.
+
+Tokom ovog rada nisu čitane produkcione `.env` vrednosti, nisu menjani podaci,
+server, GitHub Environment, tajne, DNS/TLS/proxy ili PM2. Nije napravljen
+release tag i nije pokrenut deploy. Kartice ostaju isključene, presentation
+`main` nije dodirnut, a live puštanje ostaje poslednja odobrena faza.
+
+---
+
 ## Završna napomena
 
 Najveći deo tehničke osnove je urađen: postoji ozbiljan V2 commerce sloj,
 kontrolisana DB evolucija, kompletan CI, bezbedniji payment/order model, četiri
-naknadna P1 hotfixa i release mehanizam sa rollbackom. Repository-side V2
+ranija P1 hotfixa, prvi auth-hardening presek i release mehanizam sa rollbackom. Repository-side V2
 release granica je integrisana i ima zelene exact-head i post-merge CI dokaze.
 Spoljašnja GitHub/live zaštita namerno još nije aktivirana. Najveći preostali
 rizik nije jedna izolovana funkcija, već poslednji kilometar: critical/high

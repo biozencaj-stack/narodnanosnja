@@ -1,22 +1,52 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { getStorefrontUrl } from "@/lib/config/storefront-url";
 import { encode } from "next-auth/jwt";
-
-const NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "fallback-secret";
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+import {
+  AUTH_SESSION_MAX_AGE_SECONDS,
+  authSessionCookieName,
+  resolveAuthSecret,
+  shouldUseSecureAuthCookies,
+} from "@/lib/auth/config";
+import {
+  commitEmailVerification,
+  prepareVerificationSuccessBeforeCommit,
+} from "@/lib/auth/email-verification";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ token: string }> }
 ) {
+  let failureRedirect: URL | undefined;
+
   try {
+    const storefrontUrl = getStorefrontUrl();
+    // Every redirect target is validated before reading or mutating a token.
+    // Invalid public URL configuration therefore cannot partially verify a user.
+    failureRedirect = new URL("/login?error=verification_failed", storefrontUrl);
+    const invalidTokenRedirect = new URL(
+      "/login?error=invalid_token",
+      storefrontUrl,
+    );
+    const expiredTokenRedirect = new URL(
+      "/login?error=expired_token",
+      storefrontUrl,
+    );
+    const successRedirect = new URL(
+      "/moj-nalog?verified=true",
+      storefrontUrl,
+    );
     const { token } = await params;
 
     if (!token) {
-      return NextResponse.redirect(
-        new URL("/login?error=invalid_token", SITE_URL)
-      );
+      return NextResponse.redirect(invalidTokenRedirect);
     }
+
+    // Resolve every signing/cookie setting before touching verification data.
+    // A broken auth configuration must leave the token retryable.
+    const authSecret = resolveAuthSecret();
+    const secureCookie = shouldUseSecureAuthCookies();
+    const cookieName = authSessionCookieName();
 
     // Find verification token
     const verification = await prisma.emailVerification.findUnique({
@@ -26,70 +56,57 @@ export async function GET(
 
     // Check if token exists
     if (!verification) {
-      return NextResponse.redirect(
-        new URL("/login?error=invalid_token", SITE_URL)
-      );
+      return NextResponse.redirect(invalidTokenRedirect);
     }
 
     // Check if token is expired
-    if (verification.expires < new Date()) {
-      // Delete expired token
-      await prisma.emailVerification.delete({
-        where: { id: verification.id },
+    if (verification.expires.getTime() <= Date.now()) {
+      await prisma.emailVerification.deleteMany({
+        where: { id: verification.id, token },
       });
-      return NextResponse.redirect(
-        new URL("/login?error=expired_token", SITE_URL)
-      );
+      return NextResponse.redirect(expiredTokenRedirect);
     }
 
-    // Mark email as verified
-    await prisma.user.update({
-      where: { id: verification.userId },
-      data: { emailVerified: new Date() },
-    });
+    return await prepareVerificationSuccessBeforeCommit(
+      () =>
+        encode({
+          token: {
+            id: verification.user.id,
+            email: verification.user.email,
+            role: verification.user.role,
+            firstName: verification.user.firstName,
+            lastName: verification.user.lastName,
+            sub: verification.user.id,
+          },
+          secret: authSecret,
+          maxAge: AUTH_SESSION_MAX_AGE_SECONDS,
+        }),
+      (sessionToken) => {
+        const response = NextResponse.redirect(successRedirect);
 
-    // Delete verification token
-    await prisma.emailVerification.delete({
-      where: { id: verification.id },
-    });
+        response.cookies.set(cookieName, sessionToken, {
+          httpOnly: true,
+          secure: secureCookie,
+          sameSite: "lax",
+          path: "/",
+          maxAge: AUTH_SESSION_MAX_AGE_SECONDS,
+        });
 
-    // Create session token for magic login
-    const sessionToken = await encode({
-      token: {
-        id: verification.user.id,
-        email: verification.user.email,
-        role: verification.user.role,
-        firstName: verification.user.firstName,
-        lastName: verification.user.lastName,
-        sub: verification.user.id,
+        return response;
       },
-      secret: NEXTAUTH_SECRET,
-      maxAge: 30 * 24 * 60 * 60, // 30 days
-    });
-
-    // Create response with redirect
-    const response = NextResponse.redirect(
-      new URL("/moj-nalog?verified=true", SITE_URL)
+      () =>
+        commitEmailVerification(prisma, {
+          id: verification.id,
+          userId: verification.userId,
+          token,
+        }),
     );
-
-    // Set the session cookie
-    const cookieName = process.env.NODE_ENV === "production"
-      ? "__Secure-next-auth.session-token"
-      : "next-auth.session-token";
-
-    response.cookies.set(cookieName, sessionToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-      maxAge: 30 * 24 * 60 * 60, // 30 days
-    });
-
-    return response;
   } catch (error) {
     console.error("Email verification error:", error);
-    return NextResponse.redirect(
-      new URL("/login?error=verification_failed", SITE_URL)
+    if (failureRedirect) return NextResponse.redirect(failureRedirect);
+    return NextResponse.json(
+      { error: "Email verification configuration failed" },
+      { status: 500 },
     );
   }
 }
