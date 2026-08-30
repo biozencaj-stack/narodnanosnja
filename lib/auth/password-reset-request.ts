@@ -1,12 +1,11 @@
+import { normalizeEmailAddress } from "./email-address";
+
 export const PASSWORD_RESET_ACCEPTED_MESSAGE =
   "Ako nalog postoji, uputstva za reset lozinke biće poslata na unetu email adresu.";
 export const PASSWORD_RESET_UNAVAILABLE_MESSAGE =
   "Zahtev trenutno nije moguće obraditi. Pokušajte ponovo.";
 
 export const PASSWORD_RESET_TOKEN_LIFETIME_MS = 60 * 60 * 1000;
-
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const MAX_EMAIL_LENGTH = 254;
 
 export type PasswordResetFailureStage =
   | "LOOKUP"
@@ -69,18 +68,7 @@ export interface PasswordResetUnavailableResponse {
 }
 
 export function normalizePasswordResetEmail(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-
-  const normalized = value.trim().toLowerCase();
-  if (
-    !normalized ||
-    normalized.length > MAX_EMAIL_LENGTH ||
-    !EMAIL_PATTERN.test(normalized)
-  ) {
-    return null;
-  }
-
-  return normalized;
+  return normalizeEmailAddress(value);
 }
 
 export function passwordResetAcceptedResponse(): PasswordResetAcceptedResponse {

@@ -4,9 +4,10 @@ import {
   PasswordResetConfirmConflictError,
   type PasswordResetConfirmClaim,
 } from "./password-reset-confirm";
+import { isBcryptSafePassword } from "./password";
 
 export const PASSWORD_RESET_CONFIRM_TOKEN_PATTERN = /^[0-9a-f]{64}$/i;
-export const MAX_BCRYPT_PASSWORD_BYTES = 72;
+export { MAX_BCRYPT_PASSWORD_BYTES } from "./password";
 
 export const PASSWORD_RESET_CONFIRM_PRIVATE_HEADERS = {
   "Cache-Control": "private, no-store, max-age=0",
@@ -117,11 +118,6 @@ function safelyReportFailure(
   } catch {
     // Observability must never replace the generic public response.
   }
-}
-
-function isBcryptSafePassword(password: string): boolean {
-  return new TextEncoder().encode(password).byteLength <=
-    MAX_BCRYPT_PASSWORD_BYTES;
 }
 
 function recordClaim(

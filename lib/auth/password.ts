@@ -1,11 +1,23 @@
 import bcrypt from "bcryptjs";
 
 const SALT_ROUNDS = 12;
+export const MAX_BCRYPT_PASSWORD_BYTES = 72;
+
+/** Bcrypt ignores input after 72 bytes, so longer values must be rejected. */
+export function isBcryptSafePassword(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    new TextEncoder().encode(value).byteLength <= MAX_BCRYPT_PASSWORD_BYTES
+  );
+}
 
 /**
  * Hash a password using bcrypt with 12 rounds
  */
 export async function hashPassword(password: string): Promise<string> {
+  if (!isBcryptSafePassword(password)) {
+    throw new Error("Password exceeds bcrypt byte limit");
+  }
   return bcrypt.hash(password, SALT_ROUNDS);
 }
 
@@ -16,6 +28,7 @@ export async function verifyPassword(
   password: string,
   hash: string
 ): Promise<boolean> {
+  if (!isBcryptSafePassword(password)) return false;
   return bcrypt.compare(password, hash);
 }
 
@@ -31,6 +44,10 @@ export function validatePassword(password: string): {
   errors: string[];
 } {
   const errors: string[] = [];
+
+  if (!isBcryptSafePassword(password)) {
+    errors.push("Lozinka ne sme biti duža od 72 bajta");
+  }
 
   if (password.length < 8) {
     errors.push("Lozinka mora imati minimum 8 karaktera");

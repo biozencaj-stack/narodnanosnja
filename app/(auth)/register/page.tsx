@@ -89,7 +89,10 @@ export default function RegisterPage() {
         </div>
 
         {errorMessage && (
-          <div className="mb-6 p-4 bg-error-light border border-error/20 rounded-xl text-error text-sm">
+          <div
+            className="mb-6 p-4 bg-error-light border border-error/20 rounded-xl text-error text-sm"
+            role="alert"
+          >
             {errorMessage}
           </div>
         )}
@@ -110,6 +113,7 @@ export default function RegisterPage() {
                 value={formData.firstName}
                 onChange={handleChange}
                 required
+                maxLength={100}
                 className="w-full px-4 py-3 border border-border rounded-xl bg-background-alt/50
                            focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all
                            text-text placeholder:text-text-light"
@@ -131,6 +135,7 @@ export default function RegisterPage() {
                 value={formData.lastName}
                 onChange={handleChange}
                 required
+                maxLength={100}
                 className="w-full px-4 py-3 border border-border rounded-xl bg-background-alt/50
                            focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all
                            text-text placeholder:text-text-light"
@@ -153,6 +158,7 @@ export default function RegisterPage() {
               value={formData.email}
               onChange={handleChange}
               required
+              maxLength={254}
               autoComplete="email"
               className="w-full px-4 py-3 border border-border rounded-xl bg-background-alt/50
                          focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all
@@ -175,6 +181,8 @@ export default function RegisterPage() {
               type="tel"
               value={formData.phone}
               onChange={handleChange}
+              maxLength={32}
+              autoComplete="tel"
               className="w-full px-4 py-3 border border-border rounded-xl bg-background-alt/50
                          focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all
                          text-text placeholder:text-text-light"

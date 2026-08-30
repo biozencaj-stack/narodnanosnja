@@ -2,7 +2,9 @@
 
 Ova grana menja Prisma šemu i **ne sme** direktno na postojeću produkcionu
 bazu. Kod je kompatibilno proširen, ali baza prvo mora dobiti nove
-order/payment kolone, payment event dnevnik i expand-only kataloške tabele.
+order/payment kolone, payment event dnevnik, expand-only kataloške tabele i dve
+odvojeno pregledane auth expand promene. Činjenica da su prve četiri migracije
+ranije primenjene ne znači da su kasnije auth migracije već na produkciji.
 
 ## Šta šema dodaje
 
@@ -12,7 +14,13 @@ order/payment kolone, payment event dnevnik i expand-only kataloške tabele.
   zalihe;
 - `PROCESSING`/`REVIEW` payment statuse i neizmenjivi `PaymentEvent` dnevnik;
 - opcioni `Product.productTypeId`;
-- modele generičkog kataloga navedene u `CATALOG-MIGRATION-PLAN.md`.
+- modele generičkog kataloga navedene u `CATALOG-MIGRATION-PLAN.md`;
+- nullable compat `tokenHash` kolone i unique reset-user ugovor iz
+  `20260830000000_expand_hashed_auth_tokens`;
+- nullable/no-default `verificationEmailNextAllowedAt`,
+  `verificationEmailResendWindowStartedAt` i
+  `verificationEmailResendCount` iz
+  `20260830010000_expand_email_verification_cooldown`.
 
 Ništa postojeće se ne uklanja. `ProductSize` ostaje aktivni izvor zalihe dok
 se generičke varijante ne popune i ne provere.
@@ -24,8 +32,10 @@ se generičke varijante ne popune i ne provere.
 3. Potvrditi da realna šema odgovara current-state baseline-u i, nad postojećom
    produkcionom bazom bez Prisma istorije, evidentirati baseline kao primenjen
    prema `docs/PRISMA-BASELINE.md`.
-4. Pokrenuti samo četiri već pregledane i checksumovane migracije iz aktivnog
-   lanca. Ne generisati novi expand SQL i ne koristiti `prisma db push`.
+4. Potvrditi tačno produkcijsko migration stanje. Prve četiri migracije su
+   istorijski završene; auth-token i cooldown expand su kasniji koraci koji
+   zahtevaju zaseban audit/backup/restore/lock dokaz. Ne generisati novi expand
+   SQL i ne koristiti `prisma db push`.
 5. Primeniti migraciju na klonu i pokrenuti Prisma validate/generate,
    TypeScript i produkcijski build.
 6. Smoke testirati: anonimnu i prijavljenu porudžbinu, izgubljen/replayed
@@ -36,6 +46,85 @@ se generičke varijante ne popune i ne provere.
    budućeg PR-a. Uporediti legacy i novi model pre uključivanja dual-read-a.
 8. Tek tada zakazati produkcijski prozor, ponoviti backup, primeniti pregledanu
    migraciju i objaviti kod.
+
+## Auth registracija/resend gate pre javnog V2 rada
+
+Atomska registracija i verification resend postoje u kodu, ali se ne smatraju
+produkcijski spremnim samo zato što unit testovi ili migracija nad praznom CI
+bazom prolaze. Pre bilo kakvog live-a obavezno je sledeće.
+
+### Šema i podaci
+
+1. Read-only auditirati duple `PasswordReset.userId` redove pre auth-token
+   expand-a; svaki nalaz rešiti eksplicitnom pregledanom data odlukom.
+2. Na restore klonu primeniti
+   `20260830000000_expand_hashed_auth_tokens`, proveriti migrate status, drift,
+   sedam auth indeksa i hash/legacy invarijante.
+3. Na istom klonu primeniti
+   `20260830010000_expand_email_verification_cooldown`. Potvrditi tri
+   nullable/no-default kolone, tačne tipove/precision i odsustvo dedicated
+   indeksa.
+4. Izmeriti lock trajanje. Cooldown ALTER je metadata-only bez defaulta, ali
+   ipak kratko uzima `ACCESS EXCLUSIVE`; oba SQL fajla imaju 10s lock i 2min
+   statement timeout koji nisu zamena za maintenance plan.
+5. Pokrenuti kompletan `scripts/db-invariant-smoke.sql` u rollback režimu.
+6. Evidentirati tačan recovery postupak. Failed migracija se ne ponavlja
+   naslepo; `migrate resolve --rolled-back` je dozvoljen tek posle potvrđenog
+   rollback-a i otklanjanja uzroka.
+
+### Legacy email nalog i login
+
+1. Read-only prebrojati i klasifikovati postojeće naloge sa
+   `emailVerified IS NULL`.
+2. Ne pretpostavljati da svaki takav nalog treba blokirati ili automatski
+   označiti verifikovanim. Definisati poslovni kriterijum, kontrolisani backfill
+   i audit trag.
+3. Smoke-testirati registration → inbox → explicit POST verify, expired link →
+   resend i SMTP failure → recovery tok nad staging podacima.
+4. Tek posle audita/backfill-a i recovery dokaza uključiti verified-login
+   enforcement. Do tada login kompatibilnost ostaje namerna.
+
+### Resend/throttle invarijante
+
+- initial registracioni email je count `1`;
+- cooldown je 60 sekundi;
+- allowance je fiksni 24-časovni prozor sa najviše pet ukupnih verification
+  emailova, uključujući initial;
+- legacy throttle `NULL` stanje prvim resend-om počinje prozor sa count `1`;
+- resend briše samo istekle tokene; svi ranije neistekli linkovi ostaju važeći;
+- uspešan verify briše sve siblinge i čisti throttle;
+- DB sat se čita tek posle User `FOR UPDATE` lock-a;
+- verify i resend dele `User → EmailVerification` lock redosled;
+- SMTP se poziva posle commita, a ambiguous failure ne briše credential ili
+  vraća allowance.
+
+### Privacy, abuse i delivery
+
+Registration created/existing odgovori moraju ostati byte-identical private
+202. Njihov account-dependent put koristi 900 ms floor plus 0–200 ms
+kriptografski jitter samo kao timing defense-in-depth. To nije dozvola da se
+zadrži procesni limiter u produkciji.
+
+Application body zaštita je završena: registration zahteva JSON media type,
+odbija `Content-Encoding` i sprovodi fail-closed declared/streaming limit 4096
+bajta; resend primenjuje isti ugovor sa 1024 bajta. Chunked ili nedostajući
+Content-Length ne zaobilazi stvarni reader cap. Pre live-a reverse proxy ipak
+mora dobiti usklađene body-size, request-rate, header/read timeout i connection
+limite, jer route guard ne sprečava da promet prvo stigne do Node procesa.
+
+Pre live-a su obavezni shared Redis/DB limiter i eksplicitan trusted-proxy/
+client-IP ugovor. Trenutno poverenje u sirovi `x-forwarded-for` i procesni LRU
+ne štite više instanci i mogu biti spoofovani ako proxy granica nije precizno
+definisana.
+
+Next.js `after()` nije durable queue. HTTP 202 može biti vraćen, a proces pasti
+pre slanja ili recovery-ja. Potrebni su transactional auth-email outbox,
+durable worker, retry/dedup, bounce/delivery monitoring, alert i dokaz ponašanja
+preko shutdown/redeploy granice. Bez toga se kodni resend ne opisuje kao
+garantovana isporuka.
+
+Finalni exact-head/post-merge CI dokaz atomske registracije/resenda:
+`PENDING_FINAL_EVIDENCE`.
 
 ## GitHub release gate — live je poslednji korak
 
@@ -59,6 +148,12 @@ Produkcijski job iste uslove ponavlja pre bilo kakvog SSH koraka. Samo
 postojanje taga ne zaobilazi Environment zaštitu. Tokom razvoja i svih ranijih
 faza tag se ne pravi, server se ne menja i live verzija ostaje netaknuta.
 
+Poseban workflow koji će na svaki push presentation `main` grane podići novu
+javnu verziju sajta ne aktivira se u ovoj auth/DB fazi. Po eksplicitnom
+redosledu on ostaje poslednji korak, posle security, legacy-email, migration,
+outbox, proxy/limiter i operativnih gate-ova. V2 se i dalje nikada ne spaja u
+presentation `main`.
+
 ## Environment pre puštanja
 
 - postaviti jak, zaseban `ORDER_ACCESS_SECRET`;
@@ -79,6 +174,13 @@ faza tag se ne pravi, server se ne menja i live verzija ostaje netaknuta.
   `SMTP_TLS_REJECT_UNAUTHORIZED` mora ostati `true` u produkciji;
 - `APPLY_DATABASE_MIGRATIONS=true` koristiti samo u kontrolisanom izdanju sa
   kompletnim migration chain-om. U redovnom deployu ostaje isključeno.
+- auth email primalac mora biti tačno jedan normalizovan mailbox; staging smoke
+  mora proveriti escaped HTML, verification/reset URL i odbijanje display-name/
+  group/list inputa;
+- verified-login flag/politika ne uključuje se dok legacy audit/backfill i
+  resend recovery nisu završeni;
+- shared limiter/trusted proxy i auth outbox moraju biti aktivni pre javnog
+  registration/resend saobraćaja.
 
 ## Legacy preflight i maintenance prozor
 
@@ -117,8 +219,9 @@ lock ili blokirati upise, zato se ovaj expand ne pušta pod redovnim saobraćaje
 Ako lock ili statement timeout prekine migraciju, ne ponavljati je naslepo:
 zaustaviti rollout, pregledati `_prisma_migrations` i PostgreSQL stanje i
 napraviti eksplicitan recovery/resolve plan. Četiri već primenjena
-`migration.sql` fajla su nepromenljiva istorija; svaka buduća promena ide u
-novu migraciju, nikada izmenom njihovog sadržaja ili checksum-a.
+`migration.sql` fajla su nepromenljiva produkcijska istorija, a oba kasnija
+auth SQL fajla takođe se ne prepravljaju radi lakšeg rollout-a. Svaka buduća
+promena ide u novu migraciju, nikada izmenom postojećeg sadržaja ili checksum-a.
 
 ## Cleanup rezervacija i VPS scheduler
 

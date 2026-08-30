@@ -11,8 +11,8 @@ Zapisa ima više i lako je otvoriti pogrešan. Poređano po dubini:
 
 | Dokument | Obim | Šta pokriva |
 | --- | --- | --- |
-| **`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-08-30.md`** | 34 glavna odeljka | **Konsolidovan presek svega urađenog.** Implementirano stanje, razlozi, Git/PR/CI dokazi, ključni fajlovi, P0/P1/P2 dug, preporučeni redosled i produkcioni checklist |
-| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 42 odeljka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
+| **`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-08-30.md`** | 35 glavnih odeljaka | **Konsolidovan presek svega urađenog.** Implementirano stanje, razlozi, Git/PR/CI dokazi, ključni fajlovi, P0/P1/P2 dug, preporučeni redosled i produkcioni checklist |
+| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 43 odeljka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
 | Ovaj fajl (`IZMENE.md`) | sažeti dnevnik | Hronologija i odluke — zašto je nešto urađeno tako |
 | `docs/ARCHITECTURE-V2.md` | 4 KB | Arhitektonske granice platforme |
 | `docs/CATALOG-MIGRATION-PLAN.md` | 10 KB | Redosled prelaska na generički katalog |
@@ -1062,6 +1062,10 @@ Zato registraciona SMTP greška još može ostaviti nalog bez samouslužnog rese
 puta, postojeći neverifikovani nalozi nisu globalno blokirani, a procesni
 abuse/credential zaštitni sloj nije dovršen.
 
+To je istorijski status etape XIX. Atomska registracija i stvarni resend/
+cooldown kasnije su implementirani u odeljku XXI; outbox, verified-login
+audit/backfill i shared limiter i dalje nisu završeni.
+
 Nisu menjani produkcioni podaci, server/VPS, `.env`, tajne, DNS/TLS/proxy, PM2,
 GitHub `production` Environment, reviewer, secrets/variables ili release
 workflow. Nije napravljen release tag i ništa nije pušteno live.
@@ -1218,6 +1222,9 @@ fazi dual-write čuva oba oblika. Top-level failure log je stage-only
 `{ stage: "REQUEST" }`. User i verification red ipak još nisu napravljeni u
 jednoj transakciji; pravi resend/cooldown i outbox ostaju sledeća faza.
 
+Ovo je istorijska granica etape XX. User+credential transakcija i resend su
+zatvoreni u kodu kroz XXI, dok durable outbox ostaje pre-live blokator.
+
 Novi `lib/email/auth-email-links.ts` pravi oba auth URL-a iz validiranog
 kanonskog storefront `URL` objekta i strogo normalizovanog raw credentiala.
 Malformed, razmacima okružen ili query-injected token fail-closed prekida slanje.
@@ -1300,3 +1307,239 @@ ref, niti environment `production`. Tačan zaključak za ovaj presek je zato
 **0 V2/production deployment zapisa**, a ne globalno nula GitHub deploymenta.
 Server, produkciona baza/migracija, tajne, release tag i live sajt ostali su
 netaknuti.
+
+---
+
+## XXI. P1 atomska registracija i verification resend — 30. avgust 2026.
+
+Peta P1 auth etapa zatvara dve recovery granice koje su u prethodnim odeljcima
+namerno ostale otvorene: parcijalno kreiranje naloga bez verification
+credentiala i odsustvo samouslužnog, enumeration-safe resend toka. Kod je
+implementiran na zasebnoj V2 feature grani. Završni feature SHA, PR, exact-head
+run, merge SHA i post-merge run biće upisani tek kada zaista postoje:
+`PENDING_FINAL_EVIDENCE`.
+
+Ova etapa je razvojni/CI presek. Produkciona baza nije čitana ili menjana,
+migracija nije primenjena na server, `.env` i produkcione tajne nisu čitane,
+GitHub `production` Environment nije menjan, release tag nije napravljen i
+ništa nije pušteno live. Presentation `main` ostaje odvojen; workflow koji će
+na svaki push te grane objaviti novu verziju prezentacionog sajta ostaje
+namerno poslednja, posebno odobrena sekcija rada.
+
+### XXI.1. Atomska registracija bez orphan naloga
+
+Registraciona route logika izdvojena je iz produkcijske kompozicije u
+testabilni factory i servis. `/api/auth` je globalno izuzet za legitimne
+NextAuth callbackove, pa registration POST sada sopstveni trusted same-origin
+guard izvršava pre limitera, JSON parsiranja, tokena, SMTP konfiguracije,
+bcrypt-a ili baze. Prihvata se samo očekivani request shape; nepoznata polja,
+ne-string vrednosti, control znakovi i prekoračenja granica za ime, prezime,
+email i telefon padaju pre skupog ili account-dependent rada.
+
+Application body guard pre JSON parse-a zahteva JSON `Content-Type`, odbija
+svaki `Content-Encoding`, fail-closed proverava deklarisani `Content-Length` i
+čita najviše 4096 stvarnih streaming bajtova. Chunked ili missing-length zahtev
+zato ne može zaobići registration limit.
+
+Lozinka koristi centralnu bcrypt zaštitu od najviše 72 UTF-8 bajta. Granica se
+proverava u ruti, u `hashPassword()` kao defense-in-depth i pri verify-u, tako
+da dve lozinke koje se razlikuju tek posle bcrypt truncation granice ne mogu
+biti tretirane kao ista vrednost. Email prolazi kroz jedan centralni
+normalizer: maksimalno 254 znaka, trim/lowercase kanonizacija i konzervativni
+single-mailbox format. Display name, komentar, grupa, lista primalaca, navodnici
+i ostali Nodemailer address-expression metaznaci nisu dozvoljeni.
+
+Pre persistence-a nastaju raw verification token i purpose-separated hash,
+validira se kanonski storefront URL, pravi SMTP transport i renderuje kompletna
+verification poruka. Vraćeni delivery callback je jedina funkcija koja kasnije
+poziva `sendMail()`. Bcrypt se završava van transakcije, a tek neposredno pre
+DB granice meri se `issuedAt`, da sporo hashovanje ne skrati token TTL ili
+cooldown. Production kompozicija taj instant dobija iz validiranog PostgreSQL
+`clock_timestamp()`, ne iz sata Node procesa, pa početni TTL/cooldown/prozor i
+kasniji resend koriste isti autoritativni clock domen.
+
+`registerAccount()` u jednoj transakciji pravi:
+
+- `User` sa normalizovanim emailom, bcrypt hashom, imenima i opcionim telefonom;
+- početno verification throttle stanje;
+- `EmailVerification` sa jednočasovnim raw+hash compat credentialom.
+
+Ako verification insert zakaže, User insert se rollback-uje. Novi nalog dobija
+`verificationEmailNextAllowedAt = issuedAt + 60s`, početak fiksnog 24-časovnog
+prozora u `issuedAt` i brojač `1`, jer se initial verification email računa u
+maksimum od pet poruka tokom tog prozora.
+
+Concurrent unique-email P2002 nije automatski „existing”. Tek posle rollback-a
+radi se kanonski email lookup. Pronađeni nalog daje privatni existing ishod;
+unique token/hash kolizija bez tog naloga ostaje operativna greška. Tako
+ekstremno malo verovatna credential kolizija ne može biti pogrešno proglašena
+za duplikat korisnika.
+
+### XXI.2. Enumeration-safe registracioni odgovor i recovery
+
+Novo kreiran i postojeći email dobijaju byte-identical private HTTP 202, sa
+istim JSON telom i no-store/no-referrer/noindex zaglavljima. Poruka govori samo
+da će uputstvo biti poslato ako je registracija moguća; ne potvrđuje postojanje
+naloga, uspešan insert ili SMTP isporuku.
+
+Account-dependent persistence put dobija zajednički response floor od 900 ms i
+kriptografski slučajan jitter od 0 do 200 ms. Padding sužava praktičnu timing
+razliku između uspešnog INSERT-a i unique-conflict lookup-a, ali se dokumentuje
+isključivo kao defense-in-depth. Nije formalna constant-time garancija, shared
+abuse zaštita ili zamena za durable background red.
+
+Posle commita Next.js `after()` dobija callback. Za nov nalog callback predaje
+već pripremljenu poruku SMTP-u. Za existing ishod recovery prolazi kroz isti
+resend servis i njegova verified/cooldown/24h-quota pravila, umesto da
+registraciona ruta dobije drugi account-dependent odgovor. Sinhroni scheduler
+kvar posle uspešnog persistence-a i SMTP delivery greška ne menjaju već
+prihvaćeni 202; stage-only log ne sadrži email, ime, token ili raw exception.
+Eksplicitna resend stranica ostaje korisnički recovery put.
+
+### XXI.3. Stvarni verification resend sa DB throttle-om
+
+Dodata je korisnička `/verify-email/resend` stranica i
+`POST /api/auth/verify-email/resend`. Login, uspešna registraciona poruka i
+nevažeća/istekla confirmation stranica vode ka tom toku. UI jasno kaže da se
+između zahteva čeka najmanje jedan minut i da ranije primljen, još neistekao
+link ostaje važeći.
+
+Resend POST prvo proverava trusted same-origin, zatim account-independent IP
+limiter i tačan plain JSON objekat sa jednim `email` poljem. JSON media type je
+obavezan, encoded body se odbija, a deklarisani i stvarni streaming body imaju
+limit 1024 bajta. Za svaki validan
+email čiji je `after()` callback uspešno registrovan odmah vraća isti private
+202. Lookup naloga, verified stanje, cooldown, kvota, token i SMTP ne učestvuju
+u response putu. Nepostojeći, već verifikovan, cooling-down i quota-exhausted
+nalog privatno završavaju bez slanja. Malformed input, limiter i sinhroni
+scheduler kvar mogu vratiti 400/429/503 jer nastaju pre account lookup-a.
+
+Privatni pipeline radi sledeće:
+
+1. lookup normalizovanog emaila;
+2. no-op za odsutan ili već verifikovan nalog;
+3. centralno generisanje raw tokena i tačnog email-verification hash-a;
+4. priprema kanonskog URL-a, SMTP transporta i poruke pre DB mutacije;
+5. User-first transakcioni throttle/credential commit;
+6. SMTP poziv tek posle uspešnog commita.
+
+SMTP greška posle commita ostavlja novi token, cooldown i allowance broj.
+Udaljeni SMTP server je možda prihvatio poruku pre gubitka odgovora, pa bi
+automatsko brisanje eventualno isporučen link učinilo nevažećim. Log nosi samo
+kontrolisanu fazu.
+
+### XXI.4. User-first konkurentnost, fixed window i retained links
+
+Resend transakcija uzima `FOR UPDATE` lock nad tačnim `User` redom pre čitanja
+DB sata. Tek nakon dobijenog lock-a čita `clock_timestamp()`, pa lock-wait vreme
+ne može skratiti 60-sekundni cooldown ili jednočasovni token TTL. Zaključani red
+ponovo proverava očekivani email, `emailVerified`, cooldown i fixed-window
+stanje.
+
+Allowance je fiksni, ne sliding prozor:
+
+- novi nalog počinje sa brojačem `1`, jer initial poruka ulazi u kvotu;
+- u jednom 24-časovnom prozoru dozvoljeno je najviše pet ukupnih verification
+  poruka;
+- legacy red sa sva tri throttle polja `NULL` prvim resend-om otvara nov prozor
+  i dobija broj `1`;
+- istekli prozor se atomarno resetuje na novi početak i broj `1`;
+- aktivan cooldown ili broj `5` završavaju bez token mutacije ili SMTP-a.
+
+Uspešan resend briše samo tokene čiji je `expires <= issuedAt` i zatim dodaje
+novi jednočasovni compat raw+hash token. Svaki ranije poslat neistekli link
+namerno ostaje važeći, da nov zahtev ne poništi poruku koju korisnik upravo
+otvara. Uspešna verifikacija je cleanup granica koja briše sve sibling tokene.
+
+Verify commit je zato preuređen na isti `User → EmailVerification` lock
+redosled. Conditional User update claim-uje samo još neverifikovan nalog,
+postavlja `emailVerified` i čisti sva tri throttle polja. Tek zatim conditional
+token claim troši tačan, još važeći stored credential. Token conflict baca
+grešku unutar iste transakcije i rollback-uje User promenu. Verify-vs-resend
+trka tako može završiti ili potpunom verifikacijom bez tokena ili uspešnim
+resendom nad neverifikovanim nalogom, nikada parcijalnom kombinacijom.
+
+### XXI.5. Šema, migracija i DB smoke
+
+`User` dobija tri nullable/no-default kolone:
+
+- `verificationEmailNextAllowedAt DateTime?`;
+- `verificationEmailResendWindowStartedAt DateTime?`;
+- `verificationEmailResendCount Int?`.
+
+Migracija `20260830010000_expand_email_verification_cooldown` je kompatibilni
+expand bez `INSERT`, `UPDATE`, `DELETE`, defaulta, backfill-a ili dedicated
+indeksa. Equality pristup koristi već postojeći User ID. PostgreSQL nullable
+column add bez defaulta je metadata-only, ali `ALTER TABLE` ipak zahteva kratak
+`ACCESS EXCLUSIVE` lock, pa SQL koristi `search_path = pg_catalog, public`,
+`lock_timeout='10s'` i `statement_timeout='2min'`.
+
+DB invariant smoke proverava postojanje, nullability, tačne PostgreSQL tipove,
+milisekundnu preciznost timestamp polja, odsustvo defaulta i odsustvo
+jednokolonskih throttle indeksa. Migracija još nije primenjena na produkciju.
+Pre toga ostaju obavezni read-only audit, proverljiv backup/restore, staging
+proba, lock plan i pregled `prisma migrate status`/drift rezultata.
+
+### XXI.6. Auth email sadržaj i tačno jedan primalac
+
+Centralni auth template sloj sada escape-uje dinamičke HTML vrednosti: ime,
+naziv prodavnice, kontakt, logo/home URL i verification/reset URL. URL helperi
+i dalje strogo proveravaju kanonski storefront i raw credential. Auth primalac
+se Nodemailer-u prosleđuje kao tačno jedan `{ name: "", address }` objekat
+posle centralne normalizacije, pa caller input ne može postati display name,
+grupa ili comma-separated lista.
+
+Ovaj presek zatvara auth-email HTML/single-recipient nalaz. Ne tvrdi da su svi
+order, wishlist, contact, reklamacioni ili job template-i prošli isti audit,
+niti rešava MIME/magic-byte validaciju priloga.
+
+### XXI.7. Testovi, CI i granica dokaza
+
+Dodate su unit, route-contract i opt-in PostgreSQL provere za:
+
+- strogu email normalizaciju i Nodemailer expression odbijanja;
+- 72-byte UTF-8 bcrypt granicu;
+- escaping i odloženi single-recipient verification email;
+- atomic User+verification registration, unique-email race, rollback i
+  token/hash koliziju;
+- trusted-origin/body/password/response/scheduler registracioni ugovor;
+- application-level Content-Type/Encoding/Length i 4096/1024 B streaming body
+  limite za registration/resend;
+- 900+0–200 ms response padding;
+- resend immediate-202 i stage-only failure matricu;
+- cooldown, fixed-window kvotu, legacy null state i retained unexpired links;
+- dva resend radnika, DB-clock-after-lock, verify-vs-resend i rollback trke.
+
+Workflow uključuje `RUN_REGISTRATION_DB_TESTS=true` i
+`RUN_EMAIL_VERIFICATION_RESEND_DB_TESTS=true` uz izolovani PostgreSQL 16 servis.
+Tačni završni lokalni brojevi, build broj ruta, feature/PR/merge SHA i exact-head
+i post-merge runovi ne navode se unapred: `PENDING_FINAL_EVIDENCE`.
+
+### XXI.8. Šta ostaje pre live-a
+
+Atomska registracija i resend u kodu ne znače da je auth ili produkcija
+završena. Pre live-a ostaju najmanje:
+
+1. read-only audit postojećeg produkcionog `emailVerified` stanja;
+2. kontrolisani backfill i recovery smoke, pa tek onda verified-login
+   enforcement;
+3. shared Redis/DB limiter i eksplicitan trusted-proxy/client-IP ugovor umesto
+   procesnog LRU-a i sirovog `x-forwarded-for` identiteta;
+4. reverse-proxy body/rate/timeout granice; završeni application streaming
+   limiti ne sprečavaju upstream bandwidth/connection iscrpljivanje;
+5. transactional auth-email outbox, durable worker, retry/deduplikacija,
+   monitoring i shutdown/redeploy dokaz, jer Next.js `after()` nije durable;
+6. audit/backup/restore i kontrolisana primena auth-token i cooldown expand
+   migracija;
+7. hash-only write, najduži TTL + grace, dokaz nula legacy fallbacka i contract
+   uklanjanje plaintext tokena/indeksa;
+8. session revocation posle promene lozinke i sveža role provera;
+9. staging/runtime SMTP delivery, bounce i recovery smoke;
+10. preostali non-auth email template i MIME/magic-byte hardening;
+11. dependencies, legalni podaci, domen/HTTPS/proxy, operativni monitoring i
+    ostali rollout gate-ovi.
+
+GitHub `production` Environment, required reviewer, secrets/variables, release
+tag, produkcijska baza/server i live aktivacija ostaju netaknuti. Poseban
+main-push workflow koji objavljuje novu javnu verziju sajta ostaje poslednji
+korak, u skladu sa eksplicitnim korisničkim redosledom.
