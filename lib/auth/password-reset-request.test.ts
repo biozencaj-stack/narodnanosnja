@@ -17,6 +17,7 @@ const USER = {
   firstName: "Kupac",
 };
 const TOKEN = "a".repeat(64);
+const TOKEN_HASH = `v1:${"b".repeat(64)}`;
 const NOW = new Date("2026-08-30T10:30:00.000Z");
 const ACCEPTED_RESPONSE = {
   status: 202,
@@ -45,12 +46,16 @@ function createHarness(): Harness {
       calls.push("generate-token");
       return TOKEN;
     },
+    hashToken(token) {
+      calls.push("hash-token");
+      return token === TOKEN ? TOKEN_HASH : null;
+    },
     now() {
       return NOW;
     },
     async replaceTokensForRequest(input) {
       calls.push(
-        `replace:${input.userId}:${input.token}:${input.expires.toISOString()}`,
+        `replace:${input.userId}:${input.legacyPlaintextToken}:${input.tokenHash}:${input.expires.toISOString()}`,
       );
     },
     async sendResetEmail(email, firstName, token) {
@@ -98,7 +103,8 @@ test("successful private reset work replaces the token before SMTP", async () =>
   assert.deepEqual(harness.calls, [
     `lookup:${USER.email}`,
     "generate-token",
-    `replace:${USER.id}:${TOKEN}:${new Date(
+    "hash-token",
+    `replace:${USER.id}:${TOKEN}:${TOKEN_HASH}:${new Date(
       NOW.getTime() + PASSWORD_RESET_TOKEN_LIFETIME_MS,
     ).toISOString()}`,
     `send:${USER.email}:${USER.firstName}:${TOKEN}`,
@@ -119,6 +125,18 @@ test("SMTP failure is stage-only and keeps the possibly delivered token valid", 
   assert.equal(JSON.stringify(harness.failures).includes(TOKEN), false);
   assert.equal(JSON.stringify(harness.failures).includes(privateFailure), false);
   assert.ok(harness.calls.some((call) => call.startsWith("replace:")));
+});
+
+test("invalid generated credential stops before persistence and delivery", async () => {
+  const harness = createHarness();
+  harness.dependencies.generateToken = () => "not-a-token";
+  harness.dependencies.hashToken = () => null;
+
+  await processPasswordResetRequest(USER.email, harness.dependencies);
+
+  assert.deepEqual(harness.failures, [{ stage: "TOKEN_REPLACEMENT" }]);
+  assert.equal(harness.calls.some((call) => call.startsWith("replace:")), false);
+  assert.equal(harness.calls.some((call) => call.startsWith("send:")), false);
 });
 
 test("lookup and token failures stop safely before downstream work", async () => {

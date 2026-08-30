@@ -250,9 +250,12 @@ odbijena bez izdavanja sesije i bez potrošnje tokena; ista ili odsutna sesija
 sme da nastavi.
 
 Uspešan redosled ostaje: session encode → potpuno pripremljen `303` odgovor sa
-24-časovnim centralno imenovanim cookie-jem → atomski conditional token claim,
-`emailVerified` upis i brisanje sibling tokena. Prepared odgovor se vraća tek
-posle uspešnog commita. Conflict ili bilo koja kasnija greška ne smeju poslati
+24-časovnim centralno imenovanim cookie-jem → ponovno merenje expiry-ja →
+atomski conditional token claim, `emailVerified` upis i brisanje sibling
+tokena. Late expiry posle session/response pripreme mora ostati read-only i ne
+sme poslati pripremljeni cookie. Prepared odgovor se vraća tek posle uspešnog
+commita. Legacy conditional claim mora pored tačnog tokena zahtevati i
+`tokenHash: null`. Conflict ili bilo koja kasnija greška ne smeju poslati
 prepared cookie; neuspeh ostaje retryable ili invalid-token ishod sa stage-only
 logom. Tako se magic-login dobija tek posle eksplicitnog klika, nikada samim
 otvaranjem email URL-a.
@@ -266,8 +269,47 @@ isključi i Google Analytics i globalni reCAPTCHA provider na
 newsletter odjava page/API granice koriste ista privacy zaglavlja. GA događaji
 na dozvoljenim stranicama smeju da šalju samo origin + pathname, bez query-ja
 ili hash-a u `page_location`. Ovo smanjuje browser, cache, crawler i analytics
-curenje, ali ne uklanja prvi URL iz reverse-proxy/access logova; dok tokeni ne
-budu hashovani, URL i DB vrednost su i dalje poverljivi podaci.
+curenje, ali ne uklanja prvi URL iz reverse-proxy/access logova; dok se ne
+završe hash-only write, TTL+grace i contract faze, URL i compat plaintext DB
+vrednost su i dalje poverljivi podaci.
+
+Jednokratni auth credentiali sada imaju centralni storage ugovor u
+`lib/auth/credential-token.ts`. Javni/email oblik je tačno 32 nasumična bajta,
+odnosno 64 lowercase hex znaka. Storage lookup je verzionisan kao
+`v1:<sha256>` i obavezno purpose-separated za `email-verification` i
+`password-reset`, tako da isti raw token ne daje isti hash u dva toka. Parser
+ne radi `trim()` niti coercion. Lookup u compat fazi uvek prvo koristi
+`tokenHash`; plaintext fallback je dozvoljen tek posle hash promašaja i samo za
+red čiji je `tokenHash IS NULL`. Red koji već ima bilo kakvu vrednost u
+`tokenHash` koloni nikada ne sme da se vrati na plaintext kopiju.
+
+Migracija `20260830000000_expand_hashed_auth_tokens` je samo expand/compat
+korak. Dodaje nullable unique `tokenHash` u `PasswordReset` i
+`EmailVerification`, čini postojeći `token` nullable i uvodi unique
+`PasswordReset.userId`. Plaintext kolone i indeksi namerno ostaju, a trenutni
+request/register upisi još dual-write-uju raw token i hash radi rollback
+kompatibilnosti. Migracija koristi hardened
+`search_path = pg_catalog, public`, `lock_timeout=10s` i
+`statement_timeout=2min`, pre izmene šeme zaključava `PasswordReset` i
+fail-closed odbija zatečene duplikate po `userId`; ne bira pobednika, ne briše
+redove i nema drugi DML. DB smoke za svih sedam auth indeksa proverava valid/
+ready stanje, tačnu tabelu, jednu tačnu kolonu, unique oblik i odsustvo partial/
+expression zamene. Pre produkcionog izvršavanja obavezni su read-only audit,
+backup i eksplicitno razrešenje svakog duplikata. Produkciona baza nije čitana
+i ova migracija nije lokalno primenjena tokom implementacije.
+
+`statement_timeout` je limit po naredbi, a DDL lockovi ostaju do `COMMIT`-a.
+Ako Prisma evidentira ovu migraciju kao failed posle preflight-a ili timeout-a,
+ne ponavljaj deploy naslepo: prvo potvrdi rollback i otkloni uzrok, zatim
+kontrolisano izvrši
+`prisma migrate resolve --rolled-back 20260830000000_expand_hashed_auth_tokens`.
+`resolve` ne sme da prikrije neprovereno ili delimično DB stanje.
+
+Ovo još **nije završni hash-only contract**. Posle compat runtime dokaza novi
+upisi moraju preći na hash-only, zatim se čeka najmanje najduži token TTL plus
+dogovoreni grace period, proverava da nema legacy čitanja, i tek posebna
+contract migracija uklanja plaintext kolone/indekse. Ne preskači taj redosled i
+ne predstavljaj dual-write kao zaštitu credentiala od DB čitaoca.
 
 Ovo pravilo još ne znači da login sme globalno da odbije svaki nalog sa
 `emailVerified = NULL`. Pre verified-login enforcementa potrebni su audit i
@@ -287,16 +329,32 @@ i ne zavise od postojanja naloga.
 
 Logovi ovog toka smeju da sadrže samo kontrolisanu fazu (`LOOKUP`,
 `TOKEN_REPLACEMENT`, `DELIVERY`, `SCHEDULING` ili `BACKGROUND`). Ne logovati
-email, token ili originalnu DB/SMTP grešku. Brisanje ranijih i kreiranje novog
-tokena ostaju jedna DB transakcija. SMTP greška ne sme automatski obrisati novi
-token, jer poruka može biti prihvaćena pre gubitka SMTP odgovora i korisnik bi
-dobio već poništen link.
+email, token ili originalnu DB/SMTP grešku. Posle compat expand migracije
+zamena reset credentiala koristi `upsert` preko unique `PasswordReset.userId`,
+pa svaki korisnik ima najviše jedan aktivan reset red i paralelni requesti ne
+ostavljaju sibling tokene. Upis je privremeni dual-write raw tokena i njegovog
+purpose-separated hash-a. SMTP greška ne sme automatski obrisati novi token,
+jer poruka može biti prihvaćena pre gubitka SMTP odgovora i korisnik bi dobio
+već poništen link.
 
-`after()` je lifecycle pomoć, ne durable delivery queue. Trenutna transakcija
-je atomska za jedan zahtev, ali bez unique/CAS/Serializable zaštite ne garantuje
-jedan token pod paralelnim zahtevima. Pre produkcije još su potrebni
-transactional outbox i runtime smoke, shared limiter i trusted-proxy client IP,
-hashovani tokeni, exactly-once reset confirm i PostgreSQL concurrency test.
+`POST /api/auth/reset-password/confirm` ima sopstveni trusted same-origin guard
+pre body/config/DB rada, rate limit, postojeću password politiku i eksplicitnu
+bcrypt granicu od najviše 72 UTF-8 bajta. Ruta radi hash-first lookup, a legacy
+lookup samo sa `tokenHash: null`; posle bcrypt-a i pripreme kompletnog privatnog
+success odgovora ponovo meri vreme isteka. Tek potom jedna transakcija
+conditional `deleteMany` claim-om vezuje `id`, `userId`, tačan stored
+credential i `expires > resetAt`, menja password hash i briše sve reset
+siblinge. Conflict daje generičan invalid ishod bez pripremljenog success-a;
+operativni kvar daje generičan 503 i samo stage-only log. Real-PostgreSQL test
+sa dva radnika mora imati tačno jednog pobednika, a rollback posle neuspelog
+password update-a mora ostaviti isti credential retryable.
+
+`after()` je lifecycle pomoć, ne durable delivery queue. Unique reset red i
+exactly-once confirm zatvaraju DB konkurentnost tek kada expand migracija bude
+bezbedno primenjena; ne rešavaju gubitak background posla posle već vraćenog
+202. Pre produkcije još su potrebni transactional outbox i runtime smoke,
+shared limiter i trusted-proxy client IP, kao i završni hash-only/grace/contract
+prelaz. Session revocation posle promene lozinke ostaje poseban P1.
 
 ## SMTP i slanje emaila (v2)
 
@@ -389,8 +447,13 @@ Release tag se ne pravi tokom običnog razvoja; live puštanje je poslednji kora
 - [ ] REVIEW reconciliation, refund tok i email outbox
 - [ ] Transactional auth-email outbox i runtime dokaz da `after()` posao nije
       izgubljen pri shutdown/redeploy granici
-- [ ] Hashovani verification/reset tokeni, exactly-once reset confirm i
-      concurrency-safe jedan aktivni reset token po korisniku
+- [ ] Završni hash-only auth-token rollout: primeniti pregledani compat expand,
+      prebaciti nove upise sa dual-write na hash-only, sačekati najduži TTL +
+      grace, dokazati nula legacy čitanja i tek contract migracijom ukloniti
+      plaintext kolone/indekse
+- [ ] Pre primene auth-token expand migracije uraditi read-only audit i backup;
+      svaki duplicate `PasswordReset.userId` eksplicitno razrešiti jer migracija
+      namerno radi fail-closed bez automatskog DML-a
 - [ ] Atomska registracija, stvarni verification resend/cooldown i kontrolisani
       `emailVerified` login rollout sa auditom/backfill-om
 - [ ] Session revocation posle resetovanja lozinke i sveža role provera
@@ -402,4 +465,7 @@ Release tag se ne pravi tokom običnog razvoja; live puštanje je poslednji kora
 migracije su podrazumevano isključene i zahtevaju
 `APPLY_DATABASE_MIGRATIONS=true`. Za v2 prvo pratiti
 `docs/V2-ROLL-OUT.md`; ne spajati/deployovati ovu granu na postojeću bazu pre
-baseline probe i eksplicitne expand migracije.
+baseline probe i eksplicitne expand migracije. Nova auth-token compat migracija
+posebno zahteva proveru duplikata `PasswordReset.userId`; njen exception je
+operativna zaštita, ne dozvola da se problem zaobiđe ručnim brisanjem bez
+audita i backup-a. Release tag, server i live aktivacija ostaju poslednji korak.

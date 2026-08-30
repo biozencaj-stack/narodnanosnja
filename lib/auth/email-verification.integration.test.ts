@@ -88,7 +88,11 @@ test(
     assertSafeTestDatabase();
 
     const { prisma } = await import("@/lib/db");
-    const { commitEmailVerification } = await import("./email-verification");
+    const {
+      commitEmailVerification,
+      createStoredEmailVerificationClaim,
+    } = await import("./email-verification");
+    const { hashCredentialToken } = await import("./credential-token");
     const { createEmailVerificationRouteHandlers } = await import(
       "./email-verification-route"
     );
@@ -97,6 +101,16 @@ test(
     const email = `auth-verification-${runId}@example.invalid`;
     const primaryToken = randomBytes(32).toString("hex");
     const siblingToken = randomBytes(32).toString("hex");
+    const primaryTokenHash = hashCredentialToken(
+      "email-verification",
+      primaryToken,
+    );
+    const siblingTokenHash = hashCredentialToken(
+      "email-verification",
+      siblingToken,
+    );
+    assert.ok(primaryTokenHash);
+    assert.ok(siblingTokenHash);
     const verifiedAt = new Date();
 
     const user = await prisma.user.create({
@@ -120,6 +134,7 @@ test(
       data: {
         userId: user.id,
         token: primaryToken,
+        tokenHash: primaryTokenHash,
         expires: new Date(verifiedAt.getTime() + 60_000),
       },
     });
@@ -127,6 +142,7 @@ test(
       data: {
         userId: user.id,
         token: siblingToken,
+        tokenHash: siblingTokenHash,
         expires: new Date(verifiedAt.getTime() + 60_000),
       },
     });
@@ -178,8 +194,10 @@ test(
       },
       async findVerification(token: string) {
         lookupCount += 1;
+        const tokenHash = hashCredentialToken("email-verification", token);
+        assert.ok(tokenHash);
         const verification = await prisma.emailVerification.findUnique({
-          where: { token },
+          where: { tokenHash },
         });
         if (verification) lookedUpTokenIds.push(verification.id);
         return verification;
@@ -202,8 +220,11 @@ test(
         });
         return response;
       },
-      async commitVerification(claim, claimVerifiedAt) {
+      async commitVerification(claimVerifiedAt, verification) {
         commitAttempts += 1;
+        const claim = createStoredEmailVerificationClaim(verification);
+        assert.ok(claim);
+        assert.equal(claim.credential.kind, "hash");
         await commitEmailVerification(
           withTransactionBarrier(prisma, waitForBothWorkers),
           claim,

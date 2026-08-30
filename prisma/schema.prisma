@@ -58,21 +58,22 @@ model Session {
 
 model PasswordReset {
   id        String   @id @default(cuid())
-  userId    String
+  userId    String   @unique
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  token     String   @unique
+  token     String?  @unique
+  tokenHash String?  @unique
   expires   DateTime
   createdAt DateTime @default(now())
 
   @@index([token])
-  @@index([userId])
 }
 
 model EmailVerification {
   id        String   @id @default(cuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  token     String   @unique
+  token     String?  @unique
+  tokenHash String?  @unique
   expires   DateTime
   createdAt DateTime @default(now())
 

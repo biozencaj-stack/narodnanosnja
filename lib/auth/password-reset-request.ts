@@ -27,13 +27,17 @@ export interface PasswordResetUser {
 
 export interface PasswordResetTokenInput {
   userId: string;
-  token: string;
+  /** Temporary rollback-compatible plaintext copy; remove after the grace window. */
+  legacyPlaintextToken: string;
+  /** Preferred, versioned lookup value used by current application code. */
+  tokenHash: string;
   expires: Date;
 }
 
 export interface PasswordResetRequestDependencies {
   findUserByEmail: (email: string) => Promise<PasswordResetUser | null>;
   generateToken: () => string;
+  hashToken: (token: string) => string | null;
   now: () => Date;
   replaceTokensForRequest: (input: PasswordResetTokenInput) => Promise<void>;
   sendResetEmail: (
@@ -149,16 +153,16 @@ export async function processPasswordResetRequest(
 
   try {
     token = dependencies.generateToken();
-    if (token.length < 32) {
-      throw new Error("Password reset token generator returned a short token");
-    }
+    const tokenHash = dependencies.hashToken(token);
+    if (!tokenHash) throw new Error("Password reset credential is invalid");
 
     const expires = new Date(
       dependencies.now().getTime() + PASSWORD_RESET_TOKEN_LIFETIME_MS,
     );
     await dependencies.replaceTokensForRequest({
       userId: user.id,
-      token,
+      legacyPlaintextToken: token,
+      tokenHash,
       expires,
     });
   } catch {
