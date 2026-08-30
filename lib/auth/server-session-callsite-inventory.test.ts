@@ -79,11 +79,14 @@ const EXPECTED_LEGACY_CONSUMER_CALLS = Object.freeze({
   "app/api/user/addresses/[id]/default/route.ts": 1,
   "app/api/user/addresses/[id]/route.ts": 1,
   "app/api/user/addresses/route.ts": 2,
-  "app/api/user/checkout-data/route.ts": 1,
   "app/api/user/password/route.ts": 1,
   "app/api/user/profile/route.ts": 2,
   "app/api/wishlist/route.ts": 3,
   "lib/checkout/order-handler.ts": 1,
+} as const);
+
+const EXPECTED_NEUTRAL_SESSION_CONSUMER_CALLS = Object.freeze({
+  "app/api/user/checkout-data/route.ts": 1,
 } as const);
 
 const EXPECTED_SERVER_SESSION_WIRING = Object.freeze({
@@ -95,6 +98,9 @@ const EXPECTED_GET_TOKEN_CALLS = Object.freeze({
   "proxy.ts": 1,
 } as const);
 
+const CHECKOUT_DATA_ROUTE = "app/api/user/checkout-data/route.ts";
+const CHECKOUT_DATA_FACTORY_MODULE =
+  "@/lib/checkout/checkout-data-route";
 const NEXTAUTH_HANDLER = "app/api/auth/[...nextauth]/route.ts";
 const RAW_SERVER_SESSION_NAMES = [
   "getServerSession",
@@ -133,6 +139,8 @@ interface FileInventory {
   getServerSessionImports: number;
   getTokenCalls: number;
   getTokenImports: number;
+  resolveServerSessionCalls: number;
+  resolveServerSessionImports: number;
 }
 
 function isProductionSource(relativePath: string): boolean {
@@ -257,6 +265,28 @@ function isAuthOptionsModule(
     path.posix.join(path.posix.dirname(importerRelativePath), moduleName),
   );
   return /^lib\/auth(?:\/index)?(?:\.[cm]?[jt]sx?)?$/.test(
+    resolvedModuleName,
+  );
+}
+
+function isServerSessionFacadeModule(
+  moduleName: string,
+  importerRelativePath: string,
+): boolean {
+  const normalizedModuleName = normalizeModuleName(moduleName);
+  if (
+    /^@\/lib\/auth\/server-session(?:\.[cm]?[jt]sx?)?$/.test(
+      normalizedModuleName,
+    )
+  ) {
+    return true;
+  }
+  if (!normalizedModuleName.startsWith(".")) return false;
+
+  const resolvedModuleName = normalizeModuleName(
+    path.posix.join(path.posix.dirname(importerRelativePath), moduleName),
+  );
+  return /^lib\/auth\/server-session(?:\.[cm]?[jt]sx?)?$/.test(
     resolvedModuleName,
   );
 }
@@ -403,6 +433,107 @@ function isDirectCallReference(node: ts.Identifier): boolean {
   return ts.isCallExpression(node.parent) && node.parent.expression === node;
 }
 
+function isExportedCheckoutDataGetFactoryCall(
+  factoryCall: ts.CallExpression,
+  relativePath: string,
+  factoryBinding: ImportedBinding | null,
+): boolean {
+  if (relativePath !== CHECKOUT_DATA_ROUTE || !factoryBinding) return false;
+  if (
+    factoryCall.arguments.length !== 1 ||
+    !ts.isIdentifier(factoryCall.expression) ||
+    factoryCall.expression.text !== factoryBinding.localName
+  ) {
+    return false;
+  }
+  const dependencies = factoryCall.arguments[0];
+  if (
+    !ts.isObjectLiteralExpression(dependencies) ||
+    dependencies.properties.length !== 3 ||
+    dependencies.properties.some(
+      (property) =>
+        !ts.isPropertyAssignment(property) ||
+        !ts.isIdentifier(property.name),
+    )
+  ) {
+    return false;
+  }
+  const dependencyNames = new Set(
+    dependencies.properties.map((property) =>
+      (property as ts.PropertyAssignment).name.getText(),
+    ),
+  );
+  if (
+    dependencyNames.size !== 3 ||
+    !dependencyNames.has("resolveSession") ||
+    !dependencyNames.has("findUserById") ||
+    !dependencyNames.has("reportFailure")
+  ) {
+    return false;
+  }
+  const declaration = factoryCall.parent;
+  if (
+    !ts.isVariableDeclaration(declaration) ||
+    declaration.initializer !== factoryCall ||
+    !ts.isIdentifier(declaration.name) ||
+    declaration.name.text !== "GET"
+  ) {
+    return false;
+  }
+  const declarationList = declaration.parent;
+  if (
+    !ts.isVariableDeclarationList(declarationList) ||
+    declarationList.declarations.length !== 1 ||
+    !(declarationList.flags & ts.NodeFlags.Const)
+  ) {
+    return false;
+  }
+  const statement = declarationList.parent;
+  return (
+    ts.isVariableStatement(statement) &&
+    statement.modifiers?.some(
+      (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
+    ) === true
+  );
+}
+
+function isApprovedNeutralSessionConsumerCall(
+  call: ts.CallExpression,
+  relativePath: string,
+  factoryBinding: ImportedBinding | null,
+): boolean {
+  if (relativePath !== CHECKOUT_DATA_ROUTE) return false;
+  const resolver = call.parent;
+  if (
+    !ts.isArrowFunction(resolver) ||
+    resolver.parameters.length !== 0 ||
+    resolver.body !== call
+  ) {
+    return false;
+  }
+  const dependency = resolver.parent;
+  if (
+    !ts.isPropertyAssignment(dependency) ||
+    !ts.isIdentifier(dependency.name) ||
+    dependency.name.text !== "resolveSession" ||
+    dependency.initializer !== resolver
+  ) {
+    return false;
+  }
+  const dependencies = dependency.parent;
+  if (!ts.isObjectLiteralExpression(dependencies)) return false;
+  const factoryCall = dependencies.parent;
+  return (
+    ts.isCallExpression(factoryCall) &&
+    factoryCall.arguments[0] === dependencies &&
+    isExportedCheckoutDataGetFactoryCall(
+      factoryCall,
+      relativePath,
+      factoryBinding,
+    )
+  );
+}
+
 function inspectFile(
   relativePath: string,
   violations: string[],
@@ -425,10 +556,15 @@ function inspectFile(
     getServerSessionImports: 0,
     getTokenCalls: 0,
     getTokenImports: 0,
+    resolveServerSessionCalls: 0,
+    resolveServerSessionImports: 0,
   };
   let authOptionsBinding: ImportedBinding | null = null;
   let serverSessionBinding: ImportedBinding | null = null;
   let getTokenBinding: ImportedBinding | null = null;
+  let resolveServerSessionBinding: ImportedBinding | null = null;
+  let checkoutDataFactoryBinding: ImportedBinding | null = null;
+  let checkoutDataFactoryCalls = 0;
   let nextAuthHandlerBinding: ts.Identifier | null = null;
   let facadeAuthOptionsBinding: ts.Identifier | null = null;
   let facadeAuthOptionsReferences = 0;
@@ -454,6 +590,16 @@ function inspectFile(
         violations.push(
           `${location(sourceFile, relativePath, statement)} namespace authOptions import nije dozvoljen`,
         );
+      }
+      if (isServerSessionFacadeModule(moduleName, relativePath)) {
+        if (
+          statement.importClause?.name ||
+          (bindings && ts.isNamespaceImport(bindings))
+        ) {
+          violations.push(
+            `${location(sourceFile, relativePath, statement)} default/namespace server-session facade import nije dozvoljen`,
+          );
+        }
       }
       if (
         isRawNextAuthDefaultModule(moduleName) &&
@@ -550,6 +696,47 @@ function inspectFile(
           authOptionsBinding = rawAuthOptions[0];
         }
       }
+
+      const neutralSessionResolvers = namedImportBindings(
+        statement,
+        "resolveServerSession",
+      );
+      if (neutralSessionResolvers.length > 0) {
+        inventory.resolveServerSessionImports +=
+          neutralSessionResolvers.length;
+        if (
+          moduleName !== "@/lib/auth/server-session" ||
+          resolveServerSessionBinding ||
+          neutralSessionResolvers.length !== 1
+        ) {
+          violations.push(
+            `${location(sourceFile, relativePath, statement)} nekanonski ili dupli resolveServerSession import`,
+          );
+        } else {
+          resolveServerSessionBinding = neutralSessionResolvers[0];
+        }
+      }
+
+      const checkoutDataFactories = namedImportBindings(
+        statement,
+        "createCheckoutDataGetHandler",
+      );
+      if (checkoutDataFactories.length > 0) {
+        if (
+          relativePath !== CHECKOUT_DATA_ROUTE ||
+          moduleName !== CHECKOUT_DATA_FACTORY_MODULE ||
+          checkoutDataFactoryBinding ||
+          checkoutDataFactories.length !== 1 ||
+          checkoutDataFactories[0].localName !==
+            "createCheckoutDataGetHandler"
+        ) {
+          violations.push(
+            `${location(sourceFile, relativePath, statement)} nekanonski ili dupli checkout-data factory import`,
+          );
+        } else {
+          checkoutDataFactoryBinding = checkoutDataFactories[0];
+        }
+      }
     }
 
     if (
@@ -562,6 +749,10 @@ function inspectFile(
           statement.moduleReference.expression.text,
         ) ||
         isProcessBuiltinModule(statement.moduleReference.expression.text) ||
+        isServerSessionFacadeModule(
+          statement.moduleReference.expression.text,
+          relativePath,
+        ) ||
         isAuthOptionsModule(
           statement.moduleReference.expression.text,
           relativePath,
@@ -569,6 +760,35 @@ function inspectFile(
     ) {
       violations.push(
         `${location(sourceFile, relativePath, statement)} import-equals credential put nije dozvoljen`,
+      );
+    }
+
+    if (
+      ts.isExportDeclaration(statement) &&
+      statement.exportClause &&
+      ts.isNamedExports(statement.exportClause) &&
+      statement.exportClause.elements.some(
+        (element) =>
+          (element.propertyName ?? element.name).text ===
+          "resolveServerSession",
+      )
+    ) {
+      violations.push(
+        `${location(sourceFile, relativePath, statement)} resolveServerSession re-export nije dozvoljen`,
+      );
+    }
+    if (
+      ts.isExportDeclaration(statement) &&
+      statement.moduleSpecifier &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      isServerSessionFacadeModule(
+        statement.moduleSpecifier.text,
+        relativePath,
+      ) &&
+      (!statement.exportClause || ts.isNamespaceExport(statement.exportClause))
+    ) {
+      violations.push(
+        `${location(sourceFile, relativePath, statement)} server-session facade namespace/star re-export nije dozvoljen`,
       );
     }
 
@@ -659,6 +879,7 @@ function inspectFile(
           (isNextAuthModule(moduleName) ||
             isCommonJsFactoryModule(moduleName) ||
             isProcessBuiltinModule(moduleName) ||
+            isServerSessionFacadeModule(moduleName, relativePath) ||
             (isAuthOptionsModule(moduleName, relativePath) &&
               !(
                 relativePath === "lib/auth/server-session.ts" &&
@@ -690,6 +911,7 @@ function inspectFile(
           isNextAuthModule(moduleName) ||
           isCommonJsFactoryModule(moduleName) ||
           isProcessBuiltinModule(moduleName) ||
+          isServerSessionFacadeModule(moduleName, relativePath) ||
           isAuthOptionsModule(moduleName, relativePath)
         ) {
           violations.push(
@@ -707,6 +929,7 @@ function inspectFile(
             (isNextAuthModule(moduleName) ||
               isCommonJsFactoryModule(moduleName) ||
               isProcessBuiltinModule(moduleName) ||
+              isServerSessionFacadeModule(moduleName, relativePath) ||
               isAuthOptionsModule(moduleName, relativePath))
           );
         })
@@ -741,6 +964,45 @@ function inspectFile(
         if (calledName === "unstable_getServerSession") {
           violations.push(
             `${location(sourceFile, relativePath, node)} unstable_getServerSession nije dozvoljen`,
+          );
+        }
+
+        if (resolveServerSessionBinding?.localName === calledName) {
+          inventory.resolveServerSessionCalls += 1;
+          if (
+            node.arguments.length !== 0 ||
+            !isApprovedNeutralSessionConsumerCall(
+              node,
+              relativePath,
+              checkoutDataFactoryBinding,
+            )
+          ) {
+            violations.push(
+              `${location(sourceFile, relativePath, node)} neodobren request-lazy resolveServerSession wiring`,
+            );
+          }
+        } else if (calledName === "resolveServerSession") {
+          violations.push(
+            `${location(sourceFile, relativePath, node)} nepoznat resolveServerSession binding`,
+          );
+        }
+
+        if (checkoutDataFactoryBinding?.localName === calledName) {
+          checkoutDataFactoryCalls += 1;
+          if (
+            !isExportedCheckoutDataGetFactoryCall(
+              node,
+              relativePath,
+              checkoutDataFactoryBinding,
+            )
+          ) {
+            violations.push(
+              `${location(sourceFile, relativePath, node)} checkout-data factory poziv mora biti tačno export const GET composition`,
+            );
+          }
+        } else if (calledName === "createCheckoutDataGetHandler") {
+          violations.push(
+            `${location(sourceFile, relativePath, node)} nepoznat checkout-data factory binding`,
           );
         }
 
@@ -794,6 +1056,14 @@ function inspectFile(
     }
     if (
       ts.isPropertyAccessExpression(node) &&
+      node.name.text === "resolveServerSession"
+    ) {
+      violations.push(
+        `${location(sourceFile, relativePath, node)} namespace/property resolveServerSession pristup nije dozvoljen`,
+      );
+    }
+    if (
+      ts.isPropertyAccessExpression(node) &&
       node.name.text === COMMONJS_FACTORY_MEMBER
     ) {
       violations.push(
@@ -826,6 +1096,14 @@ function inspectFile(
     ) {
       violations.push(
         `${location(sourceFile, relativePath, node)} computed session pristup nije dozvoljen`,
+      );
+    }
+    if (
+      ts.isElementAccessExpression(node) &&
+      readStaticString(node.argumentExpression) === "resolveServerSession"
+    ) {
+      violations.push(
+        `${location(sourceFile, relativePath, node)} computed resolveServerSession pristup nije dozvoljen`,
       );
     }
     if (
@@ -884,6 +1162,15 @@ function inspectFile(
     ) {
       violations.push(
         `${location(sourceFile, relativePath, node)} destructured raw session credential nije dozvoljen`,
+      );
+    }
+    if (
+      ts.isBindingElement(node) &&
+      readStaticPropertyName(node.propertyName ?? node.name) ===
+        "resolveServerSession"
+    ) {
+      violations.push(
+        `${location(sourceFile, relativePath, node)} destructured resolveServerSession nije dozvoljen`,
       );
     }
     if (
@@ -952,6 +1239,26 @@ function inspectFile(
         );
       }
       if (
+        resolveServerSessionBinding &&
+        node.text === resolveServerSessionBinding.localName &&
+        node !== resolveServerSessionBinding.declaration &&
+        !isDirectCallReference(node)
+      ) {
+        violations.push(
+          `${location(sourceFile, relativePath, node)} resolveServerSession binding ne sme da se prosleđuje ili aliasuje`,
+        );
+      }
+      if (
+        checkoutDataFactoryBinding &&
+        node.text === checkoutDataFactoryBinding.localName &&
+        node !== checkoutDataFactoryBinding.declaration &&
+        !isDirectCallReference(node)
+      ) {
+        violations.push(
+          `${location(sourceFile, relativePath, node)} checkout-data factory binding ne sme da se prosleđuje ili aliasuje`,
+        );
+      }
+      if (
         nextAuthHandlerBinding &&
         node.text === nextAuthHandlerBinding.text &&
         node !== nextAuthHandlerBinding &&
@@ -1001,6 +1308,14 @@ function inspectFile(
       `${relativePath}: facade mora imati jedan const authOptions binding i jedan direktan read`,
     );
   }
+  if (
+    relativePath === CHECKOUT_DATA_ROUTE &&
+    (!checkoutDataFactoryBinding || checkoutDataFactoryCalls !== 1)
+  ) {
+    violations.push(
+      `${relativePath}: mora imati jedan kanonski checkout-data factory import i jedan export const GET poziv`,
+    );
+  }
   return inventory;
 }
 
@@ -1024,6 +1339,8 @@ test("legacy session reads remain on the exact shrinking transitional allowlist"
   const getTokenImports: CountMap = {};
   const authOptionsImports: CountMap = {};
   const authOptionsReferences: CountMap = {};
+  const neutralSessionCalls: CountMap = {};
+  const neutralSessionImports: CountMap = {};
 
   for (const relativePath of collectProductionSourceFiles()) {
     const inventory = inspectFile(relativePath, violations);
@@ -1036,6 +1353,16 @@ test("legacy session reads remain on the exact shrinking transitional allowlist"
     increment(getTokenCalls, relativePath, inventory.getTokenCalls);
     increment(getTokenImports, relativePath, inventory.getTokenImports);
     increment(authOptionsImports, relativePath, inventory.authOptionsImports);
+    increment(
+      neutralSessionCalls,
+      relativePath,
+      inventory.resolveServerSessionCalls,
+    );
+    increment(
+      neutralSessionImports,
+      relativePath,
+      inventory.resolveServerSessionImports,
+    );
     increment(
       authOptionsReferences,
       relativePath,
@@ -1083,11 +1410,21 @@ test("legacy session reads remain on the exact shrinking transitional allowlist"
     sortedRecord(authOptionsReferences),
     expectedAuthOptionsReferences,
   );
+  assert.deepEqual(
+    sortedRecord(neutralSessionCalls),
+    EXPECTED_NEUTRAL_SESSION_CONSUMER_CALLS,
+  );
+  assert.deepEqual(
+    sortedRecord(neutralSessionImports),
+    EXPECTED_NEUTRAL_SESSION_CONSUMER_CALLS,
+  );
 
-  assert.equal(Object.keys(expectedConsumerCalls).length, 54);
-  assert.equal(sum(expectedConsumerCalls), 97);
-  assert.equal(Object.keys(sortedRecord(serverSessionCalls)).length, 55);
-  assert.equal(sum(sortedRecord(serverSessionCalls)), 98);
+  assert.equal(Object.keys(expectedConsumerCalls).length, 53);
+  assert.equal(sum(expectedConsumerCalls), 96);
+  assert.equal(Object.keys(sortedRecord(serverSessionCalls)).length, 54);
+  assert.equal(sum(sortedRecord(serverSessionCalls)), 97);
+  assert.equal(Object.keys(sortedRecord(neutralSessionCalls)).length, 1);
+  assert.equal(sum(sortedRecord(neutralSessionCalls)), 1);
   assert.equal(Object.keys(sortedRecord(getTokenCalls)).length, 2);
   assert.equal(sum(sortedRecord(getTokenCalls)), 2);
 });
@@ -1117,6 +1454,98 @@ test("inventory rejects reviewed import, alias and re-export bypass forms", () =
         void read(Auth.authOptions);
       `,
       expected: /namespace NextAuth import nije dozvoljen/,
+    },
+    {
+      name: "neutral-facade-namespace",
+      source: `
+        import * as Session from "@/lib/auth/server-session";
+        void Session.resolveServerSession();
+      `,
+      expected: /default\/namespace server-session facade import nije dozvoljen/,
+    },
+    {
+      name: "neutral-facade-binding-alias",
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        const read = resolveServerSession;
+        void read();
+      `,
+      expected: /resolveServerSession binding ne sme da se prosleđuje ili aliasuje/,
+    },
+    {
+      name: "neutral-facade-eager-top-level-call",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        const cachedSession = resolveServerSession();
+        void cachedSession;
+      `,
+      expected: /neodobren request-lazy resolveServerSession wiring/,
+    },
+    {
+      name: "checkout-data-factory-wrong-module",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/fake-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession(),
+        });
+      `,
+      expected: /nekanonski ili dupli checkout-data factory import/,
+    },
+    {
+      name: "checkout-data-factory-alias",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import {
+          createCheckoutDataGetHandler as buildCheckoutDataGet,
+        } from "@/lib/checkout/checkout-data-route";
+        export const GET = buildCheckoutDataGet({
+          resolveSession: () => resolveServerSession(),
+        });
+      `,
+      expected: /nekanonski ili dupli checkout-data factory import/,
+    },
+    {
+      name: "checkout-data-reviewed-factory-result-unused",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        const reviewedButUnused = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession(),
+        });
+        export async function GET() {
+          void reviewedButUnused;
+          return Response.json({ ok: true });
+        }
+      `,
+      expected: /checkout-data factory poziv mora biti tačno export const GET composition/,
+    },
+    {
+      name: "checkout-data-resolver-spread-override",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        const bypass = {
+          resolveSession: async () => ({ status: "anonymous" as const }),
+        };
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+          ...bypass,
+        });
+      `,
+      expected: /checkout-data factory poziv mora biti tačno export const GET composition/,
+    },
+    {
+      name: "neutral-facade-star-re-export",
+      source: `export * from "@/lib/auth/server-session";`,
+      expected: /server-session facade namespace\/star re-export nije dozvoljen/,
     },
     {
       name: "namespace-re-export",

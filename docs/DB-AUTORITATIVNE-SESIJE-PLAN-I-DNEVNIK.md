@@ -3,7 +3,7 @@
 Datum početka: 2026-08-30  
 Radna grana: `ispravka/v2-db-authoritative-sessions`  
 Polazni V2 SHA: `d926e152f51f363c66d37f46859fbecffbc634d2`  
-Status: **u radu; faze 1–5, dormantni server guard i tranzicioni legacy-only facade faze 6 imaju zelen exact-head PostgreSQL/browser/build CI dokaz; call-site migracija i V2 aktivacija nisu izvršene**
+Status: **u radu; faze 1–5, dormantni server guard, tranzicioni legacy-only facade i source-inventory gate faze 6 imaju zelen exact-head PostgreSQL/browser/build CI dokaz; prvi customer call-site batch je lokalno u radu, V2 aktivacija nije izvršena**
 
 ## 1. Granica ove sekcije
 
@@ -145,7 +145,7 @@ definisanog ugovora.
 | 3 | Revocation u reset/change/privileged/demo write tokovima | završeno; exact-head PostgreSQL 16 CI dokaz zelen |
 | 4 | Credentials i verification V2 session issuance/rotation | završeno kao dormantni paket; exact-head run `33330847915` zelen |
 | 5 | Pouzdan current-session logout | završen kao dormantni paket; exact-head run `33331632579` zelen |
-| 6 | Customer/ownership/admin server guard migracija | dormantni Node guard/access i neutralni legacy-only facade imaju zelen exact-head CI; source inventory gate lokalno završen i čeka CI; call-site migracija sledi |
+| 6 | Customer/ownership/admin server guard migracija | dormantni guard/facade i source-inventory gate imaju zelen exact-head CI; prvi read-only customer call-site batch lokalno u radu |
 | 7 | Session contract migracija | nije započeto |
 | 8 | Real-PG race/E2E matrica i uklanjanje preflight blockera | nije započeto |
 | 9 | Završna dokumentacija, exact-head i post-merge V2 dokaz | nije započeto |
@@ -1119,10 +1119,91 @@ downgrade fallbackom.
 | ESLint sa nula upozorenja za izmenjene fajlove | PASS |
 | `git diff --check` | PASS |
 
-Ovaj paket još ne menja nijedan izvršivi session consumer. Prvi planirani
-funkcionalni batch je read-only `app/api/user/checkout-data/route.ts`, uz
-eksplicitno `anonymous → 401`, `unavailable → no-store 503` i DB lookup samo sa
-`authenticated.principal.id`.
+Commit `23501d592724a709000160cc68058ccac7a74beb` i exact-head PR run
+`33336276720`, attempt 1, potvrdili su source-inventory paket. PostgreSQL 16
+migracije, drift/invarijante, security/DB testovi, lint, TypeScript, Chromium,
+mobilni checkout smoke i probni production build završili su sa `SUCCESS`.
+Draft PR je ostao clean prema kanonskoj V2 grani; release i production deploy
+poslovi bili su `SKIPPED`.
+
+Ovaj paket sam za sebe nije promenio nijedan izvršivi session consumer. Prvi
+funkcionalni batch iz sledećeg pododeljka zato počinje tek iza njegovog zelenog
+exact-head dokaza.
+
+### 10.9. Prvi customer consumer — read-only checkout podaci
+
+Prvi stvarni call-site batch migrira samo
+`GET /api/user/checkout-data`. Ruta je izabrana kao najmanji vertikalni presek:
+read-only je, nema request body ni mutaciju, a jedini grant je čitanje podataka
+korisnika čiji ID dolazi iz sesije. Stari direktni
+`getServerSession(authOptions)` import uklonjen je i production composition root
+sada poziva samo neutralni `resolveServerSession()` facade.
+
+Nova granica je podeljena na:
+
+- `lib/checkout/checkout-data-route.ts` — čisti dependency-injected HTTP
+  factory, sa samo type-only importom neutralnog session ugovora i native
+  `Response.json` odgovorima;
+- `lib/checkout/checkout-data-route.test.ts` — izolovana Node matrica bez
+  Prisma/NextAuth/module mockovanja;
+- `app/api/user/checkout-data/route.ts` — tanko production povezivanje facade-a,
+  postojećeg Prisma upita i coarse stage-only reportera.
+
+Session/HTTP ugovor je eksplicitan:
+
+| Session/lookup ishod | HTTP | Ponašanje |
+| --- | ---: | --- |
+| `anonymous` | `401` | postojeći `{ error: "Unauthorized" }`; nula DB poziva |
+| `unavailable` | `503` | generički retry body; nula DB poziva; nikada se ne mapira u anonymous |
+| resolver throw ili malformed rezultat | `503` | `{ stage: "SESSION" }` bez raw greške/PII; nula DB poziva |
+| authenticated + User ne postoji | `404` | postojeći `{ error: "User not found" }` |
+| authenticated + DB throw | `500` | postojeći coarse body i samo `{ stage: "LOOKUP" }` report |
+| authenticated + User postoji | `200` | svež DB profil i prvi default address ili eksplicitni `null` |
+
+Svi odgovori sada nose `Cache-Control: private, no-store, max-age=0`,
+`Pragma: no-cache`, `Referrer-Policy: no-referrer` i noindex/noarchive header.
+To je namerno PII cache hardening proširenje; postojeći statusi i JSON body
+ugovori za `200/401/404/500` ostaju isti. Reporter nikada ne prima exception,
+user ID, session ili DB red, a sync throw i async rejection reportera ne mogu
+zameniti fail-closed odgovor.
+
+Production Prisma semantika ostaje namerno ista: lookup koristi isključivo
+`authenticated.principal.id`; User select ostaje `id`, `email`, `firstName`,
+`lastName`, `phone`; address podupit ostaje `isDefault: true`, `take: 1` i
+projekcija `street/apartment/city/postalCode/country`. User `id`, role, session
+profil i verification stanje ne ulaze u response. Factory konstruiše i nov
+address objekat samo od tih pet polja; dodatna adapter polja ili custom `toJSON`
+ne mogu proširiti javni PII payload. Ovaj batch ne rešava moguće duple default
+adrese i ne menja checkout klijent.
+
+AST gate sada zaključava obe strane migracionog fronta:
+
+- raw legacy consumer mapa pada sa `97/54` na `96/53`;
+- zajedno sa jedinim centralnim facade read-om raw zbir pada sa `98/55` na
+  `97/54`;
+- nova exact mapa neutralnih `resolveServerSession()` potrošača počinje sa
+  `1/1`, pa brisanje autentikacije ne može izgledati kao uspešna migracija;
+  checkout wiring dodatno mora biti tačan request-lazy
+  `resolveSession: () => resolveServerSession()` unutar factory composition-a,
+  a dependency objekat mora imati tačno tri eksplicitna i jedinstvena polja bez
+  spread/computed override-a; module-scope read, cross-request cache ili kasnije
+  pregažen resolver ruše gate;
+- `getToken` ostaje nepromenjen `2/2`.
+
+Facade u ovom trenutku i dalje čita isključivo tranzicionu legacy NextAuth
+sesiju. Zato ovo jeste aktivna call-site migracija, ali nije V2 cookie/codec,
+issuance, proxy ili logout cutover i ne uvodi fallback između dva credential
+izvora. Postojeći checkout klijent ne prikazuje poseban 503 tekst već samo
+ostavlja autofill prazan; to je evidentiran UX rizik za kasniji UI batch, ne
+auth bypass niti promena guest checkout mogućnosti.
+
+| Lokalna provera checkout-data batch-a | Rezultat |
+| --- | --- |
+| Factory HTTP/session matrica | `8` pass / `0` fail; isti handler radi svež session i DB read po zahtevu |
+| AST raw + neutralni migration-frontier gate | `2` pass / `0` fail; raw `96/53`, raw+facade `97/54`, neutralno `1/1`, getToken `2/2` |
+| TypeScript bez emitovanja | PASS |
+| ESLint za izmenjene TS fajlove | PASS, `0` upozorenja |
+| `git diff --check` | PASS |
 
 ## 11. Obavezni transakcioni redosledi aktivacije i narednih faza
 
@@ -1287,7 +1368,9 @@ red nije tvrdnja o uspehu.
 | Faza 6 dormantni guard exact-head dokaz | [run `33333262290`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33333262290), attempt 1, PostgreSQL/session/E2E/build `SUCCESS`; release/deploy `SKIPPED` |
 | Faza 6 tranzicioni legacy-only facade commit | `d08fa32e40b1476b8d587ef596ff5119be4f7f59` |
 | Faza 6 tranzicioni facade exact-head dokaz | [run `33334129994`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33334129994), attempt 1, PostgreSQL/session/E2E/build `SUCCESS`; release/deploy `SKIPPED` |
-| Faza 6 mrtvi route cleanup/source inventory gate | lokalni paket završen; čeka stabilan commit i exact-head run |
+| Faza 6 mrtvi route cleanup/source inventory commit | `23501d592724a709000160cc68058ccac7a74beb` |
+| Faza 6 source inventory exact-head dokaz | [run `33336276720`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33336276720), attempt 1, PostgreSQL/session/E2E/build `SUCCESS`; release/deploy `SKIPPED` |
+| Faza 6 checkout-data consumer batch | lokalno u radu; čeka završni pregled, stabilan commit i exact-head run |
 | Feature merge SHA | nije izvršen |
 | Post-merge V2 run | nije izvršen |
 | Release/deploy jobs | moraju ostati `SKIPPED` |

@@ -1,21 +1,23 @@
-import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { resolveServerSession } from "@/lib/auth/server-session";
+import {
+  createCheckoutDataGetHandler,
+  type CheckoutDataFailure,
+} from "@/lib/checkout/checkout-data-route";
 import { prisma } from "@/lib/db";
 
-export async function GET() {
+function reportCheckoutDataFailure(failure: CheckoutDataFailure): void {
   try {
-    const session = await getServerSession(authOptions);
+    console.error("Checkout data request failed", failure);
+  } catch {
+    // Observability must never replace the fail-closed private response.
+  }
+}
 
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
+export const GET = createCheckoutDataGetHandler({
+  resolveSession: () => resolveServerSession(),
+  findUserById: (userId) =>
+    prisma.user.findUnique({
+      where: { id: userId },
       select: {
         id: true,
         email: true,
@@ -34,31 +36,6 @@ export async function GET() {
           },
         },
       },
-    });
-
-    if (!user) {
-      return NextResponse.json(
-        { error: "User not found" },
-        { status: 404 }
-      );
-    }
-
-    const defaultAddress = user.addresses[0] || null;
-
-    return NextResponse.json({
-      user: {
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        phone: user.phone,
-      },
-      defaultAddress,
-    });
-  } catch (error) {
-    console.error("Error fetching checkout data:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
-  }
-}
+    }),
+  reportFailure: reportCheckoutDataFailure,
+});
