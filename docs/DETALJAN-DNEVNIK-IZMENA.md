@@ -7,6 +7,13 @@
 > GitHub snapshot commit: `3dc757ac6280b77c7951a888ec2d3ad609ddae1d`<br>
 > Status dokumenta: V2 feature grana je objavljena na GitHub-u, produkciona baza je bezbedno migrirana na V2 šemu, dok `main` i javna aplikaciona verzija nisu promenjeni niti deployovani.
 
+> **Operativna dopuna — 30. avgust 2026.** Istorijski opisi u ovom dnevniku
+> ostaju sačuvani kao zapis stanja u trenutku kada su nastali. Za trenutno
+> važeću GitHub Actions i release politiku merodavna je [sekcija 38](#38-p0-razdvajanje-v2-ci-ja-i-produkcijskog-release-a),
+> koja zamenjuje ranije operativne tvrdnje da push na `main` ili ručni
+> `workflow_dispatch` pokreću produkcijski deploy. Nijedna od promena iz te
+> sekcije nije sama po sebi pustila V2 aplikaciju uživo.
+
 ## 1. Svrha dokumenta
 
 Ovaj dokument je detaljan tehnički i funkcionalni zapis promena urađenih u dosadašnjem radu na V2 verziji prodavnice. Napravljen je na osnovu stvarnog Git diff-a, pregleda novih fajlova, provere implementacije i pokrenutih validacija.
@@ -2530,3 +2537,174 @@ PR #4 je spojen u V2, a njegova puna provera i kasniji objedinjeni V2 CI su
 zeleni. Promena ne uvodi Prisma migraciju i nije aktivirala deploy. Produkcioni
 secret i vremenski ograničena legacy migracija ostaju deo odobrenog rollout-a;
 newsletter subscribe abuse/double-opt-in tok je zaseban preostali P1.
+
+## 38. P0 razdvajanje V2 CI-ja i produkcijskog release-a
+
+Dana 30. avgusta 2026. u aktuelnom radnom stablu uvedena je eksplicitna release
+granica između dva različita projekta koja dele isti GitHub repozitorijum:
+
+- presentation sajt ostaje na `main` grani i ima sopstveni GitHub Pages tok;
+- V2 Next.js prodavnica živi na kanonskoj grani
+  `verzija/v2.0-univerzalna-platforma`;
+- produkcijski VPS deploy V2 prodavnice nije posledica običnog push-a na bilo
+  koju granu, već zasebno odobrenog i strogo proverenog release taga.
+
+Ovim je zatvoren P0 rizik u kome bi naziv workflow fajla ili ranija pretpostavka
+o `main` grani mogli da povežu presentation projekat sa produkcionim deploy-em
+prodavnice. Istorijske reference na automatski deploy svakog push-a na `main`
+ostaju u starijim sekcijama samo kao hronologija; ne predstavljaju više važeće
+operativno uputstvo.
+
+### 38.1. Nova matrica okidača
+
+`.github/workflows/objavi.yml` sada razdvaja verifikaciju od objavljivanja:
+
+| Događaj | Pokrenute provere | Produkcijski deploy |
+| --- | --- | --- |
+| Pull request ka `verzija/v2.0-univerzalna-platforma` | kompletan V2 CI | ne |
+| Push na `verzija/v2.0-univerzalna-platforma` | kompletan V2 CI | ne |
+| Ručni `workflow_dispatch` | kompletan V2 CI | ne |
+| Push taga `prodavnica-v2-*` | kompletan V2 CI, pa release potvrda | moguć tek posle svih gate-ova |
+| Push na `main` | ovaj V2 workflow se ne pokreće | ne |
+
+Tačan dozvoljeni format release identiteta je
+`prodavnica-v2-YYYYMMDD-N`, na primer `prodavnica-v2-20260830-1`.
+Širi GitHub trigger `prodavnica-v2-*` služi samo da workflow može bezbedno da
+odbije pogrešno oblikovan kandidat; release potvrda pre produkcionog
+Environment-a prihvata isključivo regularni izraz
+`^prodavnica-v2-[0-9]{8}-[1-9][0-9]*$`.
+
+Ručni dispatch je namerno **verification-only**. Može da ponovi lint,
+TypeScript, testove, migracionu proveru, browser smoke i build, ali nema put do
+`production` Environment-a, SSH-a ili serverskog deploy skripta.
+
+### 38.2. Fail-closed identitet V2 stabla
+
+CI pre instalacije zavisnosti potvrđuje da checkout zaista predstavlja V2
+prodavnicu. Obavezno moraju postojati:
+
+- `package.json` i `package-lock.json`;
+- `next.config.ts`;
+- `prisma/schema.prisma`;
+- `scripts/deploy.sh`;
+- `app/api/health/route.ts`.
+
+Istovremeno `scripts/build.mjs`, karakterističan za presentation projekat, ne
+sme da postoji. Nedostatak makar jednog V2 markera ili prisustvo presentation
+build skripta prekida job pre daljeg rada. Ista provera se ponavlja u release
+potvrdi i još jednom u deploy job-u pre validacije deploy podešavanja i pre
+nego što se bilo koja SSH tajna upotrebi za uspostavljanje veze.
+
+Checkout koraci koriste `persist-credentials: false`, a workflow zadržava
+minimalnu globalnu dozvolu `contents: read`. Time build i deploy job ne ostavljaju
+GitHub token u lokalnoj Git konfiguraciji checkout-a.
+
+### 38.3. Fail-closed release poreklo i redosled gate-ova
+
+Produkcijski put postoji samo kada je događaj `push`, a ref počinje sa
+`refs/tags/prodavnica-v2-`. Posle uspešnog punog CI-ja poseban
+`potvrdi_release` job, pre otvaranja produkcionog Environment-a, proverava:
+
+1. da je checkout V2 stablo, a ne presentation stablo;
+2. da je GitHub ref zaista tag;
+3. da ime taga tačno prati `prodavnica-v2-YYYYMMDD-N` format;
+4. da je označeni commit predak kanonske udaljene grane
+   `origin/verzija/v2.0-univerzalna-platforma`.
+
+Ancestry provera sprečava da tag napravljen nad proizvoljnom feature granom ili
+nad presentation `main` commitom postane release kandidat. Deploy job zavisi i
+od kompletnog `provera` job-a i od `potvrdi_release` job-a. Pre SSH-a ponavlja
+identitet stabla, tip i format taga i ancestry proveru, tako da se ključna
+release svojstva ne oslanjaju samo na raniji job.
+
+Tek nakon uspešnog CI-ja i pre-Environment `potvrdi_release` provere deploy job
+može da zatraži `production` Environment. Kada reviewer odobri taj gate,
+deploy job ponavlja ključne uslove pre SSH-a. Za završnu live fazu i dalje je
+potreban spoljašnji GitHub Environment/ruleset gate koji dozvoljava namenski V2
+tag obrazac i obavezan pregled odobrioca. Kodna promena ne pretpostavlja da je
+taj spoljašnji gate već konfigurisan.
+
+### 38.4. Concurrency i pinovane GitHub akcije
+
+Concurrency je razdvojen prema posledici događaja:
+
+- release tagovi dele serijsku `production-<repository>` grupu i ne otkazuju se
+  kada stigne noviji run;
+- svaki pull request ima zasebnu otkazivu CI grupu po broju PR-a;
+- push kanonske V2 grane i ručni verification run imaju otkazive CI grupe po
+  ref-u.
+
+Ovo sprečava paralelne produkcijske aktivacije, a istovremeno dopušta da noviji
+CI rezultat zameni zastareli rezultat na istoj razvojnoj referenci.
+
+Supply-chain pinovi u oba checkout konteksta i Node setup-u osveženi su na
+eksplicitne pune commit SHA vrednosti:
+
+- `actions/checkout` — `3d3c42e5aac5ba805825da76410c181273ba90b1`
+  (`v7.0.1`);
+- `actions/setup-node` — `820762786026740c76f36085b0efc47a31fe5020`
+  (`v7.0.0`).
+
+### 38.5. Usklađena operativna dokumentacija
+
+Uz workflow su usklađeni izvori operativne istine:
+
+- `CLAUDE.md` razdvaja presentation `main`, kanonsku V2 granu i release tag;
+- `README.md` opisuje provereni tag-gated V2 release umesto automatskog
+  produkcijskog push-a na `main`;
+- `docs/GITHUB-DEPLOY.md` definiše trigger matricu, budući Environment reviewer
+  i kontrolisani postupak pravljenja anotiranog release taga;
+- `docs/V2-ROLL-OUT.md` beleži da su tag, Environment promena i live deploy
+  poslednji odobreni koraci;
+- `IZMENE.md` i detaljni izveštaj beleže sprovedenu P0 kodnu granicu i odvojeno
+  navode spoljašnje korake koji još nisu završeni.
+
+Dokumentacija zato razlikuje tri stanja: implementirano u kodu, provereno kroz
+CI i stvarno aktivirano u produkcionom okruženju. Samo prvo stanje je predmet
+ove sekcije dok se ne završe provere i zasebno odobren rollout.
+
+### 38.6. Šta namerno nije promenjeno
+
+Ova P0 etapa je ograničena na workflow i dokumentacionu release granicu.
+Tokom nje:
+
+- nije napravljen niti pushovan `prodavnica-v2-YYYYMMDD-N` tag;
+- nisu menjana pravila GitHub `production` Environment-a ili branch/tag
+  ruleset-a;
+- nisu čitane, dodavane, rotirane niti menjane GitHub ili serverske tajne;
+- nije uspostavljena SSH veza sa produkcionim serverom;
+- nisu menjani server, PM2/systemd, reverse proxy, produkcijski `.env` ili
+  produkciona baza;
+- nije pokrenut `scripts/deploy.sh` nad VPS-om;
+- V2 nije pušten uživo i presentation sajt na `main` nije menjan ovim radom.
+
+Release tag, spoljašnji Environment gate i bilo kakva serverska aktivacija
+ostaju završna faza plana. Do tada su push kanonske V2 grane i ručni dispatch
+isključivo verifikacioni događaji, a kartično plaćanje i ostale produkcione
+capability promene ostaju van opsega ovog P0 koraka.
+
+### 38.7. Lokalna verifikacija pre PR-a
+
+Aktuelno radno stablo je pre slanja na GitHub prošlo:
+
+- `actionlint 1.7.12` nad `.github/workflows/objavi.yml` bez nalaza;
+- lokalnu release-gate simulaciju u kojoj validan V2 tag/ancestor prolazi, a
+  pogrešan format taga očekivano pada;
+- `git diff --check` bez whitespace grešaka;
+- proveru da sve relativne Markdown veze i interni anchor-i postoje;
+- `npm run lint -- --quiet`;
+- `npm run typecheck`;
+- `npm test`: 103 ukupno, 102 uspešna i jedan lokalno očekivano preskočen
+  opt-in PostgreSQL test;
+- `npm run build` sa isključivo neprodukcijskim CI vrednostima.
+
+Build je završen uspešno. Pošto lokalni PostgreSQL servis nije bio pokrenut,
+prerender je beležio očekivane poruke o nedostupnoj bazi i koristio bezbedne
+storefront podrazumevane vrednosti. Zbog toga su exact-head GitHub CI sa
+PostgreSQL 16, svim migracijama, uključenim opt-in DB testom i Chromium E2E i
+dalje obavezni dokaz pre integracije.
+
+Read-only provera zvaničnih Action tag ref-ova potvrdila je da pinovi u
+workflow-u tačno odgovaraju `actions/checkout@v7.0.1` i
+`actions/setup-node@v7.0.0`. Ta provera, kao ni lokalni testovi, nije menjala
+GitHub ili produkciono stanje.

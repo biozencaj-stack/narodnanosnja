@@ -11,7 +11,8 @@ Zapisa ima više i lako je otvoriti pogrešan. Poređano po dubini:
 
 | Dokument | Obim | Šta pokriva |
 | --- | --- | --- |
-| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 37 odeljaka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
+| **`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-08-30.md`** | 30 glavnih odeljaka | **Konsolidovan presek svega urađenog.** Implementirano stanje, razlozi, Git/PR/CI dokazi, ključni fajlovi, P0/P1/P2 dug, preporučeni redosled i produkcioni checklist |
+| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 38 odeljaka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
 | Ovaj fajl (`IZMENE.md`) | sažeti dnevnik | Hronologija i odluke — zašto je nešto urađeno tako |
 | `docs/ARCHITECTURE-V2.md` | 4 KB | Arhitektonske granice platforme |
 | `docs/CATALOG-MIGRATION-PLAN.md` | 10 KB | Redosled prelaska na generički katalog |
@@ -20,8 +21,11 @@ Zapisa ima više i lako je otvoriti pogrešan. Poređano po dubini:
 | `docs/PRISMA-BASELINE.md` | 3 KB | Baseline migracija |
 | `PREGLED_PROJEKTA_2026-08-29.md` | 770 linija | U repou prezentacionog sajta — read-only pregled **oba** dela projekta |
 
-Ako tražiš „šta je tačno promenjeno u kodu“ — `docs/DETALJAN-DNEVNIK-IZMENA.md`.
-Ovaj fajl je ulazna tačka i objašnjava razloge, ne pojedinačne izmene.
+Ako tražiš objedinjeno „šta je urađeno i šta je ostalo“ — otvori
+`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-08-30.md`. Ako tražiš hronološki zapis
+svakog razvojnog preseka i pojedinačnih izmena — otvori
+`docs/DETALJAN-DNEVNIK-IZMENA.md`. Ovaj fajl je ulazna tačka i objašnjava
+razloge, ne pojedinačne izmene.
 
 ---
 
@@ -310,8 +314,10 @@ Radi. Push na `main` gradi i objavljuje na GitHub Pages.
 
 Detaljna podešavanja secrets/variables su u `docs/GITHUB-DEPLOY.md`.
 
-**Blokira ga to što repozitorijum `narodnanosnja-prodavnica` na GitHubu još ne
-postoji.** SSH ključ daje pravo da se gura, ali ne i da se repo napravi.
+**Istorijska napomena:** prvobitno je objavu blokiralo to što zaseban repo nije
+postojao. V2 je kasnije objavljen kao odvojena grana u zajedničkom repou. Novi
+operativni model više ne pokušava deploy preko presentation `main` grane;
+produkcijski posao je rezervisan za pregledani `prodavnica-v2-*` release tag.
 
 ### Ključ za objavljivanje
 
@@ -428,8 +434,9 @@ Sve što je jednom pojelo vreme, na jednom mestu:
 
 **Ne radi / nedostaje:**
 
-- Draft PR #1 ka `main` i produkcijsko objavljivanje nisu odobreni; V2 se
-  razvija i proverava odvojeno
+- Draft PR #1 ka `main` ostaje pogrešan release put i ne sme se spojiti;
+  tag-gated V2 release granica postoji u kodu, ali production Environment,
+  release tag i live objava namerno ostaju za poslednju rollout fazu
 - Fotografije proizvoda — sve prazne, stoje tkane šare
 - Pravi domen i HTTPS (sada samo adresa servera i port)
 - Filteri su nasleđeni iz prodavnice obuće („Vrsta obuće“, „Pol“, brendovi)
@@ -703,3 +710,31 @@ normalizaciju, pogrešne i rotirane tokene, URL izgradnju, zabranu mutacije bez
 autorizacije i idempotentnu deaktivaciju. PR #4 i završni objedinjeni V2 CI su
 zeleni. Promena nema Prisma migraciju, nije deployovana i nije menjala server,
 produkcione tajne ili podatke.
+
+---
+
+## XVI. P0 razdvajanje V2 CI-ja i produkcijskog release-a — 30. avgust 2026.
+
+V2 workflow više ne koristi presentation `main` kao CI/deploy cilj. Nova
+matrica je:
+
+- PR ka `verzija/v2.0-univerzalna-platforma` — kompletan CI, bez deploya;
+- push na kanonsku V2 granu — kompletan CI, bez deploya;
+- ručni `workflow_dispatch` — kompletan CI, bez deploya;
+- push `prodavnica-v2-YYYYMMDD-N` taga — CI, pa produkcijski job tek posle
+  svih repository i Environment zaštita;
+- push na presentation `main` — ovaj V2 workflow se ne pokreće.
+
+Pre instalacije zavisnosti workflow potvrđuje identitet V2 stabla. Posle CI-ja
+poseban `Potvrdi V2 release` job proverava strogi oblik taga i da je označeni
+commit već deo remote kanonske V2 grane, pre nego što se otvori production
+Environment gate. Produkcijski job iste uslove ponavlja pre SSH-a.
+Checkout/setup-node Actions su osvežene i pinovane na pregledane pune SHA
+vrednosti. Tag deploy se ne prekida, dok zastarele CI provere mogu biti
+otkazane.
+
+Spoljni `production` Environment mora pred live fazu biti promenjen sa starog
+`main` branch pravila na `prodavnica-v2-*` tag policy, required reviewera i
+poželjno zaštićeni tag ruleset. Dok to nije urađeno, novi deploy ostaje dodatno
+blokiran. Ovom izmenom nije napravljen ili pushovan release tag, nisu postavljene
+tajne, server nije menjan i aplikacija nije puštena uživo.
