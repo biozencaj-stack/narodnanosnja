@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import test from "node:test";
 import type { Prisma, PrismaClient } from "@prisma/client";
 
@@ -82,20 +82,21 @@ function withTransactionBarrier(
 }
 
 test(
-  "dva verify radnika mogu potrošiti isti token tačno jednom",
+  "prefetch ostaje read-only, a dva POST radnika potroše isti token tačno jednom",
   { skip: !RUN_DATABASE_TESTS, timeout: 20_000 },
   async (testContext) => {
     assertSafeTestDatabase();
 
     const { prisma } = await import("@/lib/db");
-    const {
-      EmailVerificationConflictError,
-      commitEmailVerification,
-    } = await import("./email-verification");
+    const { commitEmailVerification } = await import("./email-verification");
+    const { createEmailVerificationRouteHandlers } = await import(
+      "./email-verification-route"
+    );
+    const { NextRequest, NextResponse } = await import("next/server");
     const runId = randomUUID();
     const email = `auth-verification-${runId}@example.invalid`;
-    const primaryToken = `primary-${runId}`;
-    const siblingToken = `sibling-${runId}`;
+    const primaryToken = randomBytes(32).toString("hex");
+    const siblingToken = randomBytes(32).toString("hex");
     const verifiedAt = new Date();
 
     const user = await prisma.user.create({
@@ -122,7 +123,7 @@ test(
         expires: new Date(verifiedAt.getTime() + 60_000),
       },
     });
-    await prisma.emailVerification.create({
+    const sibling = await prisma.emailVerification.create({
       data: {
         userId: user.id,
         token: siblingToken,
@@ -130,46 +131,188 @@ test(
       },
     });
 
-    const claim = {
-      id: primary.id,
-      userId: user.id,
-      token: primaryToken,
-    };
+    const endpoint = `https://shop.example.test/api/auth/verify-email/${primaryToken}`;
+    const context = () => ({
+      params: Promise.resolve({ token: primaryToken }),
+    });
+    const request = (
+      method: "GET" | "HEAD" | "POST",
+      prefetch = false,
+    ) =>
+      new NextRequest(endpoint, {
+        method,
+        headers: {
+          host: "shop.example.test",
+          origin: "https://shop.example.test",
+          ...(prefetch
+            ? {
+                purpose: "prefetch",
+                "sec-purpose": "prefetch",
+              }
+            : {}),
+        },
+      });
+
+    const [userBeforeReadOnlyRequests, tokensBeforeReadOnlyRequests] =
+      await Promise.all([
+        prisma.user.findUniqueOrThrow({
+          where: { id: user.id },
+          select: { emailVerified: true, updatedAt: true },
+        }),
+        prisma.emailVerification.findMany({
+          where: { userId: user.id },
+          select: { id: true },
+          orderBy: { id: "asc" },
+        }),
+      ]);
+
+    let lookupCount = 0;
+    let commitAttempts = 0;
+    let commitWinners = 0;
+    const lookedUpTokenIds: string[] = [];
+    const failureStages: string[] = [];
     const waitForBothWorkers = createTwoWorkerBarrier();
-    const results = await Promise.allSettled([
-      commitEmailVerification(
-        withTransactionBarrier(prisma, waitForBothWorkers),
-        claim,
-        verifiedAt,
-      ),
-      commitEmailVerification(
-        withTransactionBarrier(prisma, waitForBothWorkers),
-        claim,
-        verifiedAt,
-      ),
+    const handlers = createEmailVerificationRouteHandlers({
+      getConfirmationUrl(token: string) {
+        return `https://shop.example.test/verify-email/${token}`;
+      },
+      async findVerification(token: string) {
+        lookupCount += 1;
+        const verification = await prisma.emailVerification.findUnique({
+          where: { token },
+        });
+        if (verification) lookedUpTokenIds.push(verification.id);
+        return verification;
+      },
+      async getCurrentSessionUserId() {
+        return null;
+      },
+      async issueSessionToken() {
+        return "integration-session-token";
+      },
+      prepareSuccessResponse(sessionToken: string) {
+        const response = NextResponse.redirect(
+          "https://shop.example.test/moj-nalog?verified=true",
+          303,
+        );
+        response.cookies.set("integration-session", sessionToken, {
+          httpOnly: true,
+          sameSite: "lax",
+          path: "/",
+        });
+        return response;
+      },
+      async commitVerification(claim, claimVerifiedAt) {
+        commitAttempts += 1;
+        await commitEmailVerification(
+          withTransactionBarrier(prisma, waitForBothWorkers),
+          claim,
+          claimVerifiedAt,
+        );
+        commitWinners += 1;
+      },
+      untrustedWriteResponse() {
+        return NextResponse.json({ error: "untrusted" }, { status: 403 });
+      },
+      invalidTokenResponse() {
+        return NextResponse.json({ error: "invalid" }, { status: 409 });
+      },
+      expiredTokenResponse() {
+        return NextResponse.json({ error: "expired" }, { status: 410 });
+      },
+      sessionMismatchResponse() {
+        return NextResponse.json(
+          { error: "session-mismatch" },
+          { status: 409 },
+        );
+      },
+      retryResponse() {
+        return NextResponse.json({ error: "retry" }, { status: 503 });
+      },
+      reportFailure({ stage }) {
+        failureStages.push(stage);
+      },
+      now: () => verifiedAt,
+    });
+
+    const [getResponse, headResponse] = await Promise.all([
+      handlers.GET(request("GET", true), context()),
+      handlers.HEAD(request("HEAD", true), context()),
     ]);
 
-    const fulfilled = results.filter(
-      (result) => result.status === "fulfilled",
+    for (const response of [getResponse, headResponse]) {
+      assert.equal(response.status, 303);
+      assert.equal(response.headers.get("set-cookie"), null);
+    }
+    assert.equal(lookupCount, 0);
+
+    const [userAfterReadOnlyRequests, tokensAfterReadOnlyRequests] =
+      await Promise.all([
+        prisma.user.findUniqueOrThrow({
+          where: { id: user.id },
+          select: { emailVerified: true, updatedAt: true },
+        }),
+        prisma.emailVerification.findMany({
+          where: { userId: user.id },
+          select: { id: true },
+          orderBy: { id: "asc" },
+        }),
+      ]);
+
+    assert.equal(userBeforeReadOnlyRequests.emailVerified, null);
+    assert.equal(userAfterReadOnlyRequests.emailVerified, null);
+    assert.equal(
+      userAfterReadOnlyRequests.updatedAt.getTime(),
+      userBeforeReadOnlyRequests.updatedAt.getTime(),
     );
-    const rejected = results.filter(
-      (result) => result.status === "rejected",
+    assert.deepEqual(
+      tokensBeforeReadOnlyRequests.map(({ id }) => id),
+      [primary.id, sibling.id].sort(),
     );
-    assert.equal(fulfilled.length, 1);
-    assert.equal(rejected.length, 1);
-    assert.ok(
-      rejected[0]?.status === "rejected" &&
-        rejected[0].reason instanceof EmailVerificationConflictError,
+    assert.deepEqual(
+      tokensAfterReadOnlyRequests.map(({ id }) => id),
+      tokensBeforeReadOnlyRequests.map(({ id }) => id),
     );
+
+    const responses = await Promise.all([
+      handlers.POST(request("POST"), context()),
+      handlers.POST(request("POST"), context()),
+    ]);
+
+    const successfulResponses = responses.filter(
+      (response) =>
+        response.status === 303 && response.headers.has("set-cookie"),
+    );
+    const failedResponses = responses.filter(
+      (response) => response.status !== 303,
+    );
+
+    assert.equal(successfulResponses.length, 1);
+    assert.match(
+      successfulResponses[0]?.headers.get("set-cookie") ?? "",
+      /integration-session=integration-session-token/,
+    );
+    assert.equal(failedResponses.length, 1);
+    assert.equal(failedResponses[0]?.status, 409);
+    assert.deepEqual(await failedResponses[0]?.json(), { error: "invalid" });
+    assert.equal(failedResponses[0]?.headers.get("set-cookie"), null);
+    assert.equal(lookupCount, 2);
+    assert.deepEqual(lookedUpTokenIds, [primary.id, primary.id]);
+    assert.equal(commitAttempts, 2);
+    assert.equal(commitWinners, 1);
+    assert.deepEqual(failureStages, ["COMMIT"]);
 
     const [storedUser, remainingTokens] = await Promise.all([
       prisma.user.findUnique({
         where: { id: user.id },
         select: { emailVerified: true },
       }),
-      prisma.emailVerification.count({ where: { userId: user.id } }),
+      prisma.emailVerification.findMany({
+        where: { userId: user.id },
+        select: { id: true },
+      }),
     ]);
     assert.equal(storedUser?.emailVerified?.getTime(), verifiedAt.getTime());
-    assert.equal(remainingTokens, 0);
+    assert.deepEqual(remainingTokens, []);
   },
 );

@@ -4,13 +4,21 @@ import { prisma } from "@/lib/db";
 import Link from "next/link";
 import { Package, MapPin, CreditCard, ArrowRight } from "lucide-react";
 import { formatPriceWithCurrency } from "@/lib/utils/format";
+import { VerifiedEmailNotice } from "./VerifiedEmailNotice";
 
 export const metadata = {
   title: "Moj Nalog",
 };
 
-export default async function AccountPage() {
-  const session = await getServerSession(authOptions);
+interface AccountPageProps {
+  searchParams: Promise<{ verified?: string | string[] }>;
+}
+
+export default async function AccountPage({ searchParams }: AccountPageProps) {
+  const [session, query] = await Promise.all([
+    getServerSession(authOptions),
+    searchParams,
+  ]);
 
   if (!session?.user?.id) {
     return null;
@@ -51,6 +59,8 @@ export default async function AccountPage() {
 
   return (
     <div className="space-y-6">
+      <VerifiedEmailNotice show={query.verified === "true"} />
+
       <div>
         <h1 className="text-2xl font-bold text-stone-900">
           Dobrodošli, {session.user.firstName}!

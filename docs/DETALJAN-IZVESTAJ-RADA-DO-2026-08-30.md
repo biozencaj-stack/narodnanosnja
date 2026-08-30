@@ -6,6 +6,7 @@
 > Aktuelni funkcionalni V2 merge: `9f998866b1be2dad576f5c626fee05c41a978572`<br>
 > P1 auth izvorna grana: `ispravka/v2-auth-secret-verifikacija` — spojena kroz PR #10<br>
 > P1 reset-privacy izvorna grana: `ispravka/v2-reset-privacy` — spojena kroz PR #12<br>
+> P1 prefetch-safe izvorna grana: `ispravka/v2-prefetch-safe-verifikacija` — funkcionalno završena lokalno; PR/CI dokaz još čeka<br>
 > Raniji konsolidovani test tree: `762f004ce8774ef24f61b9231394b4afb8b84331`<br>
 > Produkcijski status: V2 aplikacija nije deployovana; kartice su isključene; `main` nije menjan ovim V2 radom<br>
 > Svrha: samostalan, konsolidovan i detaljan opis svega što je urađeno do ovog preseka
@@ -44,6 +45,7 @@
 30. [P0 release granica za V2](#30-p0-release-granica-za-v2)
 31. [P1 auth secret i atomska email verifikacija](#31-p1-auth-secret-i-atomska-email-verifikacija)
 32. [P1 privatnost password-reset zahteva](#32-p1-privatnost-password-reset-zahteva)
+33. [P1 prefetch-safe potvrda emaila](#33-p1-prefetch-safe-potvrda-emaila)
 
 ---
 
@@ -69,16 +71,19 @@ uvek tumače ovako:
   uključivanja određene capability funkcije.
 
 Istorijski brojevi testova, poput 33, 40, 43, 82 ili 115, ostaju korisni kao
-dokaz pojedinačnih preseka. Aktuelni V2 presek ima 126 testova: lokalno 124
-prolaze, a dva opt-in PostgreSQL testa se namerno preskaču bez bezbedne test
-baze. Exact-head i post-merge CI uključili su oba real-DB scenarija i završili
-svih 126 testova uspešno.
+dokaz pojedinačnih preseka. Kanonski V2 presek pre lokalnog feature-a iz
+odeljka 33 ima 126 testova: lokalno 124 prolaze, a dva opt-in PostgreSQL testa
+se namerno preskaču bez bezbedne test baze. Njegovi exact-head i post-merge CI
+runovi uključili su oba real-DB scenarija i završili svih 126 testova uspešno.
+Aktuelno lokalno feature stablo ima 145 testova: 143 prolaze, dva bezbedno
+preskočena real-DB scenarija i nijedan failure; njegov PR/CI dokaz tek treba da
+bude dodat posle objavljivanja feature grane.
 
 Osnovni deo izveštaja čuva prvobitni vremenski presek. Operativne dopune u
-odeljcima 30–32 opisuju naknadno implementiranu P0 release granicu i aktuelni
+odeljcima 30–33 opisuju naknadno implementiranu P0 release granicu i aktuelni
 P1 auth rad. Raniji commitovi, PR-ovi, test brojevi i CI runovi ostaju
 istorijski dokazi svog preseka; aktuelna pravila i status tumače se prema
-odeljcima 26, 28, 30, 31 i 32.
+odeljcima 26, 28, 30, 31, 32 i 33.
 
 ---
 
@@ -2823,11 +2828,12 @@ CI checkout-u i zatim još jednom nad kanonskim V2 merge commitom.
 
 ### 31.5. Šta ostaje i šta nije aktivirano
 
-Sledeći auth koraci su; prva tačka je u međuvremenu završena i integrisana kroz
-PR #12, kako je dokazano u odeljku 32:
+Sledeći auth koraci su; prva tačka je integrisana kroz PR #12, a druga je
+funkcionalno završena lokalno i opisana u odeljku 33, ali još čeka svoj PR/CI
+dokaz:
 
 1. reset privacy i SMTP-failure uniformnost — integrisano u V2;
-2. prefetch-safe POST potvrda umesto GET auto-login mutacije;
+2. prefetch-safe POST potvrda umesto GET auto-login mutacije — završena lokalno;
 3. hashovani jednokratni verification/reset tokeni;
 4. atomska registracija i pravi resend tok sa concurrency/cooldown zaštitom;
 5. audit/backfill `emailVerified` i tek zatim login enforcement;
@@ -2962,8 +2968,9 @@ delivery ili abuse arhitektura. Preostaje:
 6. real-PostgreSQL two-worker reset test;
 7. session revocation posle resetovanja lozinke;
 8. escaping korisničkog imena u auth-email HTML-u;
-9. prefetch-safe email verifikacija, atomska registracija/resend i tek zatim
-   verified-login rollout.
+9. atomska registracija, pravi verification resend i tek zatim kontrolisani
+   verified-login rollout; prefetch-safe email verifikacija je u međuvremenu
+   završena lokalno u odeljku 33 i čeka PR/CI dokaz.
 
 `after()` smanjuje account-dependent response timing, ali nije durable queue.
 Pad procesa posle vraćenog 202 može izgubiti posao. Brzi odgovor takođe
@@ -2995,14 +3002,267 @@ nisu uključene i sajt nije pušten live.
 
 ---
 
+## 33. P1 prefetch-safe potvrda emaila
+
+Treći P1 auth presek funkcionalno je završen na radnoj grani
+`ispravka/v2-prefetch-safe-verifikacija`, izvedenoj iz kanonskog V2
+documentation commita `8d22116543c3bf2f2e76080758d9814b0e61c2fe`.
+Promena nastavlja exactly-once verification i centralni 24-časovni session
+ugovor iz odeljka 31, ali premešta jedinu mutaciju sa GET navigacije na
+eksplicitni korisnički POST. Ovaj odeljak opisuje lokalno funkcionalno stablo;
+PR, exact-head CI, merge i post-merge dokaz još ne postoje i nisu
+pretpostavljeni.
+
+### 33.1. Zatvoren prefetch/link-preview rizik
+
+Pre izmene je email link otvarao klijentsku `/verify-email/[token]` stranicu
+koja je automatski preusmeravala na mutirajući API GET. Taj GET je čitao token,
+verifikovao email, brisao verification redove, izdavao cookie i prijavljivao
+korisnika. DB commit je bio atomski, ali metod nije bio bezbedan: antivirusni
+skener, webmail preview, browser prefetch, crawler ili unfurl bot mogao je da
+obavi celu potvrdu pre korisnika.
+
+Konačni ugovor je metodski, pa ne zavisi od nepouzdanih `Purpose`,
+`Sec-Purpose` ili user-agent heuristika:
+
+- GET/HEAD nikada ne menjaju nalog, token ili sesiju;
+- email vodi na confirmation stranicu, ne na mutirajući endpoint;
+- confirmation stranica nema automatski client redirect/fetch/effect;
+- jedina mutacija je native same-origin POST posle vidljivog klika;
+- magic-login sesija nastaje tek posle tog POST-a i uspešnog DB commita.
+
+### 33.2. Confirmation stranica i legacy 303 kompatibilnost
+
+`app/(auth)/verify-email/[token]/page.tsx` je server component, bez page-owned
+client-side mutacije. Za potvrdu nije potreban JavaScript: običan
+`<form method="post">` šalje zahtev na
+`/api/auth/verify-email/[token]`. Dugme eksplicitno kaže „Potvrdi email i
+prijavi me“, pa korisniku nije skriveno da uspeh izdaje sesiju. Sam tekst
+objašnjava da GET nije promenio nalog.
+
+Page render sintaksno prihvata samo tačno 64 hex znaka. Nevalidan oblik dobija
+generičnu poruku i login link bez forme; validan oblik se ne proverava u bazi
+dok korisnik ne klikne. Stranica podržava retry i session-mismatch stanje,
+`force-dynamic` je, nema revalidaciju i ima `noindex`/`nofollow`/`nocache` i
+`no-referrer` metadata.
+
+Stari direktni API linkovi nisu prekinuti. `GET` i `HEAD` na
+`/api/auth/verify-email/[token]` vraćaju navigation-only `303 See Other` ka
+kanonskoj confirmation stranici, odnosno ka invalid-token login cilju za
+pogrešan format. Nemaju telo ili cookie i ne rade DB lookup, session read, JWT
+encode, claim, cleanup ili `emailVerified` upis. `303` je izabran da browser ne
+bi ponavljao POST metod na redirect cilju. Params failure ili nedostupan
+kanonski storefront URL padaju fail-closed na zaštićeni generički 503. Ako je
+URL već poznat i token ima validan oblik, kasniji auth-config kvar ostaje
+read-only 303 ka confirmation retry stanju. Nijedan config ishod ne radi DB
+mutaciju.
+
+### 33.3. Lokalni CSRF i kanonski origin pre baze
+
+Širi `/api/auth` prostor mora da ostane izuzet od globalnog unsafe-method
+origin guard-a zbog NextAuth provider callbackova. Verification POST zato
+eksplicitno poziva `isTrustedWriteRequest()` pre route parametara,
+`getStorefrontUrl()`, auth konfiguracije, session read-a i Prisma poziva;
+testabilni factory proveru ponavlja. Dozvoljen je `Origin` čiji host odgovara
+`Host` headeru ili, kada Origin izostane, `Sec-Fetch-Site: same-origin` uz
+validan Host. Cross-origin, malformed Origin i zahtev bez trusted signala
+dobijaju 403 bez credential rada.
+
+Local same-origin ipak nije isto što i kanonski storefront origin. Session
+cookie je host-only: kada bi korisnik POST-ovao preko dozvoljenog alias hosta,
+token bi mogao biti potrošen tamo, a cookie izgubljen pri redirectu na kanonski
+account URL. Zato ruta posle lokalnog guard-a i razrešavanja params/storefront
+URL-a, ali pre auth secret/cookie konfiguracije, session čitanja i baze,
+poziva `isCanonicalEmailVerificationRequest()`.
+
+Trusted alias POST vraća samo private `303` ka kanonskoj confirmation stranici.
+Ne radi lookup/commit i ne šalje cookie; korisnik na kanonskom hostu ponovo
+eksplicitno klikne. Malformed token ide ka kanonskom invalid-token cilju.
+Canonical helper ima svoju unit matricu. Sama production route kompozicija nema
+direktan import test jer povlači server-only/Prisma sastav, ali je tačan guard →
+params/storefront → canonical redirect → auth/DB redosled nezavisno read-only
+pregledan.
+
+### 33.4. Token, session i atomski commit redosled
+
+Kanonski trusted POST sprovodi sledeći pipeline:
+
+1. zahteva tačno 64 hex znaka i kanonizuje ih u lowercase;
+2. traži verification zapis;
+3. zahteva konačan datum isteka i `expires > verifiedAt`;
+4. čita eventualni current-session user ID centralnim NextAuth secret/cookie
+   ugovorom;
+5. blokira sesiju drugog korisnika;
+6. encode-uje novi session JWT sa rokom od 86.400 sekundi;
+7. potpuno priprema `303 /moj-nalog?verified=true` sa centralno imenovanim
+   `HttpOnly`, `SameSite=Lax`, `Path=/`, secure-policy cookie-jem;
+8. tek tada atomskom transakcijom conditional claim-uje još važeći token,
+   postavlja `User.emailVerified` i briše sve sibling tokene;
+9. vraća prepared odgovor samo posle uspešnog commita.
+
+Istekli token se prijavljuje, ali ne briše; cleanup ostaje budućem resend ili
+maintenance toku. Aktivna sesija drugog user ID-a vraća confirmation ekran sa
+uputstvom za odjavu/privatni prozor, bez encode-a, cookie-ja, commita ili token
+consumption-a. Odsutna ili ista sesija može da nastavi.
+
+Concurrent conditional claim ima jednog pobednika. Conflict gubitnik ne dobija
+prepared cookie i vodi se na invalid-token ishod. JWT, response-preparation ili
+DB kvar takođe ne mogu da puste prepared success cookie; operativni failure se
+vraća kao retry confirmation. Stage-only logger prihvata samo `PARAMS`,
+`LOOKUP`, `EXPIRY_CHECK`, `CURRENT_SESSION`, `SESSION_ISSUE`,
+`RESPONSE_PREPARATION`, `COMMIT` ili production `CONFIGURATION`, bez tokena,
+URL-a, emaila, JWT-a, user ID-a ili raw exception teksta. Logger failure ne
+menja javni rezultat.
+
+Time ranija magic-login funkcionalnost ostaje, ali se njena semantika menja iz
+„otvorite link“ u „eksplicitno potvrdite i prijavite se“. Standardna sesija
+traje 24 sata i postoji samo posle klika i exactly-once commita.
+
+### 33.5. Sensitive-credential privatnost izvan verification rute
+
+Svaki verification page/API ishod dobija:
+
+- `Cache-Control: private, no-store, max-age=0`;
+- `Pragma: no-cache`;
+- `Referrer-Policy: no-referrer`;
+- `X-Robots-Tag: noindex, nofollow, noarchive`.
+
+Factory primenjuje headere na svaki redirect/JSON/failure i briše
+`Set-Cookie` sa neuspešnih odgovora. `next.config.ts` istu politiku postavlja na
+`/verify-email/:path*` i API putanju. U istom preseku politika je proširena na
+postojeću bearer-token `/reset-password/:token` stranicu, kao i newsletter
+`/newsletter/odjava` i unsubscribe API; newsletter je ranije imao samo
+`no-referrer`.
+
+`Referrer-Policy` ne sprečava već učitanu third-party skriptu da pročita
+`window.location`. Zato novi `lib/security/credential-path.ts` centralizuje
+sensitive putanje:
+
+- tačan `/verify-email` i sve `/verify-email/*` putanje;
+- token-bearing `/reset-password/*`, ali ne običnu reset request formu;
+- `/newsletter/odjava`, gde credential živi u query-ju.
+
+I pathname-aware Google Analytics wrapper i globalni reCAPTCHA provider koriste
+isti `shouldLoadThirdPartyScripts()` guard. Na sensitive stranici ne učitava se
+ni GA ni reCAPTCHA skripta, a nerazrešen pathname je private-by-default.
+Normalne i slično nazvane putanje ostaju dozvoljene.
+
+GA je prebačen sa automatskog page view-a na ručno slanje. Na dozvoljenim
+stranicama `page_path` sadrži samo pathname, a `page_location` se sklapa kao
+origin + pathname; query string i hash se ne šalju. Ova zaštita sprečava
+sekundarno analytics/referrer/cache curenje, ali ne može retroaktivno ukloniti
+prvi bearer URL iz browser/CDN/reverse-proxy/application access loga. Taj prvi
+URL je dokumentovan residual sve dok tokeni ne budu hashovani i log redaction/
+retention operativno provereni.
+
+### 33.6. Kanonski email copy, registration failure i account UX
+
+`sendVerificationEmail()` pravi URL kroz `getStorefrontUrl()`, `new URL()` i
+encoded token, pa HTML i plain-text poruka koriste kanonski
+`/verify-email/[token]` cilj. Email dugme je „Otvori stranicu za potvrdu“, link
+nosi `rel="noreferrer"`, a copy jasno kaže da otvaranje ne menja nalog i da
+korisnik na stranici mora da izabere „Potvrdi email i prijavi me“. Postojeći
+verification token i dalje važi jedan sat; 24 sata je rok tek kasnije izdate
+auth sesije.
+
+Registration delivery `catch` više ne loguje raw SMTP exception ili primaoca.
+Upisuje samo kontrolisanu fazu `DELIVERY`. Registration JSON i login banner ne
+tvrde da je poruka sigurno poslata: kažu da je nalog napravljen, da je email
+potvrda potrebna i da korisnik proveri inbox/spam ili kontaktira podršku. To
+popravlja istinitost failure copy-ja, ali ne predstavlja resend ili outbox.
+
+Posle uspeha `/moj-nalog?verified=true` prikazuje pristupačni statusni banner.
+`VerifiedEmailNotice` zatim briše samo `verified` kroz
+`history.replaceState`, uz očuvanje drugih query parametara i hash-a. Success
+signal se ne ponavlja na refresh, a verification token nikada ne prelazi na
+account URL.
+
+### 33.7. Testovi, build i nezavisni pregled
+
+Funkcionalni presek dodaje tri ciljane test grupe:
+
+| Grupa | Broj | Ključni ugovor |
+| --- | ---: | --- |
+| `email-verification-route.test.ts` | 13 (12 prvobitnih + 1 canonical-origin) | privacy helperi, canonical-origin matrica, read-only GET/HEAD, local Origin guard, 64-hex/expiry/session/failure/commit/cookie redosled |
+| `google-analytics.test.ts` | 3 | credential putanje isključene, normalne putanje dozvoljene, unresolved private-by-default |
+| `credential-path.test.ts` | 3 | ista centralna politika za GA i reCAPTCHA nad verification/reset/newsletter putanjama |
+
+Route testovi posebno dokazuju encode → kompletna response priprema → commit,
+čekanje asinhrone response pripreme, expiry bez commita, blokadu druge sesije,
+stage-only svih operational failure-a, conflict bez cookie-ja i činjenicu da
+kvar loggera ne menja retry ishod.
+
+Opt-in real-PostgreSQL verification test proširen je sa commit primitive na
+route granicu. Prefetch GET/HEAD imaju nula lookup-a i ostavljaju
+`emailVerified`, `updatedAt`, primarni i sibling token nepromenjenim. Dva
+barijerom preklopljena POST radnika zatim daju tačno jednog 303 pobednika sa
+cookie-jem, jednog konfliktnog bez cookie-ja, tačan `verifiedAt` i nula
+preostalih sibling tokena.
+
+| Lokalna provera | Rezultat |
+| --- | --- |
+| ciljani paket | 20 ukupno; 19 prolazi; 1 auth DB test očekivano preskočen |
+| kompletan `npm test` | 145 ukupno; 143 prolaze; 2 opt-in DB testa očekivano preskočena |
+| `npm run lint -- --quiet` | prolazi |
+| `npm run typecheck` | prolazi |
+| `git diff --check` | prolazi |
+| Next.js produkcijski build sa lažnim CI vrednostima | prolazi; svih 91 ruta završeno |
+| završni nezavisni read-only review | ranija dva HIGH i canonical-host MEDIUM nalaz zatvoreni; nema novih blocker/high nalaza |
+
+Dva lokalna skip-a zahtevaju eksplicitan flag i jasno bezbedno imenovanu
+PostgreSQL test bazu; nisu pokrenuta nad produkcijom. Build je koristio lažne CI
+vrednosti i postojeće safe-default grane. Lokalni rezultat nije zamena za
+isolated GitHub PostgreSQL/Chromium CI nad tačnim feature commitom.
+
+Jedina završna test-depth napomena odnosi se na production route composition:
+canonical helper je direktno unit-testiran, ali sam route modul nije importovan
+u test zbog server-only/Prisma zavisnosti. Njegov guard/config/redirect/DB
+redosled pregledan je direktno u produkcijskoj kompoziciji i nema blocker/high
+nalaza; budući route-module harness može dodatno automatizovati tu vezu.
+
+### 33.8. Ograničenja, neinfrastrukturni obim i dokaz koji čeka
+
+Ova etapa ne dodaje Prisma migraciju. Verification i reset tokeni ostaju
+plaintext u bazi, a credential iz prvog request URL-a može ostati u access
+logu. Preostaju:
+
+1. hashovanje jednokratnih verification/reset tokena;
+2. pravi verification resend sa cooldown/concurrency ugovorom;
+3. transactional auth-email outbox, retry worker, deduplikacija, monitoring i
+   alert;
+4. atomska registracija i pouzdan recovery kada SMTP ne isporuči poruku;
+5. audit/backfill postojećih naloga, pa tek zatim kontrolisani verified-login
+   enforcement;
+6. session revocation i sveža role provera;
+7. shared Redis/DB auth limiter i trusted-proxy ugovor;
+8. exactly-once reset-confirm i concurrency-safe jedan aktivni reset token;
+9. staging/runtime auth, delivery i shutdown/redeploy smoke.
+
+Nisu menjani produkcioni podaci, VPS/server, SSH, `.env`, tajne, DNS/TLS/
+reverse proxy, PM2, GitHub `production` Environment, required reviewer,
+repository/environment secrets ili variables. Nije menjan release workflow,
+nije napravljen release tag, production deployment nije pokrenut i sajt nije
+pušten live.
+
+Ova funkcionalna grana još nema sopstveni feature commit dokaz, PR broj,
+exact-head GitHub Actions run, V2 merge SHA ili post-merge CI run. Dokumentaciju
+treba dopuniti tek posle stvarnog PR-a sa tačnim linkovima/statusima i read-only
+proverom da su release/deploy poslovi preskočeni i da nije nastao production
+deployment zapis. Do tada je status: **lokalno završeno i provereno, ali još
+nije integrisano u kanonsku V2 granu**.
+
+---
+
 ## Završna napomena
 
 Najveći deo tehničke osnove je urađen: postoji ozbiljan V2 commerce sloj,
 kontrolisana DB evolucija, kompletan CI, bezbedniji payment/order model, četiri
-ranija P1 hotfixa, integrisani prvi auth-hardening i reset-privacy preseci i
-release mehanizam sa rollbackom. Repository-side V2 release granica i oba auth
-preseka imaju zelene exact-head i post-merge CI dokaze, uz preskočene release/
-deploy poslove.
+ranija P1 hotfixa, integrisani prvi auth-hardening i reset-privacy preseci,
+lokalno završen prefetch-safe verification presek i release mehanizam sa
+rollbackom. Repository-side V2 release granica i prva dva auth preseka imaju
+zelene exact-head i post-merge CI dokaze, uz preskočene release/deploy poslove.
+Treći auth presek trenutno ima samo lokalni test/lint/typecheck/build i
+nezavisni review dokaz; njegov PR/CI/merge dokaz tek treba dodati.
 Spoljašnja GitHub/live zaštita namerno još nije aktivirana. Najveći preostali
 rizik nije jedna izolovana funkcija, već poslednji kilometar: critical/high
 dependency i auth hardening, abuse/consent/email zaštita, pravni podaci i
