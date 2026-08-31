@@ -81,12 +81,7 @@ const EXPECTED_LEGACY_CONSUMER_CALLS = Object.freeze({
   "app/api/user/addresses/route.ts": 2,
   "app/api/user/password/route.ts": 1,
   "app/api/user/profile/route.ts": 2,
-  "app/api/wishlist/route.ts": 3,
   "lib/checkout/order-handler.ts": 1,
-} as const);
-
-const EXPECTED_NEUTRAL_SESSION_CONSUMER_CALLS = Object.freeze({
-  "app/api/user/checkout-data/route.ts": 1,
 } as const);
 
 const EXPECTED_SERVER_SESSION_WIRING = Object.freeze({
@@ -101,7 +96,21 @@ const EXPECTED_GET_TOKEN_CALLS = Object.freeze({
 const CHECKOUT_DATA_ROUTE = "app/api/user/checkout-data/route.ts";
 const CHECKOUT_DATA_FACTORY_MODULE =
   "@/lib/checkout/checkout-data-route";
+const WISHLIST_ROUTE = "app/api/wishlist/route.ts";
+const WISHLIST_FACTORY_MODULE = "@/lib/wishlist/wishlist-route";
+const SERVER_SESSION_FACADE_MODULE = "@/lib/auth/server-session";
 const NEXTAUTH_HANDLER = "app/api/auth/[...nextauth]/route.ts";
+const ROUTE_HTTP_METHOD_NAMES = new Set([
+  "CONNECT",
+  "DELETE",
+  "GET",
+  "HEAD",
+  "OPTIONS",
+  "PATCH",
+  "POST",
+  "PUT",
+  "TRACE",
+]);
 const RAW_SERVER_SESSION_NAMES = [
   "getServerSession",
   "unstable_getServerSession",
@@ -131,6 +140,137 @@ interface ImportedBinding {
   declaration: ts.Identifier;
   localName: string;
 }
+
+interface SessionFactorySpec {
+  dependencyKeys: readonly string[];
+  factoryModule: string;
+  factoryName: string;
+  handlerExport: "DELETE" | "GET" | "PATCH" | "POST" | "PUT";
+  routePath: string;
+}
+
+const SESSION_FACTORY_SPECS = Object.freeze([
+  {
+    routePath: CHECKOUT_DATA_ROUTE,
+    factoryModule: CHECKOUT_DATA_FACTORY_MODULE,
+    factoryName: "createCheckoutDataGetHandler",
+    handlerExport: "GET",
+    dependencyKeys: Object.freeze([
+      "resolveSession",
+      "findUserById",
+      "reportFailure",
+    ]),
+  },
+  {
+    routePath: WISHLIST_ROUTE,
+    factoryModule: WISHLIST_FACTORY_MODULE,
+    factoryName: "createWishlistGetHandler",
+    handlerExport: "GET",
+    dependencyKeys: Object.freeze([
+      "resolveSession",
+      "findItemsByUserId",
+      "reportFailure",
+    ]),
+  },
+  {
+    routePath: WISHLIST_ROUTE,
+    factoryModule: WISHLIST_FACTORY_MODULE,
+    factoryName: "createWishlistPostHandler",
+    handlerExport: "POST",
+    dependencyKeys: Object.freeze([
+      "resolveSession",
+      "upsertItem",
+      "reportFailure",
+    ]),
+  },
+  {
+    routePath: WISHLIST_ROUTE,
+    factoryModule: WISHLIST_FACTORY_MODULE,
+    factoryName: "createWishlistDeleteHandler",
+    handlerExport: "DELETE",
+    dependencyKeys: Object.freeze([
+      "resolveSession",
+      "deleteItems",
+      "reportFailure",
+    ]),
+  },
+] satisfies readonly SessionFactorySpec[]);
+
+function buildFactorySpecsByRoute(
+  factorySpecs: readonly SessionFactorySpec[],
+): ReadonlyMap<string, readonly SessionFactorySpec[]> {
+  const specsByRoute = new Map<string, SessionFactorySpec[]>();
+  const handlerIdentities = new Set<string>();
+  const factoryNames = new Set<string>();
+
+  for (const factorySpec of factorySpecs) {
+    const handlerIdentity = `${factorySpec.routePath}\0${factorySpec.handlerExport}`;
+    if (handlerIdentities.has(handlerIdentity)) {
+      throw new Error(`Duplicate session factory handler: ${handlerIdentity}`);
+    }
+    if (factoryNames.has(factorySpec.factoryName)) {
+      throw new Error(
+        `Duplicate session factory identity: ${factorySpec.factoryName}`,
+      );
+    }
+    if (
+      factorySpec.dependencyKeys.length !==
+        new Set(factorySpec.dependencyKeys).size ||
+      !factorySpec.dependencyKeys.includes("resolveSession") ||
+      !factorySpec.dependencyKeys.includes("reportFailure")
+    ) {
+      throw new Error(
+        `Invalid dependency registry for ${factorySpec.factoryName}`,
+      );
+    }
+
+    handlerIdentities.add(handlerIdentity);
+    factoryNames.add(factorySpec.factoryName);
+    const routeSpecs = specsByRoute.get(factorySpec.routePath) ?? [];
+    routeSpecs.push(factorySpec);
+    specsByRoute.set(factorySpec.routePath, routeSpecs);
+  }
+
+  return new Map(
+    [...specsByRoute].map(([routePath, routeSpecs]) => [
+      routePath,
+      Object.freeze([...routeSpecs]),
+    ]),
+  );
+}
+
+const SESSION_FACTORY_SPECS_BY_ROUTE = buildFactorySpecsByRoute(
+  SESSION_FACTORY_SPECS,
+);
+const SESSION_FACTORY_MODULES = new Set(
+  SESSION_FACTORY_SPECS.map((factorySpec) => factorySpec.factoryModule),
+);
+
+function expectedNeutralCallsByRoute(
+  factorySpecs: readonly SessionFactorySpec[],
+): CountMap {
+  const expectedCalls: CountMap = {};
+  for (const factorySpec of factorySpecs) {
+    expectedCalls[factorySpec.routePath] =
+      (expectedCalls[factorySpec.routePath] ?? 0) + 1;
+  }
+  return expectedCalls;
+}
+
+function expectedNeutralImportsByRoute(
+  specsByRoute: ReadonlyMap<string, readonly SessionFactorySpec[]>,
+): CountMap {
+  return Object.fromEntries(
+    [...specsByRoute.keys()].map((routePath) => [routePath, 1]),
+  );
+}
+
+const EXPECTED_NEUTRAL_SESSION_CONSUMER_CALLS = Object.freeze(
+  expectedNeutralCallsByRoute(SESSION_FACTORY_SPECS),
+);
+const EXPECTED_NEUTRAL_SESSION_CONSUMER_IMPORTS = Object.freeze(
+  expectedNeutralImportsByRoute(SESSION_FACTORY_SPECS_BY_ROUTE),
+);
 
 interface FileInventory {
   authOptionsImports: number;
@@ -220,6 +360,16 @@ function namedImportBindings(
     }
   }
   return matches;
+}
+
+function isUnaliasedNamedImport(binding: ImportedBinding): boolean {
+  const importSpecifier = binding.declaration.parent;
+  return (
+    ts.isImportSpecifier(importSpecifier) &&
+    importSpecifier.propertyName === undefined &&
+    !importSpecifier.isTypeOnly &&
+    binding.localName === importSpecifier.name.text
+  );
 }
 
 function normalizeModuleName(moduleName: string): string {
@@ -345,6 +495,22 @@ function isCommonJsLoader(expression: ts.LeftHandSideExpression): boolean {
   );
 }
 
+function isStaticRequireReference(node: ts.Node): boolean {
+  if (ts.isIdentifier(node)) {
+    return !(
+      ts.isPropertyAccessExpression(node.parent) &&
+      node.parent.name === node
+    ) && node.text === "require";
+  }
+  if (ts.isPropertyAccessExpression(node)) {
+    return node.name.text === "require";
+  }
+  return (
+    ts.isElementAccessExpression(node) &&
+    readStaticString(node.argumentExpression) === "require"
+  );
+}
+
 function isBareRequireIdentifier(node: ts.Identifier): boolean {
   return !(
     ts.isPropertyAccessExpression(node.parent) && node.parent.name === node
@@ -433,23 +599,48 @@ function isDirectCallReference(node: ts.Identifier): boolean {
   return ts.isCallExpression(node.parent) && node.parent.expression === node;
 }
 
-function isExportedCheckoutDataGetFactoryCall(
+function sessionFactorySpecsForRoute(
+  relativePath: string,
+): readonly SessionFactorySpec[] {
+  return SESSION_FACTORY_SPECS_BY_ROUTE.get(relativePath) ?? [];
+}
+
+function registeredSessionFactory(
+  factoryName: string,
+): SessionFactorySpec | null {
+  return (
+    SESSION_FACTORY_SPECS.find(
+      (factorySpec) => factorySpec.factoryName === factoryName,
+    ) ?? null
+  );
+}
+
+function isExportedSessionFactoryCall(
   factoryCall: ts.CallExpression,
   relativePath: string,
+  factorySpec: SessionFactorySpec,
   factoryBinding: ImportedBinding | null,
 ): boolean {
-  if (relativePath !== CHECKOUT_DATA_ROUTE || !factoryBinding) return false;
   if (
+    relativePath !== factorySpec.routePath ||
+    !factoryBinding ||
+    factoryBinding.localName !== factorySpec.factoryName
+  ) {
+    return false;
+  }
+  if (
+    factoryCall.questionDotToken ||
+    (factoryCall.typeArguments?.length ?? 0) !== 0 ||
     factoryCall.arguments.length !== 1 ||
     !ts.isIdentifier(factoryCall.expression) ||
-    factoryCall.expression.text !== factoryBinding.localName
+    factoryCall.expression.text !== factorySpec.factoryName
   ) {
     return false;
   }
   const dependencies = factoryCall.arguments[0];
   if (
     !ts.isObjectLiteralExpression(dependencies) ||
-    dependencies.properties.length !== 3 ||
+    dependencies.properties.length !== factorySpec.dependencyKeys.length ||
     dependencies.properties.some(
       (property) =>
         !ts.isPropertyAssignment(property) ||
@@ -464,10 +655,10 @@ function isExportedCheckoutDataGetFactoryCall(
     ),
   );
   if (
-    dependencyNames.size !== 3 ||
-    !dependencyNames.has("resolveSession") ||
-    !dependencyNames.has("findUserById") ||
-    !dependencyNames.has("reportFailure")
+    dependencyNames.size !== factorySpec.dependencyKeys.length ||
+    factorySpec.dependencyKeys.some(
+      (dependencyName) => !dependencyNames.has(dependencyName),
+    )
   ) {
     return false;
   }
@@ -476,7 +667,9 @@ function isExportedCheckoutDataGetFactoryCall(
     !ts.isVariableDeclaration(declaration) ||
     declaration.initializer !== factoryCall ||
     !ts.isIdentifier(declaration.name) ||
-    declaration.name.text !== "GET"
+    declaration.name.text !== factorySpec.handlerExport ||
+    declaration.type !== undefined ||
+    declaration.exclamationToken !== undefined
   ) {
     return false;
   }
@@ -491,21 +684,36 @@ function isExportedCheckoutDataGetFactoryCall(
   const statement = declarationList.parent;
   return (
     ts.isVariableStatement(statement) &&
-    statement.modifiers?.some(
-      (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
-    ) === true
+    statement.parent === factoryCall.getSourceFile() &&
+    statement.modifiers?.length === 1 &&
+    statement.modifiers[0].kind === ts.SyntaxKind.ExportKeyword
   );
 }
 
 function isApprovedNeutralSessionConsumerCall(
   call: ts.CallExpression,
   relativePath: string,
-  factoryBinding: ImportedBinding | null,
+  resolveServerSessionBinding: ImportedBinding | null,
+  factoryBindings: ReadonlyMap<string, ImportedBinding>,
 ): boolean {
-  if (relativePath !== CHECKOUT_DATA_ROUTE) return false;
+  if (
+    !resolveServerSessionBinding ||
+    call.questionDotToken ||
+    (call.typeArguments?.length ?? 0) !== 0 ||
+    call.arguments.length !== 0 ||
+    !ts.isIdentifier(call.expression) ||
+    call.expression.text !== "resolveServerSession"
+  ) {
+    return false;
+  }
   const resolver = call.parent;
   if (
     !ts.isArrowFunction(resolver) ||
+    resolver.modifiers?.some(
+      (modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword,
+    ) ||
+    (resolver.typeParameters?.length ?? 0) !== 0 ||
+    resolver.type !== undefined ||
     resolver.parameters.length !== 0 ||
     resolver.body !== call
   ) {
@@ -523,15 +731,69 @@ function isApprovedNeutralSessionConsumerCall(
   const dependencies = dependency.parent;
   if (!ts.isObjectLiteralExpression(dependencies)) return false;
   const factoryCall = dependencies.parent;
-  return (
-    ts.isCallExpression(factoryCall) &&
-    factoryCall.arguments[0] === dependencies &&
-    isExportedCheckoutDataGetFactoryCall(
-      factoryCall,
-      relativePath,
-      factoryBinding,
-    )
+  if (
+    !ts.isCallExpression(factoryCall) ||
+    factoryCall.arguments[0] !== dependencies ||
+    !ts.isIdentifier(factoryCall.expression)
+  ) {
+    return false;
+  }
+  const registeredFactory = registeredSessionFactory(
+    factoryCall.expression.text,
   );
+  return Boolean(
+    registeredFactory &&
+      isExportedSessionFactoryCall(
+        factoryCall,
+        relativePath,
+        registeredFactory,
+        factoryBindings.get(registeredFactory.factoryName) ?? null,
+      ),
+  );
+}
+
+function bindingIdentifierNames(name: ts.BindingName): string[] {
+  if (ts.isIdentifier(name)) return [name.text];
+  const names: string[] = [];
+  for (const element of name.elements) {
+    if (ts.isBindingElement(element)) {
+      names.push(...bindingIdentifierNames(element.name));
+    }
+  }
+  return names;
+}
+
+function hasModifier(node: ts.Node, kind: ts.SyntaxKind): boolean {
+  return (
+    ts.canHaveModifiers(node) &&
+    ts.getModifiers(node)?.some((modifier) => modifier.kind === kind) === true
+  );
+}
+
+function exportedHttpMethodNames(statement: ts.Statement): string[] {
+  if (!hasModifier(statement, ts.SyntaxKind.ExportKeyword)) return [];
+
+  let exportedNames: string[] = [];
+  if (ts.isVariableStatement(statement)) {
+    exportedNames = statement.declarationList.declarations.flatMap(
+      (declaration) => bindingIdentifierNames(declaration.name),
+    );
+  } else if (
+    (ts.isFunctionDeclaration(statement) ||
+      ts.isClassDeclaration(statement) ||
+      ts.isEnumDeclaration(statement)) &&
+    statement.name
+  ) {
+    exportedNames = [statement.name.text];
+  } else if (
+    (ts.isModuleDeclaration(statement) ||
+      ts.isImportEqualsDeclaration(statement)) &&
+    statement.name
+  ) {
+    exportedNames = [statement.name.text];
+  }
+
+  return exportedNames.filter((name) => ROUTE_HTTP_METHOD_NAMES.has(name));
 }
 
 function inspectFile(
@@ -563,16 +825,46 @@ function inspectFile(
   let serverSessionBinding: ImportedBinding | null = null;
   let getTokenBinding: ImportedBinding | null = null;
   let resolveServerSessionBinding: ImportedBinding | null = null;
-  let checkoutDataFactoryBinding: ImportedBinding | null = null;
-  let checkoutDataFactoryCalls = 0;
+  const sessionFactorySpecs = sessionFactorySpecsForRoute(relativePath);
+  const sessionFactoryBindings = new Map<string, ImportedBinding>();
+  const sessionFactoryCalls: CountMap = {};
+  const exportedHttpMethods: CountMap = {};
   let nextAuthHandlerBinding: ts.Identifier | null = null;
   let facadeAuthOptionsBinding: ts.Identifier | null = null;
   let facadeAuthOptionsReferences = 0;
 
   for (const statement of sourceFile.statements) {
+    if (sessionFactorySpecs.length > 0) {
+      for (const httpMethod of exportedHttpMethodNames(statement)) {
+        increment(exportedHttpMethods, httpMethod);
+      }
+      if (ts.isExportDeclaration(statement)) {
+        violations.push(
+          `${location(sourceFile, relativePath, statement)} session factory ruta ne sme imati re-export`,
+        );
+      }
+      if (
+        ts.isExportAssignment(statement) ||
+        hasModifier(statement, ts.SyntaxKind.DefaultKeyword)
+      ) {
+        violations.push(
+          `${location(sourceFile, relativePath, statement)} session factory ruta ne sme imati default/export= izvoz`,
+        );
+      }
+    }
+
     if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
       const moduleName = statement.moduleSpecifier.text;
       const bindings = statement.importClause?.namedBindings;
+      if (
+        SESSION_FACTORY_MODULES.has(moduleName) &&
+        (statement.importClause?.name ||
+          (bindings && ts.isNamespaceImport(bindings)))
+      ) {
+        violations.push(
+          `${location(sourceFile, relativePath, statement)} default/namespace session factory import nije dozvoljen`,
+        );
+      }
       if (
         isNextAuthModule(moduleName) &&
         bindings &&
@@ -705,9 +997,14 @@ function inspectFile(
         inventory.resolveServerSessionImports +=
           neutralSessionResolvers.length;
         if (
-          moduleName !== "@/lib/auth/server-session" ||
+          moduleName !== SERVER_SESSION_FACADE_MODULE ||
+          sessionFactorySpecs.length === 0 ||
+          statement.importClause?.isTypeOnly === true ||
           resolveServerSessionBinding ||
-          neutralSessionResolvers.length !== 1
+          neutralSessionResolvers.length !== 1 ||
+          neutralSessionResolvers[0].localName !==
+            "resolveServerSession" ||
+          !isUnaliasedNamedImport(neutralSessionResolvers[0])
         ) {
           violations.push(
             `${location(sourceFile, relativePath, statement)} nekanonski ili dupli resolveServerSession import`,
@@ -717,24 +1014,30 @@ function inspectFile(
         }
       }
 
-      const checkoutDataFactories = namedImportBindings(
-        statement,
-        "createCheckoutDataGetHandler",
-      );
-      if (checkoutDataFactories.length > 0) {
+      for (const registeredSpec of SESSION_FACTORY_SPECS) {
+        const factoryImports = namedImportBindings(
+          statement,
+          registeredSpec.factoryName,
+        );
+        if (factoryImports.length === 0) continue;
         if (
-          relativePath !== CHECKOUT_DATA_ROUTE ||
-          moduleName !== CHECKOUT_DATA_FACTORY_MODULE ||
-          checkoutDataFactoryBinding ||
-          checkoutDataFactories.length !== 1 ||
-          checkoutDataFactories[0].localName !==
-            "createCheckoutDataGetHandler"
+          relativePath !== registeredSpec.routePath ||
+          !sessionFactorySpecs.includes(registeredSpec) ||
+          moduleName !== registeredSpec.factoryModule ||
+          statement.importClause?.isTypeOnly === true ||
+          sessionFactoryBindings.has(registeredSpec.factoryName) ||
+          factoryImports.length !== 1 ||
+          factoryImports[0].localName !== registeredSpec.factoryName ||
+          !isUnaliasedNamedImport(factoryImports[0])
         ) {
           violations.push(
-            `${location(sourceFile, relativePath, statement)} nekanonski ili dupli checkout-data factory import`,
+            `${location(sourceFile, relativePath, statement)} nekanonski ili dupli ${registeredSpec.factoryName} factory import`,
           );
         } else {
-          checkoutDataFactoryBinding = checkoutDataFactories[0];
+          sessionFactoryBindings.set(
+            registeredSpec.factoryName,
+            factoryImports[0],
+          );
         }
       }
     }
@@ -974,7 +1277,8 @@ function inspectFile(
             !isApprovedNeutralSessionConsumerCall(
               node,
               relativePath,
-              checkoutDataFactoryBinding,
+              resolveServerSessionBinding,
+              sessionFactoryBindings,
             )
           ) {
             violations.push(
@@ -987,23 +1291,28 @@ function inspectFile(
           );
         }
 
-        if (checkoutDataFactoryBinding?.localName === calledName) {
-          checkoutDataFactoryCalls += 1;
-          if (
-            !isExportedCheckoutDataGetFactoryCall(
-              node,
-              relativePath,
-              checkoutDataFactoryBinding,
-            )
-          ) {
+        const registeredFactory = registeredSessionFactory(calledName);
+        if (registeredFactory) {
+          const factoryBinding = sessionFactoryBindings.get(calledName) ?? null;
+          if (factoryBinding) {
+            increment(sessionFactoryCalls, calledName);
+            if (
+              !isExportedSessionFactoryCall(
+                node,
+                relativePath,
+                registeredFactory,
+                factoryBinding,
+              )
+            ) {
+              violations.push(
+                `${location(sourceFile, relativePath, node)} ${calledName} factory poziv mora biti tačno direktna export const ${registeredFactory.handlerExport} composition`,
+              );
+            }
+          } else {
             violations.push(
-              `${location(sourceFile, relativePath, node)} checkout-data factory poziv mora biti tačno export const GET composition`,
+              `${location(sourceFile, relativePath, node)} nepoznat ${calledName} factory binding`,
             );
           }
-        } else if (calledName === "createCheckoutDataGetHandler") {
-          violations.push(
-            `${location(sourceFile, relativePath, node)} nepoznat checkout-data factory binding`,
-          );
         }
 
         if (getTokenBinding?.localName === calledName) {
@@ -1123,6 +1432,14 @@ function inspectFile(
       );
     }
     if (
+      sessionFactorySpecs.length > 0 &&
+      isStaticRequireReference(node)
+    ) {
+      violations.push(
+        `${location(sourceFile, relativePath, node)} session factory ruta ne sme koristiti require pristup`,
+      );
+    }
+    if (
       ((ts.isIdentifier(node) && isBareRequireIdentifier(node)) ||
         ((ts.isPropertyAccessExpression(node) ||
           ts.isElementAccessExpression(node)) &&
@@ -1184,6 +1501,11 @@ function inspectFile(
     }
 
     if (ts.isIdentifier(node)) {
+      if (sessionFactorySpecs.length > 0 && node.text === "exports") {
+        violations.push(
+          `${location(sourceFile, relativePath, node)} session factory ruta ne sme koristiti bare exports/CommonJS izvoz`,
+        );
+      }
       if (node.text === "process" && !isApprovedProcessReference(node)) {
         violations.push(
           `${location(sourceFile, relativePath, node)} process sme samo kroz odobreni direktni član`,
@@ -1248,15 +1570,16 @@ function inspectFile(
           `${location(sourceFile, relativePath, node)} resolveServerSession binding ne sme da se prosleđuje ili aliasuje`,
         );
       }
-      if (
-        checkoutDataFactoryBinding &&
-        node.text === checkoutDataFactoryBinding.localName &&
-        node !== checkoutDataFactoryBinding.declaration &&
-        !isDirectCallReference(node)
-      ) {
-        violations.push(
-          `${location(sourceFile, relativePath, node)} checkout-data factory binding ne sme da se prosleđuje ili aliasuje`,
-        );
+      for (const [factoryName, factoryBinding] of sessionFactoryBindings) {
+        if (
+          node.text === factoryBinding.localName &&
+          node !== factoryBinding.declaration &&
+          !isDirectCallReference(node)
+        ) {
+          violations.push(
+            `${location(sourceFile, relativePath, node)} ${factoryName} factory binding ne sme da se prosleđuje ili aliasuje`,
+          );
+        }
       }
       if (
         nextAuthHandlerBinding &&
@@ -1308,13 +1631,51 @@ function inspectFile(
       `${relativePath}: facade mora imati jedan const authOptions binding i jedan direktan read`,
     );
   }
-  if (
-    relativePath === CHECKOUT_DATA_ROUTE &&
-    (!checkoutDataFactoryBinding || checkoutDataFactoryCalls !== 1)
-  ) {
-    violations.push(
-      `${relativePath}: mora imati jedan kanonski checkout-data factory import i jedan export const GET poziv`,
+  if (sessionFactorySpecs.length > 0) {
+    if (
+      inventory.getServerSessionCalls !== 0 ||
+      inventory.getServerSessionImports !== 0 ||
+      inventory.getTokenCalls !== 0 ||
+      inventory.getTokenImports !== 0 ||
+      inventory.authOptionsImports !== 0 ||
+      inventory.authOptionsReferences !== 0
+    ) {
+      violations.push(
+        `${relativePath}: migrirana session factory ruta ne sme mešati raw NextAuth/authOptions put`,
+      );
+    }
+    const expectedHttpMethods: CountMap = Object.fromEntries(
+      sessionFactorySpecs.map((factorySpec) => [
+        factorySpec.handlerExport,
+        1,
+      ]),
     );
+    if (
+      JSON.stringify(sortedRecord(exportedHttpMethods)) !==
+      JSON.stringify(sortedRecord(expectedHttpMethods))
+    ) {
+      violations.push(
+        `${relativePath}: mora imati tačan HTTP export skup ${Object.keys(expectedHttpMethods).join("/")}`,
+      );
+    }
+    if (
+      !resolveServerSessionBinding ||
+      inventory.resolveServerSessionCalls !== sessionFactorySpecs.length
+    ) {
+      violations.push(
+        `${relativePath}: mora imati jedan kanonski resolveServerSession import i po jedan request-lazy poziv za svaki handler`,
+      );
+    }
+    for (const factorySpec of sessionFactorySpecs) {
+      if (
+        !sessionFactoryBindings.has(factorySpec.factoryName) ||
+        sessionFactoryCalls[factorySpec.factoryName] !== 1
+      ) {
+        violations.push(
+          `${relativePath}: mora imati jedan kanonski ${factorySpec.factoryName} import i jedan direktan export const ${factorySpec.handlerExport} poziv`,
+        );
+      }
+    }
   }
   return inventory;
 }
@@ -1416,15 +1777,17 @@ test("legacy session reads remain on the exact shrinking transitional allowlist"
   );
   assert.deepEqual(
     sortedRecord(neutralSessionImports),
-    EXPECTED_NEUTRAL_SESSION_CONSUMER_CALLS,
+    EXPECTED_NEUTRAL_SESSION_CONSUMER_IMPORTS,
   );
 
-  assert.equal(Object.keys(expectedConsumerCalls).length, 53);
-  assert.equal(sum(expectedConsumerCalls), 96);
-  assert.equal(Object.keys(sortedRecord(serverSessionCalls)).length, 54);
-  assert.equal(sum(sortedRecord(serverSessionCalls)), 97);
-  assert.equal(Object.keys(sortedRecord(neutralSessionCalls)).length, 1);
-  assert.equal(sum(sortedRecord(neutralSessionCalls)), 1);
+  assert.equal(Object.keys(expectedConsumerCalls).length, 52);
+  assert.equal(sum(expectedConsumerCalls), 93);
+  assert.equal(Object.keys(sortedRecord(serverSessionCalls)).length, 53);
+  assert.equal(sum(sortedRecord(serverSessionCalls)), 94);
+  assert.equal(Object.keys(sortedRecord(neutralSessionCalls)).length, 2);
+  assert.equal(sum(sortedRecord(neutralSessionCalls)), 4);
+  assert.equal(Object.keys(sortedRecord(neutralSessionImports)).length, 2);
+  assert.equal(sum(sortedRecord(neutralSessionImports)), 2);
   assert.equal(Object.keys(sortedRecord(getTokenCalls)).length, 2);
   assert.equal(sum(sortedRecord(getTokenCalls)), 2);
 });
@@ -1465,6 +1828,7 @@ test("inventory rejects reviewed import, alias and re-export bypass forms", () =
     },
     {
       name: "neutral-facade-binding-alias",
+      relativePath: CHECKOUT_DATA_ROUTE,
       source: `
         import { resolveServerSession } from "@/lib/auth/server-session";
         const read = resolveServerSession;
@@ -1492,7 +1856,8 @@ test("inventory rejects reviewed import, alias and re-export bypass forms", () =
           resolveSession: () => resolveServerSession(),
         });
       `,
-      expected: /nekanonski ili dupli checkout-data factory import/,
+      expected:
+        /nekanonski ili dupli createCheckoutDataGetHandler factory import/,
     },
     {
       name: "checkout-data-factory-alias",
@@ -1506,7 +1871,8 @@ test("inventory rejects reviewed import, alias and re-export bypass forms", () =
           resolveSession: () => resolveServerSession(),
         });
       `,
-      expected: /nekanonski ili dupli checkout-data factory import/,
+      expected:
+        /nekanonski ili dupli createCheckoutDataGetHandler factory import/,
     },
     {
       name: "checkout-data-reviewed-factory-result-unused",
@@ -1522,7 +1888,8 @@ test("inventory rejects reviewed import, alias and re-export bypass forms", () =
           return Response.json({ ok: true });
         }
       `,
-      expected: /checkout-data factory poziv mora biti tačno export const GET composition/,
+      expected:
+        /createCheckoutDataGetHandler factory poziv mora biti tačno direktna export const GET composition/,
     },
     {
       name: "checkout-data-resolver-spread-override",
@@ -1540,7 +1907,408 @@ test("inventory rejects reviewed import, alias and re-export bypass forms", () =
           ...bypass,
         });
       `,
-      expected: /checkout-data factory poziv mora biti tačno export const GET composition/,
+      expected:
+        /createCheckoutDataGetHandler factory poziv mora biti tačno direktna export const GET composition/,
+    },
+    {
+      name: "checkout-data-resolver-alias",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        const readSession = resolveServerSession;
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => readSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+      `,
+      expected:
+        /resolveServerSession binding ne sme da se prosleđuje ili aliasuje/,
+    },
+    {
+      name: "checkout-data-resolver-optional-call",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession?.(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+      `,
+      expected: /neodobren request-lazy resolveServerSession wiring/,
+    },
+    {
+      name: "checkout-data-resolver-optional-parameter",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: (_options?: never) => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+      `,
+      expected: /neodobren request-lazy resolveServerSession wiring/,
+    },
+    {
+      name: "checkout-data-resolver-type-arguments",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession<unknown>(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+      `,
+      expected: /neodobren request-lazy resolveServerSession wiring/,
+    },
+    {
+      name: "checkout-data-resolver-async",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: async () => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+      `,
+      expected: /neodobren request-lazy resolveServerSession wiring/,
+    },
+    {
+      name: "checkout-data-computed-dependency",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          ["resolveSession"]: () => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+      `,
+      expected:
+        /createCheckoutDataGetHandler factory poziv mora biti tačno direktna export const GET composition/,
+    },
+    {
+      name: "checkout-data-duplicate-dependency",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession(),
+          resolveSession: () => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+      `,
+      expected:
+        /createCheckoutDataGetHandler factory poziv mora biti tačno direktna export const GET composition/,
+    },
+    {
+      name: "wishlist-factory-method-swap",
+      relativePath: WISHLIST_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import {
+          createWishlistDeleteHandler,
+          createWishlistGetHandler,
+          createWishlistPostHandler,
+        } from "@/lib/wishlist/wishlist-route";
+        export const GET = createWishlistPostHandler({
+          resolveSession: () => resolveServerSession(),
+          upsertItem: async () => undefined,
+          reportFailure: () => undefined,
+        });
+        export const POST = createWishlistGetHandler({
+          resolveSession: () => resolveServerSession(),
+          findItemsByUserId: async () => [],
+          reportFailure: () => undefined,
+        });
+        export const DELETE = createWishlistDeleteHandler({
+          resolveSession: () => resolveServerSession(),
+          deleteItems: async () => undefined,
+          reportFailure: () => undefined,
+        });
+      `,
+      expected:
+        /createWishlistPostHandler factory poziv mora biti tačno direktna export const POST composition/,
+    },
+    {
+      name: "checkout-data-extra-http-export",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+        export const POST = () => new Response();
+      `,
+      expected: /mora imati tačan HTTP export skup GET/,
+    },
+    {
+      name: "checkout-data-commonjs-handler-overwrite",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+        exports.GET = async () => new Response("bypass");
+      `,
+      expected: /session factory ruta ne sme koristiti bare exports\/CommonJS izvoz/,
+    },
+    {
+      name: "checkout-data-commonjs-define-handler-overwrite",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+        Object.defineProperty(exports, "GET", {
+          value: async () => new Response("bypass"),
+        });
+      `,
+      expected: /session factory ruta ne sme koristiti bare exports\/CommonJS izvoz/,
+    },
+    {
+      name: "checkout-data-commonjs-self-require-handler-overwrite",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+        require("./route").GET = async () => new Response("bypass");
+      `,
+      expected: /session factory ruta ne sme koristiti require pristup/,
+    },
+    {
+      name: "checkout-data-commonjs-define-self-require-handler-overwrite",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+        Object.defineProperty(require("./route"), "GET", {
+          value: async () => new Response("bypass"),
+        });
+      `,
+      expected: /session factory ruta ne sme koristiti require pristup/,
+    },
+    {
+      name: "checkout-data-computed-global-require-handler-overwrite",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+        globalThis["require"]("./route").GET = async () =>
+          new Response("bypass");
+      `,
+      expected: /session factory ruta ne sme koristiti require pristup/,
+    },
+    {
+      name: "checkout-data-runtime-namespace-http-export",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+        export namespace POST {
+          export const bypass = true;
+        }
+      `,
+      expected: /mora imati tačan HTTP export skup GET/,
+    },
+    {
+      name: "checkout-data-route-re-export",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+        export { GET as POST };
+      `,
+      expected: /session factory ruta ne sme imati re-export/,
+    },
+    {
+      name: "checkout-data-route-default-export",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+        export default GET;
+      `,
+      expected: /session factory ruta ne sme imati default\/export= izvoz/,
+    },
+    {
+      name: "checkout-data-resolver-import-alias",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import {
+          resolveServerSession as readSession,
+        } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => readSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+      `,
+      expected: /nekanonski ili dupli resolveServerSession import/,
+    },
+    {
+      name: "checkout-data-default-factory-import",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import CheckoutFactory from "@/lib/checkout/checkout-data-route";
+        export const GET = CheckoutFactory({
+          resolveSession: () => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+      `,
+      expected: /default\/namespace session factory import nije dozvoljen/,
+    },
+    {
+      name: "wishlist-namespace-factory-import",
+      relativePath: WISHLIST_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import * as WishlistFactories from "@/lib/wishlist/wishlist-route";
+        void WishlistFactories;
+      `,
+      expected: /default\/namespace session factory import nije dozvoljen/,
+    },
+    {
+      name: "checkout-data-duplicate-factory-call",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+        void createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+      `,
+      expected:
+        /createCheckoutDataGetHandler factory poziv mora biti tačno direktna export const GET composition/,
+    },
+    {
+      name: "checkout-data-shorthand-dependency",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        const reportFailure = () => undefined;
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure,
+        });
+      `,
+      expected:
+        /createCheckoutDataGetHandler factory poziv mora biti tačno direktna export const GET composition/,
+    },
+    {
+      name: "checkout-data-extra-dependency",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+          bypass: true,
+        });
+      `,
+      expected:
+        /createCheckoutDataGetHandler factory poziv mora biti tačno direktna export const GET composition/,
+    },
+    {
+      name: "checkout-data-route-star-re-export",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession(),
+          findUserById: async () => null,
+          reportFailure: () => undefined,
+        });
+        export * from "./shadow";
+      `,
+      expected: /session factory ruta ne sme imati re-export/,
+    },
+    {
+      name: "checkout-data-mixed-legacy-and-neutral-session",
+      relativePath: CHECKOUT_DATA_ROUTE,
+      source: `
+        import { getServerSession } from "next-auth";
+        import { authOptions } from "@/lib/auth";
+        import { resolveServerSession } from "@/lib/auth/server-session";
+        import { createCheckoutDataGetHandler } from "@/lib/checkout/checkout-data-route";
+        export const GET = createCheckoutDataGetHandler({
+          resolveSession: () => resolveServerSession(),
+          findUserById: async () => {
+            await getServerSession(authOptions);
+            return null;
+          },
+          reportFailure: () => undefined,
+        });
+      `,
+      expected: /ne sme mešati raw NextAuth\/authOptions put/,
     },
     {
       name: "neutral-facade-star-re-export",
@@ -1783,4 +2551,42 @@ test("inventory rejects reviewed import, alias and re-export bypass forms", () =
     );
     assert.match(violations.join("\n"), fixture.expected, fixture.name);
   }
+});
+
+test("inventory accepts the exact multi-method wishlist composition", () => {
+  const violations: string[] = [];
+  const inventory = inspectFile(
+    WISHLIST_ROUTE,
+    violations,
+    `
+      import { resolveServerSession } from "@/lib/auth/server-session";
+      import {
+        createWishlistDeleteHandler,
+        createWishlistGetHandler,
+        createWishlistPostHandler,
+      } from "@/lib/wishlist/wishlist-route";
+
+      export const GET = createWishlistGetHandler({
+        resolveSession: () => resolveServerSession(),
+        findItemsByUserId: async () => [],
+        reportFailure: () => undefined,
+      });
+
+      export const POST = createWishlistPostHandler({
+        resolveSession: () => resolveServerSession(),
+        upsertItem: async () => undefined,
+        reportFailure: () => undefined,
+      });
+
+      export const DELETE = createWishlistDeleteHandler({
+        resolveSession: () => resolveServerSession(),
+        deleteItems: async () => undefined,
+        reportFailure: () => undefined,
+      });
+    `,
+  );
+
+  assert.deepEqual(violations, []);
+  assert.equal(inventory.resolveServerSessionCalls, 3);
+  assert.equal(inventory.resolveServerSessionImports, 1);
 });

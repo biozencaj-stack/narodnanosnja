@@ -3,7 +3,7 @@
 Datum početka: 2026-08-30  
 Radna grana: `ispravka/v2-db-authoritative-sessions`  
 Polazni V2 SHA: `d926e152f51f363c66d37f46859fbecffbc634d2`  
-Status: **u radu; faze 1–5, dormantni server guard, tranzicioni legacy-only facade i source-inventory gate faze 6 imaju zelen exact-head PostgreSQL/browser/build CI dokaz; prvi customer call-site batch je lokalno u radu, V2 aktivacija nije izvršena**
+Status: **u radu; faze 1–5, dormantni server guard, tranzicioni legacy-only facade, source-inventory gate i checkout-data customer batch faze 6 imaju zelen exact-head PostgreSQL/browser/build CI dokaz; wishlist customer batch ima kompletan lokalni dokaz i čeka commit/exact-head CI, V2 aktivacija nije izvršena**
 
 ## 1. Granica ove sekcije
 
@@ -145,7 +145,7 @@ definisanog ugovora.
 | 3 | Revocation u reset/change/privileged/demo write tokovima | završeno; exact-head PostgreSQL 16 CI dokaz zelen |
 | 4 | Credentials i verification V2 session issuance/rotation | završeno kao dormantni paket; exact-head run `33330847915` zelen |
 | 5 | Pouzdan current-session logout | završen kao dormantni paket; exact-head run `33331632579` zelen |
-| 6 | Customer/ownership/admin server guard migracija | dormantni guard/facade i source-inventory gate imaju zelen exact-head CI; prvi read-only customer call-site batch lokalno u radu |
+| 6 | Customer/ownership/admin server guard migracija | dormantni guard/facade, source-inventory gate i checkout-data consumer imaju zelen exact-head CI; wishlist consumer ima kompletan lokalni dokaz i čeka commit/exact-head CI |
 | 7 | Session contract migracija | nije započeto |
 | 8 | Real-PG race/E2E matrica i uklanjanje preflight blockera | nije započeto |
 | 9 | Završna dokumentacija, exact-head i post-merge V2 dokaz | nije započeto |
@@ -1201,9 +1201,98 @@ auth bypass niti promena guest checkout mogućnosti.
 | --- | --- |
 | Factory HTTP/session matrica | `8` pass / `0` fail; isti handler radi svež session i DB read po zahtevu |
 | AST raw + neutralni migration-frontier gate | `2` pass / `0` fail; raw `96/53`, raw+facade `97/54`, neutralno `1/1`, getToken `2/2` |
+| Kompletan `npm test` | `437` ukupno / `411` pass / `26` očekivanih real-PG skip / `0` fail |
 | TypeScript bez emitovanja | PASS |
 | ESLint za izmenjene TS fajlove | PASS, `0` upozorenja |
 | `git diff --check` | PASS |
+| Probni production build | PASS; `93` statičke stranice, bez aktivacije/deploy-a |
+
+Commit `7b81da6305997072c6f9cb552baa5d76525a1da6` i exact-head PR run
+`33342696902`, attempt 1, potvrdili su checkout-data paket. Job
+`Provera verzije` završio je sa `SUCCESS`, dok su V2 release potvrda i
+production deploy ostali `SKIPPED`.
+
+### 10.10. Drugi customer consumer — wishlist API
+
+Sledeći mali call-site batch migrira samo `GET`, `POST` i `DELETE` eksport iz
+`/api/wishlist`. Tri direktna `getServerSession(authOptions)` poziva uklonjena
+su iz production composition root-a i svaka metoda sada dobija sopstveni
+request-lazy `resolveSession: () => resolveServerSession()` dependency. Ruta
+direktno eksportuje rezultat odgovarajuće kanonske fabrike, bez module-scope
+session promise-a, keša, alternativnog handlera ili raw NextAuth importa.
+
+Granica je podeljena na:
+
+- `lib/wishlist/wishlist-route.ts` — stateless dependency-injected GET/POST/
+  DELETE fabrike sa type-only neutralnim session ugovorom;
+- `lib/wishlist/wishlist-route.test.ts` — izolovana Node matrica bez Prisma,
+  NextAuth ili module mockovanja;
+- `app/api/wishlist/route.ts` — tanko povezivanje neutralnog facade-a, tri
+  postojeće Prisma operacije i jednog coarse stage-only reportera.
+
+Session i failure ugovor je isti za sve tri metode: `anonymous` ostaje postojeći
+`401 { success: false, error: "Morate biti prijavljeni" }`, dok `unavailable`,
+resolver throw i malformed authenticated principal fail-closed vraćaju generički
+`503`. Auth se završava pre parsiranja POST/DELETE body-ja, pa anonimni zahtev sa
+neispravnim JSON-om i dalje ne ulazi u body niti DB putanju. Reporter dobija samo
+frozen `{ method, stage }`, gde je stage `SESSION`, `BODY` ili `DATABASE`; ne
+dobija exception, user ID, product ID, session ni Prisma red. Njegov sync throw
+ili async rejection ne može zameniti privatni HTTP odgovor.
+
+Ownership i Prisma semantika ostaju namerno iste:
+
+- GET koristi isključivo svež `authenticated.principal.id`, zadržava
+  `createdAt desc` redosled i javno projektuje samo `productId`;
+- POST ignoriše svako body ownership polje i zadržava atomski compound-key
+  `upsert`, uključujući postojeće success poruke i `200` status;
+- DELETE zadržava owner-scoped `deleteMany` i uspeh za `count: 0`, pa ostaje
+  idempotentan i ne otkriva postojanje tuđeg reda;
+- postojeći falsy `productId` ugovor ostaje `400`, dok malformed JSON, `null`
+  root i truthy non-string vrednost ostaju na postojećoj method-specific
+  coarse `500` granici.
+
+GET odgovor se konstruiše samo od eksplicitno pročitanog `productId`; skrivena
+adapter polja i custom `toJSON` ne mogu proširiti payload. Postojeći nullable
+`productId` drift se za sada čuva radi kompatibilnosti i evidentiran je za
+poseban data-contract batch. Svi `200/400/401/500/503` odgovori sada nose
+`private, no-store`, `Pragma: no-cache`, no-referrer i noindex/noarchive
+headere. Globalni `proxy.ts` već radi same-origin kontrolu wishlist mutacija,
+pa ovaj route-local batch ne duplira CSRF politiku.
+
+AST migration-frontier gate za ovaj batch zaključava četiri direktna factory
+composition-a kroz data-driven registar: checkout GET i wishlist GET/POST/
+DELETE. Za svaki eksport zahteva kanonski nealiasovani import, tačan HTTP
+factory, exact dependency skup bez spread/computed/duplicate/extra polja i
+strogo `() => resolveServerSession()` telo. Neutralni call i import snapshoti
+su odvojeni zato što wishlist ima tri poziva, ali jedan resolver import.
+Migrirane route datoteke dodatno ne smeju koristiti bare `exports`/CommonJS
+prepisivanje, nijedan statički `require` pristup, runtime namespace/
+import-equals HTTP izvoz ni generički ili optional resolver poziv. Adversarial
+fixture-i zaključavaju te oblike, kao i neiskorišćen, dupliran ili sa HTTP
+metodom zamenjen factory rezultat.
+Kumulativni frontier posle ove migracije mora biti:
+
+- raw legacy consumer `93/52`;
+- raw zajedno sa jedinim centralnim facade read-om `94/53`;
+- neutralni resolver pozivi `4/2`, a neutralni importi `2/2`;
+- `getToken` nepromenjen `2/2`.
+
+Ovaj batch ne migrira zaseban favorites server page, ne rešava nullable
+`productId` naspram frontend `string[]` ugovora i ne vezuje Zustand wishlist
+store za identitet sesije. Mogući stale UI pri promeni korisnika i konkurentnim
+inicijalizacijama ostaje eksplicitno odvojen frontend batch; nije proširenje
+server grant-a niti razlog da se ova ruta vrati na raw session čitanje.
+
+| Lokalna provera wishlist batch-a | Rezultat |
+| --- | --- |
+| Factory HTTP/session/ownership matrica | `12` pass / `0` fail; isti handler sekvencijalno i paralelno radi tačno jedan svež session read po zahtevu za sva tri metoda; auth-before-body, owner-only DB granice i row/collection adapter drift fixture-i |
+| AST raw + neutralni migration-frontier gate | `3` pass / `0` fail; raw `93/52`, raw+facade `94/53`, neutralni pozivi `4/2`, neutralni importi `2/2`, getToken `2/2` |
+| Kompletan `npm test` | `450` ukupno / `424` pass / `26` očekivanih real-PG skip / `0` fail |
+| TypeScript bez emitovanja | PASS |
+| ESLint za sve izmenjene TS fajlove | PASS, `0` upozorenja |
+| Kompletan ESLint | PASS, `0` grešaka / `67` postojećih upozorenja |
+| `git diff --check` | PASS |
+| Probni production build | PASS; Prisma client generisan, Next build i svih `93/93` statičkih stranica završeni; nedostupna lokalna test baza koristila je postojeće safe-default putanje, bez aktivacije/deploy-a |
 
 ## 11. Obavezni transakcioni redosledi aktivacije i narednih faza
 
@@ -1370,7 +1459,9 @@ red nije tvrdnja o uspehu.
 | Faza 6 tranzicioni facade exact-head dokaz | [run `33334129994`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33334129994), attempt 1, PostgreSQL/session/E2E/build `SUCCESS`; release/deploy `SKIPPED` |
 | Faza 6 mrtvi route cleanup/source inventory commit | `23501d592724a709000160cc68058ccac7a74beb` |
 | Faza 6 source inventory exact-head dokaz | [run `33336276720`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33336276720), attempt 1, PostgreSQL/session/E2E/build `SUCCESS`; release/deploy `SKIPPED` |
-| Faza 6 checkout-data consumer batch | lokalno u radu; čeka završni pregled, stabilan commit i exact-head run |
+| Faza 6 checkout-data consumer commit | `7b81da6305997072c6f9cb552baa5d76525a1da6` |
+| Faza 6 checkout-data exact-head dokaz | [run `33342696902`](https://github.com/biozencaj-stack/narodnanosnja/actions/runs/33342696902), attempt 1, `Provera verzije` `SUCCESS`; release/deploy `SKIPPED` |
+| Faza 6 wishlist consumer batch | kompletan lokalni dokaz zelen; čeka stabilan commit i exact-head run |
 | Feature merge SHA | nije izvršen |
 | Post-merge V2 run | nije izvršen |
 | Release/deploy jobs | moraju ostati `SKIPPED` |

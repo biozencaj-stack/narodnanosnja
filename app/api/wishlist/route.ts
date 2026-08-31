@@ -1,125 +1,58 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
-import { prisma } from '@/lib/db';
+import { resolveServerSession } from "@/lib/auth/server-session";
+import { prisma } from "@/lib/db";
+import {
+  createWishlistDeleteHandler,
+  createWishlistGetHandler,
+  createWishlistPostHandler,
+  type WishlistFailure,
+} from "@/lib/wishlist/wishlist-route";
 
-// GET - Get user's wishlist
-export async function GET() {
+function reportWishlistFailure(failure: WishlistFailure): void {
   try {
-    const session = await getServerSession(authOptions);
-
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { success: false, error: 'Morate biti prijavljeni' },
-        { status: 401 }
-      );
-    }
-
-    const wishlist = await prisma.wishlist.findMany({
-      where: { userId: session.user.id },
-      select: { productId: true },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    return NextResponse.json({
-      success: true,
-      data: wishlist.map((item) => item.productId),
-    });
-  } catch (error) {
-    console.error('Wishlist GET error:', error);
-    return NextResponse.json(
-      { success: false, error: 'Greška pri učitavanju liste želja' },
-      { status: 500 }
-    );
+    console.error("Wishlist request failed", failure);
+  } catch {
+    // Observability must never replace the fail-closed private response.
   }
 }
 
-// POST - Add product to wishlist
-export async function POST(request: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions);
+export const GET = createWishlistGetHandler({
+  resolveSession: () => resolveServerSession(),
+  findItemsByUserId: (userId) =>
+    prisma.wishlist.findMany({
+      where: { userId },
+      select: { productId: true },
+      orderBy: { createdAt: "desc" },
+    }),
+  reportFailure: reportWishlistFailure,
+});
 
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { success: false, error: 'Morate biti prijavljeni' },
-        { status: 401 }
-      );
-    }
-
-    const { productId } = await request.json();
-
-    if (!productId) {
-      return NextResponse.json(
-        { success: false, error: 'Product ID je obavezan' },
-        { status: 400 }
-      );
-    }
-
-    // Use upsert to handle duplicates gracefully
-    await prisma.wishlist.upsert({
+export const POST = createWishlistPostHandler({
+  resolveSession: () => resolveServerSession(),
+  upsertItem: (userId, productId) =>
+    prisma.wishlist.upsert({
       where: {
         userId_productId: {
-          userId: session.user.id,
-          productId: productId,
+          userId,
+          productId: productId as string,
         },
       },
-      update: {}, // No update needed if exists
+      update: {},
       create: {
-        userId: session.user.id,
-        productId: productId,
+        userId,
+        productId: productId as string,
       },
-    });
+    }),
+  reportFailure: reportWishlistFailure,
+});
 
-    return NextResponse.json({
-      success: true,
-      message: 'Proizvod dodat u listu želja',
-    });
-  } catch (error) {
-    console.error('Wishlist POST error:', error);
-    return NextResponse.json(
-      { success: false, error: 'Greška pri dodavanju u listu želja' },
-      { status: 500 }
-    );
-  }
-}
-
-// DELETE - Remove product from wishlist
-export async function DELETE(request: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions);
-
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { success: false, error: 'Morate biti prijavljeni' },
-        { status: 401 }
-      );
-    }
-
-    const { productId } = await request.json();
-
-    if (!productId) {
-      return NextResponse.json(
-        { success: false, error: 'Product ID je obavezan' },
-        { status: 400 }
-      );
-    }
-
-    await prisma.wishlist.deleteMany({
+export const DELETE = createWishlistDeleteHandler({
+  resolveSession: () => resolveServerSession(),
+  deleteItems: (userId, productId) =>
+    prisma.wishlist.deleteMany({
       where: {
-        userId: session.user.id,
-        productId: productId,
+        userId,
+        productId: productId as string,
       },
-    });
-
-    return NextResponse.json({
-      success: true,
-      message: 'Proizvod uklonjen iz liste želja',
-    });
-  } catch (error) {
-    console.error('Wishlist DELETE error:', error);
-    return NextResponse.json(
-      { success: false, error: 'Greška pri uklanjanju iz liste želja' },
-      { status: 500 }
-    );
-  }
-}
+    }),
+  reportFailure: reportWishlistFailure,
+});
