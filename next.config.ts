@@ -1,7 +1,13 @@
 import type { NextConfig } from 'next';
 import createNextIntlPlugin from 'next-intl/plugin';
+import { isSearchIndexingEnabled } from './lib/config/search-indexing';
 
 const withNextIntl = createNextIntlPlugin('./i18n/request.ts');
+const searchIndexingEnabled = isSearchIndexingEnabled();
+const noIndexHeader = {
+  key: 'X-Robots-Tag',
+  value: 'noindex, nofollow, noarchive',
+};
 
 const contentSecurityPolicy = [
   "default-src 'self'",
@@ -28,6 +34,7 @@ const securityHeaders = [
     key: 'Permissions-Policy',
     value: 'camera=(), microphone=(), geolocation=(), browsing-topics=()',
   },
+  ...(searchIndexingEnabled ? [] : [noIndexHeader]),
   ...(process.env.ENABLE_HSTS === 'true'
     ? [{
         key: 'Strict-Transport-Security',
@@ -40,7 +47,7 @@ const sensitiveCredentialHeaders = [
   { key: 'Cache-Control', value: 'private, no-store, max-age=0' },
   { key: 'Pragma', value: 'no-cache' },
   { key: 'Referrer-Policy', value: 'no-referrer' },
-  { key: 'X-Robots-Tag', value: 'noindex, nofollow, noarchive' },
+  ...(searchIndexingEnabled ? [noIndexHeader] : []),
 ];
 
 const nextConfig: NextConfig = {

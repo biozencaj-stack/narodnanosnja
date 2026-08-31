@@ -15,6 +15,7 @@ import { getStorefrontUrl } from "@/lib/config/storefront-url";
 import { StoreIdentityProvider } from "@/components/StoreIdentityProvider";
 import { serializeJsonLd } from "@/lib/security/json-ld";
 import { GoogleAnalytics } from "@/components/analytics/GoogleAnalytics";
+import { isSearchIndexingEnabled } from "@/lib/config/search-indexing";
 
 const configuredGaId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID;
 const GA_ID = configuredGaId && /^G-[A-Z0-9]+$/i.test(configuredGaId)
@@ -45,6 +46,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const title = settings["seo.title"] || `${storeName} – Online prodavnica`;
   const description = settings["seo.description"] || settings["store.description"];
   const metadataBase = getStorefrontUrl();
+  const searchIndexingEnabled = isSearchIndexingEnabled();
 
   return {
     title: { default: title, template: `%s | ${storeName}` },
@@ -60,17 +62,26 @@ export async function generateMetadata(): Promise<Metadata> {
       description,
     },
     twitter: { card: "summary_large_image", title, description },
-    robots: {
-      index: true,
-      follow: true,
-      googleBot: {
-        index: true,
-        follow: true,
-        "max-video-preview": -1,
-        "max-image-preview": "large",
-        "max-snippet": -1,
-      },
-    },
+    robots: searchIndexingEnabled
+      ? {
+          index: true,
+          follow: true,
+          googleBot: {
+            index: true,
+            follow: true,
+            "max-video-preview": -1,
+            "max-image-preview": "large",
+            "max-snippet": -1,
+          },
+        }
+      : {
+          index: false,
+          follow: false,
+          googleBot: {
+            index: false,
+            follow: false,
+          },
+        },
     verification: { google: process.env.GOOGLE_SITE_VERIFICATION },
   };
 }
