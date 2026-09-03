@@ -227,6 +227,14 @@ psql -X "$DATABASE_URL" \
 ```
 
 On namerno odbija šemu na kojoj postoji bilo koja od tri auth expand promene.
+Taj broj je namerno tri, a ne četiri: lista zabranjenih kolona u
+`scripts/auth-email-verification-audit-legacy.sql` pokriva migracije 5–7
+(`tokenHash`, verification throttle kolone i `emailVerificationLoginGraceUntil`).
+Osma migracija dodaje session kolone i `AuthPolicyState`, koje ovaj audit ne
+proverava, pa njeno prisustvo samo po sebi ne obara legacy skriptu. Svuda gde
+dokumentacija u vezi sa auditom kaže „tri auth expand migracije” misli se na
+petu, šestu i sedmu, a ne na ceo lanac.
+
 Posle kontrolisane primene sve tri auth migracije koristi se current audit:
 
 ```bash
