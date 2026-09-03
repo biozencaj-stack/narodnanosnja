@@ -54,6 +54,7 @@ const navGroupDefs: NavGroupDef[] = [
     label: "Sadržaj",
     items: [
       { href: "/admin/articles", label: "Članci / Blog", iconName: "FileText", roles: ["ADMIN"] },
+      { href: "/admin/sekcije", label: "Sekcije stranica", iconName: "LayoutTemplate", roles: ["ADMIN"] },
       { href: "/admin/banners", label: "Baneri", iconName: "ImageIcon", roles: ["ADMIN"] },
       { href: "/admin/ticker", label: "Trakica", iconName: "MessageSquare", roles: ["ADMIN"] },
       { href: "/admin/store-locations", label: "Prodajna mesta", iconName: "MapPin", roles: ["ADMIN"] },

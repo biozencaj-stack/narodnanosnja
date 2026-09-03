@@ -9,30 +9,16 @@ import { prisma } from './index';
 // ===========================================
 // BANNERS
 // ===========================================
-
-/**
- * Get banners by position (no caching - images are too large for unstable_cache 2MB limit)
- * Consider moving images to external storage (S3/Cloudinary) for better performance
- */
-export async function getCachedBanners(position: string) {
-  return prisma.banner.findMany({
-    where: {
-      isActive: true,
-      position,
-    },
-    orderBy: { order: 'asc' },
-  });
-}
-
-/**
- * Get all banners (no caching - images are too large)
- */
-export async function getCachedAllBanners() {
-  return prisma.banner.findMany({
-    where: { isActive: true },
-    orderBy: [{ position: 'asc' }, { order: 'asc' }],
-  });
-}
+//
+// Ovde je nekad stajao `getCachedBanners`/`getCachedAllBanners`. Nijedan nije
+// bio keširan — komentar je i sam govorio da su slike prevelike za
+// `unstable_cache` — i nijedan nije imao pozivaoca. Baneri se čitaju kroz
+// `lib/banners/index.ts`.
+//
+// Uz njih su obrisana i tri `revalidateTag("banners", "default")` poziva iz
+// admin ruta. Oznaku `banners` nikad niko nije registrovao, pa su bili no-op:
+// izgledali su kao invalidacija keša, a nisu radili ništa. Takav kod je gori
+// od nikakvog, jer sledeći čitalac veruje da keš postoji i da se čisti.
 
 // ===========================================
 // TICKER MESSAGES

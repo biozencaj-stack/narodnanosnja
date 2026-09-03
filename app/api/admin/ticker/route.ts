@@ -107,8 +107,12 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    // Update order for each message
-    await Promise.all(
+    // Jedna transakcija, ne `Promise.all` sa zasebnim upitima. Kod paralelnih
+    // upisa jedan neuspeh ostavlja spisak delimično preslagan: deo poruka
+    // dobije nove redne brojeve, deo zadrži stare, pa se brojevi ponove ili
+    // preskoče. Odgovor pri tom bude 500 i administrator ponovi radnju nad
+    // stanjem koje više nije ono koje je video.
+    await prisma.$transaction(
       ids.map((id, index) =>
         prisma.tickerMessage.update({
           where: { id },

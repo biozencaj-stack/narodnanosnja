@@ -1,4 +1,5 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, Prisma } from "@prisma/client";
+import { podrazumevanRaspored } from "../lib/sekcije/podrazumevani-raspored";
 
 if (process.env.E2E_DATABASE_SEED !== "true") {
   throw new Error(
@@ -19,6 +20,47 @@ if (!/(?:^|[_-])(e2e|test|provera)(?:$|[_-])/i.test(databaseName)) {
 }
 
 const prisma = new PrismaClient();
+
+/**
+ * Sekcije za `pageKey="home"`.
+ *
+ * Seed upisuje TAČNO ugrađeni raspored iz `podrazumevani-raspored.ts`, kao
+ * objavljene sekcije. Time se postiže dvoje: E2E ima šta da uređuje, a
+ * renderovana početna ostaje ista kao kad bi se koristio povratak na ugrađeni
+ * raspored — pa postojeći mobilni test kupovine ne vidi nikakvu promenu.
+ *
+ * Redosled u nizu je i redosled na stranici; `publishedAt` se postavlja jer
+ * javni čitač ne prikazuje sekcije bez njega.
+ */
+async function zasejSekcije(): Promise<void> {
+  const raspored = podrazumevanRaspored("home");
+  const trenutak = new Date();
+
+  for (const [redniBroj, sekcija] of raspored.entries()) {
+    await prisma.pageSection.upsert({
+      where: { id: sekcija.id },
+      update: {
+        kind: sekcija.kind,
+        order: redniBroj,
+        isActive: true,
+        config: sekcija.config as Prisma.InputJsonObject,
+        draftConfig: Prisma.DbNull,
+        draftOrder: null,
+        draftIsActive: null,
+        publishedAt: trenutak,
+      },
+      create: {
+        id: sekcija.id,
+        pageKey: "home",
+        kind: sekcija.kind,
+        order: redniBroj,
+        isActive: true,
+        config: sekcija.config as Prisma.InputJsonObject,
+        publishedAt: trenutak,
+      },
+    });
+  }
+}
 
 async function main() {
   const category = await prisma.category.upsert({
@@ -83,6 +125,8 @@ async function main() {
     update: {},
     create: { productId: product.id, categoryId: category.id },
   });
+
+  await zasejSekcije();
 
   await prisma.productSize.upsert({
     where: {
