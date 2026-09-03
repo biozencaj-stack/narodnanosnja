@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { getLocale } from "next-intl/server";
 import { ProductGridSkeleton } from "@/components/ui/Skeleton";
 import { normalizujSekciju } from "@/lib/sekcije/validacija";
+import { citajNacrtSekcija, citajObjavljeneSekcije } from "@/lib/db/sekcije";
 import { podrazumevanRaspored, type SekcijaZaPrikaz } from "@/lib/sekcije/podrazumevani-raspored";
 import { tipSekcije } from "@/lib/sekcije/registar";
 import { KOMPONENTE_SEKCIJA } from "./mapa";
@@ -68,9 +69,44 @@ function JednaSekcija({
   );
 }
 
-export async function RenderSekcije({ pageKey }: { pageKey: string }) {
+/**
+ * Dok baza nema nijednu objavljenu sekciju za stranicu, renderuje se ugrađeni
+ * raspored iz `podrazumevani-raspored.ts`.
+ *
+ * To je NAMERNO privremeno stanje i jedina tačka u kojoj postoje dve istine o
+ * početnoj. Postoji zato što se migracija na produkciju primenjuje ručno i pre
+ * objave koda: bez ovog povratka, između primene migracije i prvog „Objavi”
+ * početna bi bila prazna stranica. Gašenje ovog povratka je stavka faze 3 i
+ * uslovljeno je upitom nad produkcijom koji potvrdi da redovi postoje.
+ */
+async function ucitajSekcije(
+  pageKey: string,
+  nacrt: boolean,
+): Promise<SekcijaZaPrikaz[]> {
+  const izBaze = nacrt
+    ? await citajNacrtSekcija(pageKey)
+    : await citajObjavljeneSekcije(pageKey);
+
+  if (izBaze.length > 0) {
+    return izBaze.map((red) => ({
+      id: red.id,
+      kind: red.kind,
+      config: red.config as Record<string, unknown>,
+    }));
+  }
+
+  return podrazumevanRaspored(pageKey);
+}
+
+export async function RenderSekcije({
+  pageKey,
+  nacrt = false,
+}: {
+  pageKey: string;
+  nacrt?: boolean;
+}) {
   const jezik = await getLocale();
-  const sekcije = podrazumevanRaspored(pageKey);
+  const sekcije = await ucitajSekcije(pageKey, nacrt);
 
   return (
     <>
