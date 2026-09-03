@@ -1,0 +1,147 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { OBRAZAC_SIDRA, POLJA_OKVIRA } from "./okvir";
+import {
+  TIPOVI_SEKCIJA,
+  podrazumevanaKonfiguracija,
+  poljaTipa,
+  postojiTip,
+  tipSekcije,
+} from "./registar";
+import { validirajSekciju } from "./validacija";
+import { RASPORED_POCETNE } from "./podrazumevani-raspored";
+
+test("svaki tip ima jedinstven i ispravno oblikovan ključ", () => {
+  const kljucevi = TIPOVI_SEKCIJA.map((tip) => tip.kind);
+  assert.equal(new Set(kljucevi).size, kljucevi.length, "ključevi se ponavljaju");
+
+  for (const kind of kljucevi) {
+    assert.match(kind, /^[a-z][a-zA-Z0-9]{0,39}$/, kind);
+    assert.equal(postojiTip(kind), true, kind);
+  }
+});
+
+test("podrazumevana konfiguracija svakog tipa prolazi sopstvenu šemu", () => {
+  for (const tip of TIPOVI_SEKCIJA) {
+    const { greske } = validirajSekciju(tip.kind, tip.podrazumevano);
+    assert.deepEqual(greske, {}, `${tip.kind}: ${JSON.stringify(greske)}`);
+  }
+});
+
+test("podrazumevana konfiguracija je sveža kopija, ne zajednička referenca", () => {
+  const prva = podrazumevanaKonfiguracija("stavke");
+  const druga = podrazumevanaKonfiguracija("stavke");
+  (prva.stavke as unknown[]).push({ naslov: { sr: "x", en: "x" } });
+
+  assert.equal((druga.stavke as unknown[]).length, 0);
+  assert.equal(
+    (tipSekcije("stavke")?.podrazumevano.stavke as unknown[]).length,
+    0,
+    "registar je izmenjen spolja",
+  );
+});
+
+test("nijedan tip ne definiše polje koje se sudara sa okvirom", () => {
+  const kljuceviOkvira = new Set(POLJA_OKVIRA.map((polje) => polje.kljuc));
+
+  for (const tip of TIPOVI_SEKCIJA) {
+    for (const polje of tip.polja) {
+      assert.equal(
+        kljuceviOkvira.has(polje.kljuc),
+        false,
+        `${tip.kind}.${polje.kljuc} preklapa polje okvira`,
+      );
+    }
+  }
+});
+
+test("svaki tip ima potpunu podrazumevanu vrednost za svako svoje polje", () => {
+  for (const tip of TIPOVI_SEKCIJA) {
+    for (const polje of poljaTipa(tip)) {
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(tip.podrazumevano, polje.kljuc),
+        true,
+        `${tip.kind} nema podrazumevanu vrednost za ${polje.kljuc}`,
+      );
+    }
+  }
+});
+
+test("asinhroni tip ima kostur, sinhroni ga nema", () => {
+  for (const tip of TIPOVI_SEKCIJA) {
+    if (tip.asinhrona) {
+      assert.ok(tip.kostur, `${tip.kind} je asinhron a nema kostur`);
+    } else {
+      assert.equal(tip.kostur, undefined, `${tip.kind} je sinhron a ima kostur`);
+    }
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * Zatečeni raspored početne
+ * ------------------------------------------------------------------ */
+
+test("raspored početne koristi samo postojeće tipove i prolazi validaciju", () => {
+  assert.ok(RASPORED_POCETNE.length > 0);
+
+  for (const sekcija of RASPORED_POCETNE) {
+    assert.equal(postojiTip(sekcija.kind), true, sekcija.kind);
+    const { greske } = validirajSekciju(sekcija.kind, sekcija.config);
+    assert.deepEqual(
+      greske,
+      {},
+      `${sekcija.id} (${sekcija.kind}): ${JSON.stringify(greske)}`,
+    );
+  }
+});
+
+test("identifikatori sekcija početne su jedinstveni", () => {
+  const identifikatori = RASPORED_POCETNE.map((sekcija) => sekcija.id);
+  assert.equal(new Set(identifikatori).size, identifikatori.length);
+});
+
+test("sidro u rasporedu je bezbedno za id atribut i za URL", () => {
+  for (const sekcija of RASPORED_POCETNE) {
+    const sidro = sekcija.config.sidro;
+    if (typeof sidro === "string" && sidro) {
+      assert.match(sidro, OBRAZAC_SIDRA, `${sekcija.id}: ${sidro}`);
+    }
+  }
+});
+
+test("veza unutar stranice pokazuje na sidro koje zaista postoji", () => {
+  const sidra = new Set(
+    RASPORED_POCETNE.map((sekcija) => sekcija.config.sidro).filter(
+      (sidro): sidro is string => typeof sidro === "string" && sidro.length > 0,
+    ),
+  );
+
+  for (const sekcija of RASPORED_POCETNE) {
+    const dugmad = Array.isArray(sekcija.config.dugmad) ? sekcija.config.dugmad : [];
+    for (const dugme of dugmad as Record<string, unknown>[]) {
+      const veza = dugme.veza as { url?: unknown } | undefined;
+      const url = typeof veza?.url === "string" ? veza.url : "";
+      if (url.startsWith("#")) {
+        assert.equal(
+          sidra.has(url.slice(1)),
+          true,
+          `${sekcija.id}: veza ${url} nema odgovarajuće sidro`,
+        );
+      }
+    }
+  }
+});
+
+test("najviše jedan blok proizvoda po tipu preko dozvoljenog broja", () => {
+  const brojPoTipu = new Map<string, number>();
+  for (const sekcija of RASPORED_POCETNE) {
+    brojPoTipu.set(sekcija.kind, (brojPoTipu.get(sekcija.kind) ?? 0) + 1);
+  }
+
+  for (const [kind, koliko] of brojPoTipu) {
+    const max = tipSekcije(kind)?.maxPoStrani;
+    if (max !== undefined) {
+      assert.ok(koliko <= max, `${kind}: ${koliko} sekcija, dozvoljeno ${max}`);
+    }
+  }
+});

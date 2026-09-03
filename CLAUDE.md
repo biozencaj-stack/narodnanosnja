@@ -644,6 +644,61 @@ Release tag se ne pravi tokom običnog razvoja; verified-login paket nije live,
 produkcijska baza/server nisu menjani, a main-push presentation workflow nije
 aktiviran. Live i svaki-push-na-`main` objavljivanje ostaju poslednji korak.
 
+## Sekcije stranica (faza 1 — registar i renderer)
+
+Početna strana je od sada **podatak, ne JSX**. `app/(shop)/page.tsx` je sveden na
+`<RenderSekcije pageKey="home" />`; sav tekst, redosled i izgled sekcija dolaze
+kroz registar tipova. Pun plan i naredne faze su u `docs/PLAN-SEKCIJE.md`.
+
+```
+lib/sekcije/polja.ts        tipovi polja, tokeni boja, oblik putanje medija
+lib/sekcije/okvir.ts        četiri presečne grupe: zaglavlje, pozadina,
+                            razdelnik, raspored — nosi ih SVAKA sekcija
+lib/sekcije/registar.ts     tipovi sekcija; jedini autoritet nad oblikom config-a
+lib/sekcije/validacija.ts   validirajSekciju / normalizujSekciju / sanitizujSekciju
+lib/sekcije/prikaz.ts       druga granica sanitizacije, na renderu
+lib/sekcije/podrazumevani-raspored.ts   PRIVREMENO: raspored početne u kodu
+components/sekcije/         okvir, zaglavlje, mapa kind -> komponenta, renderer
+```
+
+**Kako se dodaje nov tip sekcije:** unos u `TIPOVI_SEKCIJA` u
+`lib/sekcije/registar.ts` (polja + podrazumevane vrednosti) i jedna
+prezentaciona komponenta upisana u `components/sekcije/mapa.ts`. Ništa drugo —
+bez migracije, bez nove rute, bez novog admin ekrana.
+
+Pravila koja se ne smeju razblažiti:
+
+- **Mapa `kind -> komponenta` ne sme u registar.** Registar uvozi i admin
+  obrazac; kad bi mapa bila u njemu, admin paket bi povukao ceo storefront.
+- **U bazi nema CSS-a, klasa ni HEX vrednosti.** Konfiguracija čuva samo
+  nabrojane ključeve; prevod u Tailwind klase je isključivo u
+  `components/sekcije/stilovi.ts`.
+- **Bogat tekst prolazi kroz sanitizer dvaput** — `sanitizujSekciju` pri upisu i
+  `sanitizujZaPrikaz` na render granici. Komponenta koja puni
+  `dangerouslySetInnerHTML` sme da zove samo `lib/sekcije/prikaz.ts`, jer
+  `npm test` glob-uje isključivo `lib/**/*.test.ts` i testove izvan `lib/` ne
+  vidi. Negativan XSS test postoji na obe granice.
+- **Sekcija nikad ne pamti cenu.** Blok proizvoda čuva izvor i broj; cena se
+  čita sa servera pri svakom prikazu, a `force-dynamic` na početnoj se ne dira.
+- **Svaka asinhrona sekcija ide u sopstveni `Suspense`**, sa kosturom iz
+  registra i `try/catch` unutar te granice. Bez toga stranica prestaje da
+  strimuje, a snimak ekrana izgleda isto — pa se regresija ne primeti.
+- **Validacija se piše ručno, bez `zod`-a.** `zod` nije u `package.json` nego
+  dolazi kao tranzitivna razvojna zavisnost preko `eslint-config-next`.
+- **Veze prolaze kroz `lib/security/navigation.ts`** (`safeInternalPath`,
+  `safeExternalUrl`, `safeLinkTarget`). Sopstvena provera oblika putanje se ne
+  piše — propušta `/\evil.com`, `/%2f%2fevil.com` i `..` segmente.
+- **Ulazna animacija nikad ne ostavlja sadržaj nevidljivim.** Server ispisuje
+  sekciju bez ijedne klase animacije; `hooks/useUOkviru.ts` sakriva samo ono što
+  je još ispod vidnog polja i sam proverava `prefers-reduced-motion`, jer
+  globalni CSS blok gasi trajanje ali ne i JavaScript.
+- **Slika bez opisa se odbija**, osim kad je izričito označena kao ukrasna.
+  `alt` je deo vrednosti polja `medij`, ne zasebno polje koje se zaboravi.
+
+`lib/sekcije/podrazumevani-raspored.ts` je privremen. Njegovo brisanje je
+stavka faze 3 i uslovljeno je proverom nad produkcijom da objavljene sekcije
+zaista postoje — inače bi javna početna ostala prazna.
+
 ## Šta još nije urađeno
 
 - [ ] Fotografije proizvoda — sve su prazne, stoje sivi mestodržači
