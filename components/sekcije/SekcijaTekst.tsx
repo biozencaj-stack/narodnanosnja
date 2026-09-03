@@ -1,4 +1,5 @@
 import { sanitizujZaPrikaz } from "@/lib/sekcije/prikaz";
+import { OkvirSekcije } from "./OkvirSekcije";
 import { ZaglavljeSekcije } from "./ZaglavljeSekcije";
 import { KLASE_PRIGUSENOG, shemaZa, spoji } from "./stilovi";
 import { citajOkvir, type Konfiguracija } from "./tipovi";
@@ -22,13 +23,10 @@ export function SekcijaTekst({
   const html = sanitizujZaPrikaz(config.sadrzaj, jezik);
   const shema = shemaZa(okvir.pozadina);
 
-  if (!html) {
-    return <ZaglavljeSekcije okvir={okvir} jezik={jezik} varijanta="sekcijska" />;
-  }
-
   return (
-    <>
+    <OkvirSekcije config={okvir}>
       <ZaglavljeSekcije okvir={okvir} jezik={jezik} varijanta="sekcijska" />
+      {html && (
       <div
         className={spoji(
           "max-w-2xl space-y-4 text-[1.02rem] leading-relaxed",
@@ -38,8 +36,9 @@ export function SekcijaTekst({
           "[&_a]:text-primary [&_a]:underline",
           KLASE_PRIGUSENOG[shema],
         )}
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
-    </>
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      )}
+    </OkvirSekcije>
   );
 }

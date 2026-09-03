@@ -1,5 +1,6 @@
 import { fetchProducts, type ProductCardData } from "@/lib/products";
 import { LocalProductCard } from "@/components/product/LocalProductCard";
+import { OkvirSekcije } from "./OkvirSekcije";
 import { ZaglavljeSekcije } from "./ZaglavljeSekcije";
 import { klaseMreze } from "./stilovi";
 import { citajOkvir, izbor, type Konfiguracija } from "./tipovi";
@@ -76,7 +77,7 @@ export async function SekcijaProizvodi({
   if (proizvodi.length === 0) return null;
 
   return (
-    <>
+    <OkvirSekcije config={okvir}>
       <ZaglavljeSekcije okvir={okvir} jezik={jezik} varijanta="sekcijska" />
 
       <div className={klaseMreze("proizvodi", kolone)}>
@@ -84,6 +85,6 @@ export async function SekcijaProizvodi({
           <LocalProductCard key={proizvod.id} product={proizvod} />
         ))}
       </div>
-    </>
+    </OkvirSekcije>
   );
 }

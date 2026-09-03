@@ -1,5 +1,6 @@
 import { citajLok } from "@/lib/sekcije/polja";
 import { MestodrzacProizvoda } from "@/components/ukras";
+import { OkvirSekcije } from "./OkvirSekcije";
 import { ZaglavljeSekcije } from "./ZaglavljeSekcije";
 import {
   KLASE_NASLOVA,
@@ -40,7 +41,7 @@ export function SekcijaStavke({
 
   if (prikaz === "traka") {
     return (
-      <>
+      <OkvirSekcije config={okvir}>
         {zaglavlje}
         <ul className={klaseMreze("traka", kolone)}>
           {stavke.map((stavka, i) => (
@@ -71,13 +72,13 @@ export function SekcijaStavke({
             </li>
           ))}
         </ul>
-      </>
+      </OkvirSekcije>
     );
   }
 
   if (prikaz === "koraci") {
     return (
-      <>
+      <OkvirSekcije config={okvir}>
         {zaglavlje}
         <ol className={klaseMreze("koraci", kolone)}>
           {stavke.map((stavka, i) => (
@@ -106,12 +107,12 @@ export function SekcijaStavke({
             </li>
           ))}
         </ol>
-      </>
+      </OkvirSekcije>
     );
   }
 
   return (
-    <>
+    <OkvirSekcije config={okvir}>
       {zaglavlje}
       <ul className={klaseMreze("kartice", kolone)}>
         {stavke.map((stavka, i) => (
@@ -138,6 +139,6 @@ export function SekcijaStavke({
           </li>
         ))}
       </ul>
-    </>
+    </OkvirSekcije>
   );
 }

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getNavCategories } from "@/lib/db/nav-categories";
 import { getLocalized } from "@/lib/i18n/localized";
 import { MestodrzacProizvoda } from "@/components/ukras";
+import { OkvirSekcije } from "./OkvirSekcije";
 import { ZaglavljeSekcije } from "./ZaglavljeSekcije";
 import { KLASE_NASLOVA, klaseMreze, shemaZa, spoji } from "./stilovi";
 import { broj, citajOkvir, izbor, type Konfiguracija } from "./tipovi";
@@ -34,7 +35,7 @@ export async function SekcijaTaksonomija({
   if (kategorije.length === 0) return null;
 
   return (
-    <>
+    <OkvirSekcije config={okvir}>
       <ZaglavljeSekcije okvir={okvir} jezik={jezik} varijanta="sekcijska" />
 
       <div className={klaseMreze("kartice", kolone)}>
@@ -66,6 +67,6 @@ export async function SekcijaTaksonomija({
           </Link>
         ))}
       </div>
-    </>
+    </OkvirSekcije>
   );
 }

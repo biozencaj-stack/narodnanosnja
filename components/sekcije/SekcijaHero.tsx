@@ -2,6 +2,7 @@ import Image from "next/image";
 import { citajLok, jeObicanObjekat } from "@/lib/sekcije/polja";
 import { MestodrzacProizvoda } from "@/components/ukras";
 import { Dugmad } from "./Dugmad";
+import { OkvirSekcije } from "./OkvirSekcije";
 import { ZaglavljeSekcije } from "./ZaglavljeSekcije";
 import { citajOkvir, izbor, stavkeListe, type Konfiguracija } from "./tipovi";
 
@@ -58,43 +59,51 @@ export function SekcijaHero({
 
   if (prikaz === "centrirano") {
     return (
-      <div className="mx-auto max-w-2xl text-center">
-        <ZaglavljeSekcije okvir={okvir} jezik={jezik} varijanta="istaknuta" />
-        <Dugmad config={config} jezik={jezik} className="mt-8 justify-center" />
-      </div>
+      <OkvirSekcije config={okvir}>
+        <div className="mx-auto max-w-2xl text-center">
+          <ZaglavljeSekcije okvir={okvir} jezik={jezik} varijanta="istaknuta" />
+          <Dugmad config={config} jezik={jezik} className="mt-8 justify-center" />
+        </div>
+      </OkvirSekcije>
     );
   }
 
   return (
-    <div className="grid items-center gap-10 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16">
-      <div>
-        <ZaglavljeSekcije okvir={okvir} jezik={jezik} varijanta="uvodna" />
-        <Dugmad config={config} jezik={jezik} className="mt-9" />
-      </div>
+    <OkvirSekcije config={okvir}>
+      <div className="grid items-center gap-10 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16">
+        <div>
+          <ZaglavljeSekcije okvir={okvir} jezik={jezik} varijanta="uvodna" />
+          <Dugmad config={config} jezik={jezik} className="mt-9" />
+        </div>
 
-      <div className="relative">
-        <div className="grid grid-cols-2 gap-3 sm:gap-4">
-          <div className={`aspect-[3/4] ${OKVIR_SLIKE}`}>
-            <Slika vrednost={slike[0]} redni={0} velicine="(min-width: 1024px) 24vw, 45vw" />
-          </div>
-          <div className="mt-8 grid gap-3 sm:gap-4">
-            <div className={`aspect-square ${OKVIR_SLIKE}`}>
+        <div className="relative">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4">
+            <div className={`aspect-[3/4] ${OKVIR_SLIKE}`}>
               <Slika
-                vrednost={slike[1]}
-                redni={1}
+                vrednost={slike[0]}
+                redni={0}
                 velicine="(min-width: 1024px) 24vw, 45vw"
               />
             </div>
-            <div className={`aspect-square ${OKVIR_SLIKE}`}>
-              <Slika
-                vrednost={slike[2]}
-                redni={2}
-                velicine="(min-width: 1024px) 24vw, 45vw"
-              />
+            <div className="mt-8 grid gap-3 sm:gap-4">
+              <div className={`aspect-square ${OKVIR_SLIKE}`}>
+                <Slika
+                  vrednost={slike[1]}
+                  redni={1}
+                  velicine="(min-width: 1024px) 24vw, 45vw"
+                />
+              </div>
+              <div className={`aspect-square ${OKVIR_SLIKE}`}>
+                <Slika
+                  vrednost={slike[2]}
+                  redni={2}
+                  velicine="(min-width: 1024px) 24vw, 45vw"
+                />
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </OkvirSekcije>
   );
 }

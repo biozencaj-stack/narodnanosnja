@@ -5,8 +5,6 @@ import { normalizujSekciju } from "@/lib/sekcije/validacija";
 import { podrazumevanRaspored, type SekcijaZaPrikaz } from "@/lib/sekcije/podrazumevani-raspored";
 import { tipSekcije } from "@/lib/sekcije/registar";
 import { KOMPONENTE_SEKCIJA } from "./mapa";
-import { OkvirSekcije } from "./OkvirSekcije";
-import { citajOkvir } from "./tipovi";
 
 /**
  * Renderuje raspored jedne stranice.
@@ -56,11 +54,10 @@ function JednaSekcija({
 
   const config = normalizujSekciju(sekcija.kind, sekcija.config);
 
-  const telo = (
-    <OkvirSekcije config={citajOkvir(config)}>
-      <Komponenta config={config} jezik={jezik} />
-    </OkvirSekcije>
-  );
+  // Okvir renderuje sama komponenta. Kad sekcija nema šta da prikaže, ne sme
+  // da ostane prazan `section` sa razmakom — to bi bio vidljiv procep na
+  // stranici tamo gde danas nema ničega.
+  const telo = <Komponenta config={config} jezik={jezik} />;
 
   if (!tip.asinhrona) return telo;
 
