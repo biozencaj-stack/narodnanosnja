@@ -919,3 +919,80 @@ model StoreLocation {
 
   @@index([isActive, sortOrder])
 }
+
+// ============================================
+// SEKCIJE STRANICA
+// ============================================
+//
+// Sadržaj stranica koji administrator slaže sam. `kind` je ključ iz
+// `lib/sekcije/registar.ts`, a `config` konfiguracija koju taj registar
+// validira. Baza namerno ne zna oblik konfiguracije — jedino što nad njom može
+// da proveri su CHECK ograničenja iz devete migracije.
+
+model PageSection {
+  id      String @id @default(cuid())
+  pageKey String
+  kind    String
+
+  // Objavljeno stanje — jedino koje javni sajt čita.
+  order    Int     @default(0)
+  isActive Boolean @default(true)
+  config   Json
+
+  // Radna kopija. Redosled i vidljivost imaju svoje nacrt-kolone jer bi bez
+  // njih preslagivanje i gašenje menjali javni sajt uživo, dok pregled nacrta
+  // tu promenu ne bi pokazivao — čime nacrt gubi smisao.
+  draftConfig   Json?
+  draftOrder    Int?
+  draftIsActive Boolean?
+
+  schemaVersion Int       @default(1)
+  version       Int       @default(0)
+  publishedAt   DateTime?
+
+  // Bez relacije ka User-u: brisanje admin naloga ne sme da obori sekciju.
+  updatedById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  usages MediaAssetUsage[]
+
+  @@index([pageKey, isActive, order])
+  @@index([kind])
+}
+
+model MediaAsset {
+  id       String @id @default(cuid())
+  path     String @unique
+  folder   String
+  mimeType String
+  width    Int
+  height   Int
+  bytes    Int
+  alt      Json? // { sr: "...", en: "..." } — predlog koji birač nudi
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  usages MediaAssetUsage[]
+
+  @@index([folder, createdAt])
+}
+
+// Putanja medija stoji na proizvoljnoj dubini `config`-a i pod različitim
+// ključevima po tipu sekcije. Nijedan jsonb filter ne nalazi string na
+// proizvoljnoj dubini, pa bi bez ove tabele provera reference ili promašila i
+// dozvolila brisanje slike sa žive početne, ili odbijala brisanje svega.
+model MediaAssetUsage {
+  id        String @id @default(cuid())
+  assetId   String
+  sectionId String
+  polje     String // putanja polja u config-u, npr. "stavke[2].ikona"
+
+  asset   MediaAsset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  section PageSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@unique([sectionId, polje])
+  @@index([assetId])
+}
