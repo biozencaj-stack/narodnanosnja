@@ -639,6 +639,23 @@ slaba vrednost obara seed pre nego što se baza uopšte otvori.
 `webServer.env` izričito postavlja `DEMO_MODE: "false"`. Demo režim blokira svaki
 API upis, pa bi admin tokovi u njemu tiho otkazali.
 
+**Ne čekaj da dugme za slanje nestane kao znak da je radnja gotova.** Obrazac za
+prijavu menja natpis dugmeta u „Prijava...” dok zahtev traje, pa uslov
+`getByRole("button", { name: "Prijavite se" }).toHaveCount(0)` postane tačan
+odmah po kliku — pre nego što NextAuth uopšte odgovori. Sledeći `goto` tada
+krene bez kolačića sesije, proxy ga ispravno vrati na `/login`, a prekinuti
+zahtev ostavi `ECONNRESET` u dnevniku servera; greška izgleda kao pokvarena
+autorizacija, a zapravo je pogrešno čekanje. Čeka se odgovor
+`/api/auth/callback/credentials` (čekanje se postavlja **pre** klika, da ne
+promakne), pa stvarni odlazak sa `/login`. Isto važi za svako dugme sa
+stanjem učitavanja.
+
+Odbijena prijava takođe vraća **200** — greška je u telu odgovora, ne u statusu.
+Zato `ok()` nije dokaz uspeha; dokaz je da je stranica napustila `/login`. Iz
+istog razloga `page.goto("/admin")` može vratiti `ok()` iako je posetilac
+preusmeren na prijavu: preusmerenje se završava statusom 200, pa se adresa mora
+proveriti zasebno.
+
 Demo seed ima još stroži opt-in: `npm run db:seed-demo` radi samo uz
 `DEMO_DATABASE_SEED=true`, validan PostgreSQL `DATABASE_URL` čiji naziv baze
 sadrži odvojen marker `demo`, `e2e`, `test` ili `provera`, a ne sadrži `prod`,

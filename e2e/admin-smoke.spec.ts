@@ -26,7 +26,11 @@ test.describe("harnes za admin ekrane", () => {
     await page.goto("/admin/orders");
 
     await expect(page).toHaveURL(/\/admin\/orders$/);
-    await expect(page.getByRole("link", { name: "Porudžbine" })).toBeVisible();
+    // Naslov, a ne veza u bočnoj traci: veza dokazuje samo da se okvir
+    // iscrtao, dok naslov dokazuje da je i telo tražene stranice stiglo.
+    await expect(
+      page.getByRole("heading", { name: "Porudžbine", level: 1 }),
+    ).toBeVisible();
   });
 });
 
