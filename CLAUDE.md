@@ -81,6 +81,23 @@ npx tsx scripts/uvoz-nosnja.ts   # uvoz kategorija i proizvoda iz podaci/
 npx tsx scripts/create-admin.ts --email … --role ADMIN # maskirani TTY unos
 ```
 
+## Privilegovani nalozi i politika prijave
+
+**`createdAt` privilegovanog naloga mora biti isti trenutak kao `emailVerified`.**
+`provisionPrivilegedAccount` čita `clock_timestamp()` **pre** upisa reda, pa bi
+podrazumevani `createdAt` nastao kasnije — i ispalo bi da je nalog verifikovan
+pre nego što je nastao. `evaluateVerifiedLoginPolicy` takav snimak odbija kao
+nemoguć, prijava puca sa `POLICY_DECISION / INTERNAL_FAILURE`, i nalog se ne
+može prijaviti **nikada**. U CI-ju je razlika bila jedan milisekund.
+
+Poruka pri tom izgleda kao kvar politike, a greška je u podacima — zato se lako
+juri na pogrešnom mestu.
+
+Invarijanta `createdAt <= emailVerified` je bila i ranije proverena, ali samo u
+integracionom testu koji ide putanjom **ažuriranja** postojećeg naloga, gde je
+`createdAt` stariji. Putanja pravljenja novog naloga nije bila pokrivena. Sada
+je pokriva `lib/auth/privileged-account.test.ts`, bez baze.
+
 ## Zamke koje su već jednom pojele vreme
 
 - **`npm install` bez `--legacy-peer-deps` puca.** `next-auth@4` još ne
