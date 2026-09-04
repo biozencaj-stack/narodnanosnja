@@ -146,6 +146,73 @@ async function main() {
   if (rezultat.kind !== "created" && rezultat.kind !== "updated") {
     throw new Error(`E2E ADMIN nalog nije obezbeđen: ${rezultat.kind}`);
   }
+
+  await proveriDaSeNalogMozePrijaviti();
+}
+
+/**
+ * Nalog koji se ne može prijaviti nije obezbeđen nalog.
+ *
+ * `evaluateVerifiedLoginPolicy` odbija snimak u kome je `emailVerified` raniji
+ * od `createdAt` ili kasniji od trenutka ocene, i tada prijava puca sa
+ * `POLICY_DECISION / INTERNAL_FAILURE`. U dnevniku to izgleda kao kvar
+ * politike, a zapravo je nemoguć redosled u podacima — greška koja se inače
+ * primeti tek kad E2E prijava padne, daleko od mesta nastanka.
+ *
+ * Vrednosti se čitaju istim izrazima kao pri prijavi: `AT TIME ZONE 'UTC'` nad
+ * kolonama bez vremenske zone i `clock_timestamp()` za trenutak ocene.
+ */
+async function proveriDaSeNalogMozePrijaviti(): Promise<void> {
+  const redovi = await prisma.$queryRaw<
+    {
+      createdAt: Date;
+      emailVerified: Date | null;
+      evaluatedAt: Date;
+    }[]
+  >`
+    SELECT
+      "createdAt" AT TIME ZONE 'UTC' AS "createdAt",
+      "emailVerified" AT TIME ZONE 'UTC' AS "emailVerified",
+      clock_timestamp()::timestamptz(3) AS "evaluatedAt"
+    FROM public."User"
+    WHERE "email" = ${adminEmail}
+  `;
+
+  const red = redovi[0];
+  if (!red) {
+    throw new Error("E2E ADMIN nalog nije pronađen posle upisa.");
+  }
+
+  const opis =
+    `createdAt=${red.createdAt.toISOString()} ` +
+    `emailVerified=${red.emailVerified?.toISOString() ?? "null"} ` +
+    `evaluatedAt=${red.evaluatedAt.toISOString()}`;
+
+  if (red.emailVerified === null) {
+    throw new Error(`E2E ADMIN nalog nije verifikovan. ${opis}`);
+  }
+
+  if (red.emailVerified.getTime() < red.createdAt.getTime()) {
+    throw new Error(
+      "E2E ADMIN nalog ima emailVerified RANIJI od createdAt, pa politika " +
+        `prijave odbija njegov snimak. ${opis}`,
+    );
+  }
+
+  if (red.emailVerified.getTime() > red.evaluatedAt.getTime()) {
+    throw new Error(
+      "E2E ADMIN nalog ima emailVerified u budućnosti u odnosu na sat baze. " +
+        opis,
+    );
+  }
+
+  if (red.createdAt.getTime() > red.evaluatedAt.getTime()) {
+    throw new Error(
+      `E2E ADMIN nalog je napravljen u budućnosti u odnosu na sat baze. ${opis}`,
+    );
+  }
+
+  console.log(`E2E ADMIN vremenski redosled je ispravan. ${opis}`);
 }
 
 main()
