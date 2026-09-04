@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import useEmblaCarousel from 'embla-carousel-react';
 import Autoplay from 'embla-carousel-autoplay';
 import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
+import { DugmePauze } from '@/components/ui/DugmePauze';
+import { usePauzaKarusela } from '@/hooks/usePauzaKarusela';
 import { ProductCard } from '@/components/product/ProductCard';
 import type { ProductCard as ProductCardType } from '@/types/product';
 import { cn } from '@/lib/utils';
@@ -39,6 +41,9 @@ export function FeaturedCarousel({
     },
     [Autoplay({ delay: 5000, stopOnInteraction: true })]
   );
+
+  // Autoplay duži od pet sekundi mora imati vidljivu pauzu (WCAG 2.2.2).
+  const pauza = usePauzaKarusela(emblaApi);
 
   const [canScrollPrev, setCanScrollPrev] = useState(false);
   const [canScrollNext, setCanScrollNext] = useState(false);
@@ -169,6 +174,11 @@ export function FeaturedCarousel({
             >
               <ChevronRight className="h-5 w-5" />
             </button>
+            <DugmePauze
+              pauzirano={pauza.pauzirano}
+              onPrebaci={pauza.prebaci}
+              naziv="izdvojene proizvode"
+            />
           </div>
         </div>
 
@@ -202,6 +212,12 @@ export function FeaturedCarousel({
           >
             <ChevronRight className="h-5 w-5" />
           </button>
+          <DugmePauze
+            pauzirano={pauza.pauzirano}
+            onPrebaci={pauza.prebaci}
+            naziv="izdvojene proizvode"
+            className="p-3"
+          />
         </div>
       </div>
     </section>
