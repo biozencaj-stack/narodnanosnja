@@ -679,7 +679,7 @@ Release tag se ne pravi tokom običnog razvoja; verified-login paket nije live,
 produkcijska baza/server nisu menjani, a main-push presentation workflow nije
 aktiviran. Live i svaki-push-na-`main` objavljivanje ostaju poslednji korak.
 
-## Sekcije stranica (faze 1 i 2 — registar, renderer, model i admin)
+## Sekcije stranica (faze 1, 2 i 4 — registar, renderer, model, admin, blok proizvoda)
 
 Početna strana je od sada **podatak, ne JSX**. `app/(shop)/page.tsx` je sveden na
 `<RenderSekcije pageKey="home" />`; sav tekst, redosled i izgled sekcija dolaze
@@ -693,6 +693,9 @@ lib/sekcije/registar.ts     tipovi sekcija; jedini autoritet nad oblikom config-
 lib/sekcije/validacija.ts   validirajSekciju / normalizujSekciju / sanitizujSekciju
 lib/sekcije/prikaz.ts       druga granica sanitizacije, na renderu
 lib/sekcije/podrazumevani-raspored.ts   PRIVREMENO: raspored početne u kodu
+lib/sekcije/upit-proizvoda.ts   čist opis upita bloka: normalizacija, ključ, plan
+lib/db/blok-proizvoda.ts    izvršenje tog plana nad bazom, kroz React cache()
+lib/db/taksonomija.ts       kartice kategorija i brendova, sa slikom
 components/sekcije/         okvir, zaglavlje, mapa kind -> komponenta, renderer
 ```
 
@@ -794,6 +797,54 @@ proveru prefiksa pre `unlink`, i u istoj transakciji.
 
 Fascikla se bira po **nameni polja** (`folderZaPolje` u `PoljeObrasca.tsx`), ne
 jedna za sve: hero ide u profil sa 4 MB i 2000×1200, ikona u 256 KB i 256×256.
+
+### Blok proizvoda (faza 4)
+
+Jedan tip `proizvodi` pokriva osam WoodMart elemenata: izvor bira admin
+(izdvojeno, sniženo, novo, najnovije, iz kategorije, jednog brenda, ručni
+izbor), a uz njega ide prikaz (mreža ili karusel), broj kolona zasebno za
+telefon i za desktop, sortiranje i do četiri taba.
+
+**Sekcija nikad ne čuva cenu.** Konfiguracija nosi samo opis upita; cena i
+dostupnost se čitaju sa servera pri svakom prikazu. Zapamćena cena bi na
+najvidljivijoj stranici sajta najduže i najglasnije bila pogrešna.
+
+**Kanonska kartica je `LocalProductCard`, a oblik podataka `ProductCardData`.**
+Zatečena `ProductCard` se ne širi na nove ekrane. Jedini novi prop je
+`prikaziOznake`, podrazumevano `true`, pa se nijedan postojeći poziv ne menja.
+
+**Upiti bloka žive u `lib/db/blok-proizvoda.ts`, NE u `lib/products.ts`.** Taj
+fajl ima `"use server"` na prvoj liniji, pa bi svaki nov izvoz postao javna
+Server Action — krajnja tačka koju bilo ko sa interneta poziva POST zahtevom, sa
+argumentima koje sam bira. `lib/db/blok-proizvoda.test.ts` čuva to pravilo tako
+što čita izvorni tekst fajla.
+
+**Dva bloka sa istim upitom prave jedan upit ka bazi.** React `cache()` pamti po
+identitetu argumenata, pa keširana funkcija prima **string ključ**
+(`kljucUpita`), a ne objekat. `normalizujUpit` pritom briše polja koja izabrani
+izvor ne koristi, da blok sa zaostalim izborom kategorije deli ključ sa
+istovetnim blokom bez njega.
+
+**Izvor koji traži dopunu bez nje ne pravi upit.** `kategorija` bez kategorije
+daje prazan plan i sekcija se ne prikaže — umesto da prazan filter izlije ceo
+katalog na početnu. Isto važi za `brend` i ručni izbor.
+
+**Sortiranje po nazivu ne postoji.** `Product.name` je `Json` kolona oblika
+`{ sr, en }`, pa bi `ORDER BY name` sortirao po tekstu celog JSON zapisa. To bi
+ličilo na azbučni red a ne bi bilo — tiho pogrešan red je gori od opcije koje
+nema.
+
+**Klase mreže i klizača se ispisuju doslovno** (`MREZA_PROIZVODA`,
+`KLIZAC_PROIZVODA` u `components/sekcije/stilovi.ts`). Tailwind ne vidi klase
+sastavljene u vreme izvršavanja. Kombinacija „2 kolone na telefonu” daje tačno
+one klase koje je blok imao pre faze 4.
+
+**Karusel mora imati dugme za pauzu.** Autoplay traje pet sekundi, što je preko
+granice iz WCAG 2.2.2; `stopOnInteraction` i pauza na hover taj kriterijum ne
+ispunjavaju. Vidi „Slike i kretanje“.
+
+Faza 4 je obrisala `FeaturedCarousel`, `NewArrivals`, `BrandSlider` i
+`BrandGrid`. Nijedna nije imala pozivaoca; nisu zadržane „za svaki slučaj“.
 
 ### Zamke koje su ovde već pojele vreme
 

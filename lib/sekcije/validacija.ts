@@ -19,7 +19,10 @@ import { sanitizeLocalizedRichText } from "@/lib/security/html";
 import { safeLinkTarget } from "@/lib/security/navigation";
 import {
   IZVORI_PROIZVODA,
+  MAX_PROIZVODA_U_BLOKU,
   OBRAZAC_PUTANJE_MEDIJA,
+  OBRAZAC_SLUGA,
+  SORTIRANJA_PROIZVODA,
   TOKENI_POZADINE,
   TOKENI_TEKSTA,
   TOKENI_UKRASA,
@@ -83,6 +86,96 @@ function citajLokalizovano(vrednost: unknown): Lokalizovano | null {
   const en = citajRed(vrednost.en ?? "");
   if (sr === null || en === null) return null;
   return { sr, en };
+}
+
+/**
+ * Vrednost polja `upitProizvoda`.
+ *
+ * Slugovi ulaze u `where` klauzulu sastavljenu od admin unosa, pa se proveravaju
+ * oblikom, a ne samo tipom. Izvor koji traži dopunu (kategorija, brend, ručni
+ * izbor) bez nje se odbija: bez te provere bi blok tiho pao na prazan filter i
+ * prikazao ceo katalog umesto izabranog dela.
+ */
+function validirajUpitProizvoda(
+  sirovo: unknown,
+  put: string,
+  greske: Record<string, string>,
+): Record<string, unknown> {
+  const izvorno = jeObicanObjekat(sirovo) ? sirovo : {};
+  if (!jeObicanObjekat(sirovo)) {
+    greske[put] = "Očekuje se izvor proizvoda";
+  }
+
+  const izvor =
+    typeof izvorno.izvor === "string" &&
+    (IZVORI_PROIZVODA as readonly string[]).includes(izvorno.izvor)
+      ? izvorno.izvor
+      : null;
+  if (!izvor) {
+    greske[`${put}.izvor`] = `Dozvoljeno: ${IZVORI_PROIZVODA.join(", ")}`;
+  }
+
+  const sort =
+    typeof izvorno.sort === "string" &&
+    (SORTIRANJA_PROIZVODA as readonly string[]).includes(izvorno.sort)
+      ? izvorno.sort
+      : null;
+  if (izvorno.sort !== undefined && !sort) {
+    greske[`${put}.sort`] = `Dozvoljeno: ${SORTIRANJA_PROIZVODA.join(", ")}`;
+  }
+
+  const broj = citajBroj(izvorno.broj);
+  const brojJeDobar =
+    broj !== null &&
+    Number.isInteger(broj) &&
+    broj >= 1 &&
+    broj <= MAX_PROIZVODA_U_BLOKU;
+  if (!brojJeDobar) {
+    greske[`${put}.broj`] =
+      `Broj proizvoda mora biti ceo broj od 1 do ${MAX_PROIZVODA_U_BLOKU}`;
+  }
+
+  const slug = (vrednost: unknown): string =>
+    typeof vrednost === "string" && OBRAZAC_SLUGA.test(vrednost) ? vrednost : "";
+
+  const kategorija = slug(izvorno.kategorija);
+  if (izvor === "kategorija" && kategorija.length === 0) {
+    greske[`${put}.kategorija`] = "Izaberi kategoriju";
+  }
+
+  const brend = slug(izvorno.brend);
+  if (izvor === "brend" && brend.length === 0) {
+    greske[`${put}.brend`] = "Izaberi brend";
+  }
+
+  const izabrani: string[] = [];
+  if (Array.isArray(izvorno.izabrani)) {
+    for (const stavka of izvorno.izabrani) {
+      const vrednost = slug(stavka);
+      if (vrednost.length === 0) {
+        greske[`${put}.izabrani`] = "Nedozvoljen oblik sluga proizvoda";
+        continue;
+      }
+      if (!izabrani.includes(vrednost)) izabrani.push(vrednost);
+    }
+    if (izvorno.izabrani.length > MAX_PROIZVODA_U_BLOKU) {
+      greske[`${put}.izabrani`] = `Najviše ${MAX_PROIZVODA_U_BLOKU} proizvoda`;
+    }
+  } else if (izvorno.izabrani !== undefined) {
+    greske[`${put}.izabrani`] = "Očekuje se lista slugova";
+  }
+  if (izvor === "izabrani" && izabrani.length === 0) {
+    greske[`${put}.izabrani`] = "Dodaj bar jedan proizvod";
+  }
+
+  return {
+    izvor: izvor ?? IZVORI_PROIZVODA[0],
+    broj: brojJeDobar ? Math.trunc(broj as number) : 8,
+    sort: sort ?? SORTIRANJA_PROIZVODA[0],
+    kategorija,
+    brend,
+    izabrani: izabrani.slice(0, MAX_PROIZVODA_U_BLOKU),
+  };
 }
 
 /** Bogat tekst zadržava prelome redova, pa nema `trim` po znaku. */
@@ -249,28 +342,8 @@ function validirajPolje(
       return { url, noviTab: sirovo.noviTab === true };
     }
 
-    case "upitProizvoda": {
-      if (!jeObicanObjekat(sirovo)) {
-        greske[put] = "Očekuje se izvor proizvoda";
-        return { izvor: IZVORI_PROIZVODA[0], broj: 8 };
-      }
-      const izvor =
-        typeof sirovo.izvor === "string" &&
-        (IZVORI_PROIZVODA as readonly string[]).includes(sirovo.izvor)
-          ? sirovo.izvor
-          : null;
-      if (!izvor) {
-        greske[`${put}.izvor`] = `Dozvoljeno: ${IZVORI_PROIZVODA.join(", ")}`;
-      }
-      const broj = citajBroj(sirovo.broj);
-      if (broj === null || broj < 1 || broj > 24 || !Number.isInteger(broj)) {
-        greske[`${put}.broj`] = "Broj proizvoda mora biti ceo broj od 1 do 24";
-      }
-      return {
-        izvor: izvor ?? IZVORI_PROIZVODA[0],
-        broj: broj !== null && broj >= 1 && broj <= 24 ? Math.trunc(broj) : 8,
-      };
-    }
+    case "upitProizvoda":
+      return validirajUpitProizvoda(sirovo, put, greske);
 
     case "lista": {
       if (sirovo === null || sirovo === undefined) return [];

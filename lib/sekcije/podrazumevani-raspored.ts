@@ -14,6 +14,7 @@
 
 import { lok } from "./polja";
 import { podrazumevanaKonfiguracija } from "./registar";
+import { PODRAZUMEVAN_UPIT } from "./upit-proizvoda";
 
 export interface SekcijaZaPrikaz {
   /** Stabilan ključ; posle faze 2 ovo je `PageSection.id`. */
@@ -116,7 +117,9 @@ export const RASPORED_POCETNE: SekcijaZaPrikaz[] = [
     razmak: "srednji",
     naslov: lok("Izdvojeno iz radionice"),
     tekst: lok("Komadi koje najčešće preporučujemo — i za sebe i za poklon."),
-    upit: { izvor: "izdvojenoISnizeno", broj: 8 },
+    // Izvor je namerno ostao isti koji je zatečena početna imala: izdvojeni,
+    // pa sniženi koji već nisu među njima.
+    upit: { ...PODRAZUMEVAN_UPIT },
     kolone: "4",
   }),
 

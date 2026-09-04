@@ -43,9 +43,19 @@ interface LocalProductCardProps {
     brand?: { name: unknown } | null;
   };
   className?: string;
+  /**
+   * Oznake „Novo” i procenat popusta. Podrazumevano stoje — isključuju se samo
+   * tamo gde admin sekcije to izričito traži, na primer kad dva bloka stoje
+   * jedan uz drugi pa se iste oznake ponavljaju.
+   */
+  prikaziOznake?: boolean;
 }
 
-export function LocalProductCard({ product, className }: LocalProductCardProps) {
+export function LocalProductCard({
+  product,
+  className,
+  prikaziOznake = true,
+}: LocalProductCardProps) {
   const { id, slug, name, price, salePrice, image1, image2, novo, category, brand } = product;
   const locale = useLocale();
   const displayName = getLocalized(name, locale);
@@ -88,12 +98,12 @@ export function LocalProductCard({ product, className }: LocalProductCardProps) 
 
           {/* Oznake — u paleti radionice, ne u podrazumevanoj plavoj i crvenoj */}
           <div className="absolute top-2 left-2 z-10 flex flex-col items-start gap-1.5">
-            {novo && (
+            {prikaziOznake && novo && (
               <span className="rounded-full bg-zlatna px-2.5 py-1 text-[0.68rem] font-bold uppercase tracking-wider text-white">
                 Novo
               </span>
             )}
-            {hasDiscount && discountPercent > 0 && (
+            {prikaziOznake && hasDiscount && discountPercent > 0 && (
               <span className="rounded-full bg-primary px-2.5 py-1 text-[0.78rem] font-bold text-white">
                 −{discountPercent}%
               </span>

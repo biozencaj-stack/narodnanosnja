@@ -221,7 +221,75 @@ test("sekcija nikad ne pamti cenu", () => {
     sa("proizvodi", { upit: { izvor: "snizeno", broj: 4, cena: 1990 } }),
   );
 
-  assert.deepEqual(vrednosti.upit, { izvor: "snizeno", broj: 4 });
+  assert.deepEqual(vrednosti.upit, {
+    izvor: "snizeno",
+    broj: 4,
+    sort: "najnovije",
+    kategorija: "",
+    brend: "",
+    izabrani: [],
+  });
+  assert.equal("cena" in (vrednosti.upit as Record<string, unknown>), false);
+});
+
+test("izvor koji traži dopunu se bez nje odbija", () => {
+  for (const [izvor, kljuc] of [
+    ["kategorija", "upit.kategorija"],
+    ["brend", "upit.brend"],
+    ["izabrani", "upit.izabrani"],
+  ] as const) {
+    const { greske } = validirajSekciju("proizvodi", sa("proizvodi", { upit: { izvor, broj: 4 } }));
+    // Bez ove provere bi blok pao na prazan filter i prikazao ceo katalog
+    // umesto izabranog dela — tiho, i tek na produkciji vidljivo.
+    assert.ok(greske[kljuc], `${izvor}: nedostaje greška ${kljuc}`);
+  }
+});
+
+test("dopunjen izvor prolazi", () => {
+  const slucajevi = [
+    { izvor: "kategorija", kategorija: "salovi" },
+    { izvor: "brend", brend: "radionica" },
+    { izvor: "izabrani", izabrani: ["sal-vuna", "tkanica"] },
+  ];
+  for (const upit of slucajevi) {
+    const { greske } = validirajSekciju(
+      "proizvodi",
+      sa("proizvodi", { upit: { ...upit, broj: 4 } }),
+    );
+    assert.deepEqual(greske, {}, JSON.stringify(upit));
+  }
+});
+
+test("slug van dozvoljenog oblika se odbija, ne završava u where klauzuli", () => {
+  for (const zao of ["../tajna", "SALOVI", "sal ovi", "sal'--"]) {
+    const { greske, vrednosti } = validirajSekciju(
+      "proizvodi",
+      sa("proizvodi", { upit: { izvor: "kategorija", broj: 4, kategorija: zao } }),
+    );
+    assert.ok(greske["upit.kategorija"], zao);
+    assert.equal((vrednosti.upit as Record<string, unknown>).kategorija, "");
+  }
+});
+
+test("nepoznato sortiranje se odbija, umesto da tiho promeni redosled", () => {
+  const { greske } = validirajSekciju(
+    "proizvodi",
+    sa("proizvodi", { upit: { izvor: "snizeno", broj: 4, sort: "naziv" } }),
+  );
+  assert.ok(greske["upit.sort"]);
+});
+
+test("tabovi se validiraju kao i glavni izvor", () => {
+  const { greske } = validirajSekciju(
+    "proizvodi",
+    sa("proizvodi", {
+      tabovi: [
+        { naslov: { sr: "Novo", en: "New" }, upit: { izvor: "novo", broj: 4 } },
+        { naslov: { sr: "Sniženo", en: "Sale" }, upit: { izvor: "brend", broj: 4 } },
+      ],
+    }),
+  );
+  assert.ok(greske["tabovi[1].upit.brend"], JSON.stringify(greske));
 });
 
 /* ------------------------------------------------------------------ *
