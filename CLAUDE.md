@@ -134,6 +134,12 @@ Mapiranje koje nije očigledno:
 Arhitektonske granice platforme i redosled narednih faza su u
 `docs/ARCHITECTURE-V2.md`.
 
+Rad na sekcijama stranica: plan i istraživanje u `docs/PLAN-SEKCIJE.md`, dnevnik
+izvršenja sa presekom na 4. 9. 2026. u
+`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-09-04.md`. Drugi dokument nabraja i šta
+**nije** provereno — pročitaj taj odeljak pre nego što se osloniš na bilo koju
+tvrdnju o ponašanju nad bazom.
+
 `prisma/schema.prisma` sadrži novu, opcionu osnovu za više branši:
 
 - `ProductType` i tipizovane definicije/vrednosti atributa određuju dinamička
