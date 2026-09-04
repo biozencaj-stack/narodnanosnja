@@ -761,6 +761,34 @@ sve posetioce bez ikakve koristi.
 objavljivanje jedne po jedne pokazalo bi posetiocu novi naslov iznad starog
 rasporeda.
 
+### Medijateka
+
+Slike otpremljene kroz `/api/admin/upload` dobijaju red u `MediaAsset`. Red se
+upisuje **tek posle** uspešnog upisa na disk; obrnut redosled bi ostavljao
+redove koji pokazuju na fajl kog nema. Neuspeh upisa u bazu ne obara odgovor:
+fajl postoji i putanja je upotrebljiva, samo se slika ne pojavi u medijateci.
+
+**Brisanje slike koja je u upotrebi se odbija sa 409 i spiskom sekcija.** Golo
+„ne može” ostavlja administratora da pogađa po ekranima gde je slika.
+
+Upotrebe drži `MediaAssetUsage`, a računaju se iz **objavljene** konfiguracije,
+ne iz nacrta. Da se prati nacrt, slika izbačena u nacrtu odmah bi postala
+„neupotrebljena” i mogla bi da se obriše — dok je javni sajt i dalje prikazuje.
+Usklađivanje ide u istoj transakciji sa upisom sekcije.
+
+`lib/sekcije/mediji-u-konfiguraciji.ts` obilazi konfiguraciju **po definiciji
+polja iz registra**, ne po sadržaju: tako se običan tekst koji liči na putanju
+ne može protumačiti kao medij.
+
+**Brisanje ne dira fajl na disku.** Odluka „da li DELETE briše i fajl i ko čisti
+siročiće” je u `docs/PLAN-SEKCIJE.md` navedena kao odluka vlasnika i još nije
+doneta. Do tada se bira manja šteta: zaostao fajl zauzima prostor, obrisan fajl
+se ne vraća. Kad odluka bude doneta, brisanje mora ići kroz `path.resolve` pa
+proveru prefiksa pre `unlink`, i u istoj transakciji.
+
+Fascikla se bira po **nameni polja** (`folderZaPolje` u `PoljeObrasca.tsx`), ne
+jedna za sve: hero ide u profil sa 4 MB i 2000×1200, ikona u 256 KB i 256×256.
+
 ### Zamke koje su ovde već pojele vreme
 
 - **Rute koje čitaju sesiju moraju biti fabrike sa ubrizganim zavisnostima.**

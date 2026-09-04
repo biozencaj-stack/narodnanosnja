@@ -5,6 +5,7 @@ import sharp from "sharp";
 import path from "path";
 import fs from "fs/promises";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { prisma } from "@/lib/db";
 import { proveriUlazUploada } from "@/lib/media/upload-ulaz";
 import { saOgranicenjemObrade } from "@/lib/media/semafor";
 
@@ -85,12 +86,41 @@ export async function POST(request: NextRequest) {
     await fs.mkdir(uploadDir, { recursive: true });
     await fs.writeFile(path.join(uploadDir, filename), processed);
 
+    const publicPath = `/uploads/${profil.folder}/${filename}`;
+
+    // Red u medijateci se upisuje TEK POSLE uspešnog upisa na disk. Obrnut
+    // redosled bi ostavljao redove koji pokazuju na fajl kog nema, a takva
+    // slika se u obrascu vidi kao ispravna sve dok je neko ne otvori.
+    //
+    // Neuspeh upisa u bazu ne obara odgovor: fajl postoji i putanja je
+    // upotrebljiva, samo se ne pojavi u medijateci. Suprotno bi značilo da
+    // administrator dobije grešku iako je slika obrađena i sačuvana.
+    let assetId: string | null = null;
+    try {
+      const asset = await prisma.mediaAsset.create({
+        data: {
+          path: publicPath,
+          folder: profil.folder,
+          mimeType: "image/webp",
+          width: info.width,
+          height: info.height,
+          bytes: processed.length,
+          createdById: session.user.id,
+        },
+        select: { id: true },
+      });
+      assetId = asset.id;
+    } catch (greska) {
+      console.error("Upis u medijateku nije uspeo", greska);
+    }
+
     return NextResponse.json({
-      path: `/uploads/${profil.folder}/${filename}`,
+      path: publicPath,
       filename,
       size: processed.length,
       width: info.width,
       height: info.height,
+      assetId,
     });
   } catch (error) {
     // `sharp` puca i na fajlu koji tvrdi da je slika a nije — `file.type` u
