@@ -155,7 +155,21 @@ function poredak(sort: SortProizvoda): Prisma.ProductOrderByWithRelationInput {
  * `kategorija` bez izabrane kategorije. Blok tada ne renderuje ništa, umesto da
  * bez filtera prikaže ceo katalog.
  */
-export function planUpita(upit: VrednostUpitaProizvoda): KorakUpita[] {
+export interface KontekstPlana {
+  /**
+   * Identifikatori najbolje ocenjenih proizvoda, već poređani po oceni.
+   *
+   * Prosleđuje ih sloj baze, jer se prosek ocena ne može izraziti kao `orderBy`
+   * nad `Product` — traži grupisanje po `ProductReview`. Dok ih nema, izvor
+   * `najboljeOcenjeni` daje prazan plan.
+   */
+  idjeviNajboljeOcenjenih?: string[];
+}
+
+export function planUpita(
+  upit: VrednostUpitaProizvoda,
+  kontekst: KontekstPlana = {},
+): KorakUpita[] {
   const orderBy = poredak(upit.sort);
   const take = upit.broj;
   const osnova: Prisma.ProductWhereInput = { active: true };
@@ -204,6 +218,20 @@ export function planUpita(upit: VrednostUpitaProizvoda): KorakUpita[] {
       return [{ where: { ...osnova, brand: { slug: upit.brend } }, orderBy, take }];
     }
 
+    case "najboljeOcenjeni": {
+      const idjevi = kontekst.idjeviNajboljeOcenjenih;
+      if (!idjevi || idjevi.length === 0) return [];
+      // Redosled se ne postavlja ovde: prosek ocena je poznat pozivaocu, pa se
+      // poredak vraća kroz `poredjajPoRedosledu` nad `id`.
+      return [
+        {
+          where: { ...osnova, id: { in: idjevi } },
+          orderBy,
+          take: idjevi.length,
+        },
+      ];
+    }
+
     case "izabrani": {
       if (upit.izabrani.length === 0) return [];
       // `take` je broj slugova, ne `broj`: ručni izbor je već konačna lista.
@@ -219,19 +247,31 @@ export function planUpita(upit: VrednostUpitaProizvoda): KorakUpita[] {
 }
 
 /**
- * Redosled ručnog izbora je redosled koji je admin postavio, a ne onaj koji
- * baza vrati. Proizvod koji je u međuvremenu ugašen ili obrisan jednostavno
- * izostane.
+ * Vraća stavke redom zadatog spiska. Sve što u međuvremenu nestane iz baze
+ * jednostavno izostane, umesto da ostavi rupu ili obori render.
+ *
+ * Koristi se dvaput: za ručni izbor, gde redosled zadaje admin, i za najbolje
+ * ocenjene, gde ga zadaje prosek ocena — u oba slučaja `ORDER BY` u bazi ne bi
+ * dao traženi red.
  */
+export function poredjajPoRedosledu<T>(
+  stavke: T[],
+  redosled: string[],
+  kljuc: (stavka: T) => string,
+): T[] {
+  const poKljucu = new Map(stavke.map((stavka) => [kljuc(stavka), stavka]));
+  const rezultat: T[] = [];
+  for (const vrednost of redosled) {
+    const stavka = poKljucu.get(vrednost);
+    if (stavka) rezultat.push(stavka);
+  }
+  return rezultat;
+}
+
+/** Redosled ručnog izbora je redosled koji je admin postavio. */
 export function poredjajPoIzboru<T extends { slug: string }>(
   stavke: T[],
   redosled: string[],
 ): T[] {
-  const poSlugu = new Map(stavke.map((stavka) => [stavka.slug, stavka]));
-  const rezultat: T[] = [];
-  for (const slug of redosled) {
-    const stavka = poSlugu.get(slug);
-    if (stavka) rezultat.push(stavka);
-  }
-  return rezultat;
+  return poredjajPoRedosledu(stavke, redosled, (stavka) => stavka.slug);
 }

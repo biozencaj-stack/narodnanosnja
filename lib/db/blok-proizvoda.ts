@@ -4,6 +4,7 @@ import {
   kljucUpita,
   planUpita,
   poredjajPoIzboru,
+  poredjajPoRedosledu,
   upitIzKljuca,
   type KorakUpita,
 } from "@/lib/sekcije/upit-proizvoda";
@@ -84,6 +85,41 @@ function uKarticu(red: RedKartice): KarticaProizvoda {
   };
 }
 
+/**
+ * Identifikatori najbolje ocenjenih proizvoda, poređani po proseku ocena.
+ *
+ * Prosek se ne može izraziti kao `orderBy` nad `Product`, pa ide grupisanje po
+ * `ProductReview`. Dva detalja se ne smeju izgubiti:
+ *
+ * - `productId` je nullable kolona, a recenzija vezana samo za ERP šifru bi
+ *   inače napravila grupu sa ključem `null` koja se ne može spojiti ni sa jednim
+ *   proizvodom. Zato filter `productId: { not: null }` nije opcion.
+ * - `getProductReviewStats` agregira po `productCode`, a ne po `productId`. To
+ *   NIJE isti ključ i njegov rezultat se ovde ne može ponovo upotrebiti.
+ *
+ * Pri jednakom proseku prednost ima proizvod sa više recenzija: pet petica je
+ * jače svedočanstvo od jedne.
+ */
+async function idjeviNajboljeOcenjenih(koliko: number): Promise<string[]> {
+  const grupe = await prisma.productReview.groupBy({
+    by: ["productId"],
+    where: { productId: { not: null }, product: { active: true } },
+    _avg: { rating: true },
+    _count: { _all: true },
+  });
+
+  return grupe
+    .filter((grupa): grupa is typeof grupa & { productId: string } =>
+      typeof grupa.productId === "string",
+    )
+    .sort((a, b) => {
+      const razlika = (b._avg.rating ?? 0) - (a._avg.rating ?? 0);
+      return razlika !== 0 ? razlika : b._count._all - a._count._all;
+    })
+    .slice(0, koliko)
+    .map((grupa) => grupa.productId);
+}
+
 async function izvrsiKorak(korak: KorakUpita): Promise<KarticaProizvoda[]> {
   const redovi = await prisma.product.findMany({
     where: korak.where,
@@ -104,7 +140,11 @@ async function izvrsiKorak(korak: KorakUpita): Promise<KarticaProizvoda[]> {
  */
 const ucitajPoKljucu = cache(async (kljuc: string): Promise<KarticaProizvoda[]> => {
   const upit = upitIzKljuca(kljuc);
-  const plan = planUpita(upit);
+  const idjevi =
+    upit.izvor === "najboljeOcenjeni"
+      ? await idjeviNajboljeOcenjenih(upit.broj)
+      : undefined;
+  const plan = planUpita(upit, { idjeviNajboljeOcenjenih: idjevi });
   if (plan.length === 0) return [];
 
   const delovi = await Promise.all(plan.map(izvrsiKorak));
@@ -121,8 +161,14 @@ const ucitajPoKljucu = cache(async (kljuc: string): Promise<KarticaProizvoda[]> 
     }
   }
 
-  const poredjano =
-    upit.izvor === "izabrani" ? poredjajPoIzboru(spojeno, upit.izabrani) : spojeno;
+  // Za oba izvora sa spoljnim redosledom `ORDER BY` u bazi ne daje traženi red,
+  // pa se poredak vraća ovde.
+  let poredjano = spojeno;
+  if (upit.izvor === "izabrani") {
+    poredjano = poredjajPoIzboru(spojeno, upit.izabrani);
+  } else if (idjevi) {
+    poredjano = poredjajPoRedosledu(spojeno, idjevi, (proizvod) => proizvod.id);
+  }
 
   const granica = Math.max(...plan.map((korak) => korak.take));
   return poredjano.slice(0, granica);

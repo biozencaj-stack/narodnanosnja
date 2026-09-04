@@ -224,11 +224,19 @@ const TAKSONOMIJA: TipSekcije = {
     { kljuc: "kolone", natpis: "Kolona u redu", tip: "izbor", opcije: KOLONE },
     {
       kljuc: "broj",
-      natpis: "Najviše kategorija",
+      natpis: "Najviše kartica",
       tip: "broj",
       min: 1,
       max: 24,
       korak: 1,
+    },
+    {
+      kljuc: "podkategorije",
+      natpis: "Veze ka podkategorijama",
+      opis:
+        "Ispod naziva kategorije stoje i njene podkategorije. Brendovi nemaju " +
+        "podelu, pa im ovo ne menja ništa.",
+      tip: "prekidac",
     },
   ],
   podrazumevano: {
@@ -237,6 +245,7 @@ const TAKSONOMIJA: TipSekcije = {
     izvor: "kategorije",
     kolone: "3",
     broj: 6,
+    podkategorije: false,
   },
   stranice: STRANICE,
   asinhrona: true,
@@ -308,6 +317,14 @@ const PROIZVODI: TipSekcije = {
       opis: "Isključi kad blok stoji uz drugi u kom oznake već stoje.",
       tip: "prekidac",
     },
+    {
+      kljuc: "zelje",
+      natpis: "Dugme „sačuvaj u želje”",
+      opis:
+        "Isključi kad blok služi kao izlog, a ne kao mesto sa kog se kupuje. " +
+        "Ako je funkcija želja ugašena u podešavanjima, dugmeta nema ni ovako.",
+      tip: "prekidac",
+    },
   ],
   podrazumevano: {
     ...PODRAZUMEVAN_OKVIR,
@@ -318,6 +335,7 @@ const PROIZVODI: TipSekcije = {
     kolone: "4",
     koloneMobilno: "2",
     oznake: true,
+    zelje: true,
   },
   stranice: STRANICE,
   asinhrona: true,

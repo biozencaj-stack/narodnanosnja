@@ -35,6 +35,7 @@ function Prikaz({
   kolone,
   koloneMobilno,
   oznake,
+  zelje,
   naziv,
 }: {
   proizvodi: KarticaProizvoda[];
@@ -42,6 +43,7 @@ function Prikaz({
   kolone: string;
   koloneMobilno: string;
   oznake: boolean;
+  zelje: boolean;
   naziv: string;
 }) {
   if (prikaz === "karusel") {
@@ -51,6 +53,7 @@ function Prikaz({
         kolone={kolone}
         koloneMobilno={koloneMobilno}
         prikaziOznake={oznake}
+        prikaziZelje={zelje}
         naziv={naziv}
       />
     );
@@ -62,6 +65,7 @@ function Prikaz({
           key={proizvod.id}
           product={proizvod}
           prikaziOznake={oznake}
+          prikaziZelje={zelje}
         />
       ))}
     </div>
@@ -80,6 +84,7 @@ export async function SekcijaProizvodi({
   const kolone = izbor(config, "kolone", ["2", "3", "4"] as const, "4");
   const koloneMobilno = izbor(config, "koloneMobilno", ["1", "2"] as const, "2");
   const oznake = config.oznake !== false;
+  const zelje = config.zelje !== false;
 
   // Jedan tab nije tab. Tek od dva se prikazuje traka za izbor; ispod toga se
   // koristi glavni izvor, pa admin koji je počeo da pravi tabove pa odustao ne
@@ -133,6 +138,7 @@ export async function SekcijaProizvodi({
                 kolone={kolone}
                 koloneMobilno={koloneMobilno}
                 oznake={oznake}
+                zelje={zelje}
                 naziv={grupa.naslov || naslovSekcije}
               />
             ),
@@ -145,6 +151,7 @@ export async function SekcijaProizvodi({
           kolone={kolone}
           koloneMobilno={koloneMobilno}
           oznake={oznake}
+          zelje={zelje}
           naziv={naslovSekcije}
         />
       )}

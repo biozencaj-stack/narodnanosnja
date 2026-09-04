@@ -45,6 +45,21 @@ test("keširana funkcija prima string, ne objekat", () => {
   assert.match(IZVOR, /ucitajPoKljucu\(kljucUpita\(upit\)\)/);
 });
 
+test("najbolje ocenjeni ne mešaju recenzije bez proizvoda", () => {
+  // `ProductReview.productId` je nullable, a recenzija vezana samo za ERP šifru
+  // bi napravila grupu sa ključem `null` koja se ne može spojiti ni sa jednim
+  // proizvodom. Filter zato nije opcion.
+  assert.match(IZVOR, /productId: \{ not: null \}/);
+});
+
+test("najbolje ocenjeni grupišu po `productId`, ne po `productCode`", () => {
+  // `getProductReviewStats` agregira po `productCode` i njegov rezultat se ovde
+  // ne sme ponovo upotrebiti — nije isti ključ. Provera gleda poziv, ne pomen u
+  // komentaru: komentar o toj zamci treba da ostane.
+  assert.match(IZVOR, /prisma\.productReview\.groupBy\(\{\s*by: \["productId"\]/);
+  assert.equal(/getProductReviewStats\(/.test(IZVOR), false);
+});
+
 test("kartica ne nosi `Decimal` preko granice servera i klijenta", () => {
   assert.match(IZVOR, /price: Number\(red\.price\)/);
   assert.match(IZVOR, /salePrice: red\.salePrice === null \? null : Number\(red\.salePrice\)/);

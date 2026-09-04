@@ -22,12 +22,14 @@ export function KaruselProizvoda({
   kolone,
   koloneMobilno,
   prikaziOznake,
+  prikaziZelje,
   naziv,
 }: {
   proizvodi: KarticaProizvoda[];
   kolone: string;
   koloneMobilno: string;
   prikaziOznake: boolean;
+  prikaziZelje: boolean;
   naziv: string;
 }) {
   const [emblaRef, emblaApi] = useEmblaCarousel(
@@ -61,7 +63,11 @@ export function KaruselProizvoda({
         <div className="-ml-4 flex lg:-ml-6">
           {proizvodi.map((proizvod) => (
             <div key={proizvod.id} className={`${klasaPolja} pl-4 lg:pl-6`}>
-              <LocalProductCard product={proizvod} prikaziOznake={prikaziOznake} />
+              <LocalProductCard
+                product={proizvod}
+                prikaziOznake={prikaziOznake}
+                prikaziZelje={prikaziZelje}
+              />
             </div>
           ))}
         </div>

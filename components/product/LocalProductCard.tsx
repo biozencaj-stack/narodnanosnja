@@ -49,12 +49,18 @@ interface LocalProductCardProps {
    * jedan uz drugi pa se iste oznake ponavljaju.
    */
   prikaziOznake?: boolean;
+  /**
+   * Dugme „sačuvaj u želje“. Podrazumevano stoji; sekcija ga isključuje kad
+   * blok služi kao izlog, a ne kao mesto sa kog se kupuje.
+   */
+  prikaziZelje?: boolean;
 }
 
 export function LocalProductCard({
   product,
   className,
   prikaziOznake = true,
+  prikaziZelje = true,
 }: LocalProductCardProps) {
   const { id, slug, name, price, salePrice, image1, image2, novo, category, brand } = product;
   const locale = useLocale();
@@ -147,7 +153,7 @@ export function LocalProductCard({
           )}
         </Link>
 
-        {storeCapabilities.wishlist && (
+        {storeCapabilities.wishlist && prikaziZelje && (
           <button
             type="button"
             className={cn(

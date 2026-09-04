@@ -100,6 +100,7 @@ export const IZVORI_PROIZVODA = [
   "najnovije",
   "kategorija",
   "brend",
+  "najboljeOcenjeni",
   "izabrani",
 ] as const;
 
@@ -114,6 +115,7 @@ export const NATPISI_IZVORA: Record<IzvorProizvoda, string> = {
   najnovije: "Najskorije dodati",
   kategorija: "Iz jedne kategorije",
   brend: "Jednog brenda",
+  najboljeOcenjeni: "Najbolje ocenjeni",
   izabrani: "Ručno izabrani",
 };
 

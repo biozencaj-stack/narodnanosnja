@@ -11,6 +11,7 @@ import {
   normalizujUpit,
   planUpita,
   poredjajPoIzboru,
+  poredjajPoRedosledu,
   upitIzKljuca,
 } from "./upit-proizvoda";
 
@@ -89,7 +90,7 @@ test("svaki izvor ima plan, i nijedan plan ne izostavlja `active`", () => {
       brend: "radionica",
       izabrani: ["prvi"],
     });
-    const plan = planUpita(upit);
+    const plan = planUpita(upit, { idjeviNajboljeOcenjenih: ["id-1", "id-2"] });
     assert.ok(plan.length > 0, `${izvor}: prazan plan`);
     for (const korak of plan) {
       assert.equal(korak.where.active, true, `${izvor}: nedostaje active`);
@@ -99,10 +100,21 @@ test("svaki izvor ima plan, i nijedan plan ne izostavlja `active`", () => {
 });
 
 test("izvor bez dopune ne pravi upit — bolje prazna sekcija nego ceo katalog", () => {
-  for (const izvor of ["kategorija", "brend", "izabrani"] as const) {
+  for (const izvor of ["kategorija", "brend", "izabrani", "najboljeOcenjeni"] as const) {
     const plan = planUpita(normalizujUpit({ izvor }));
     assert.deepEqual(plan, [], izvor);
   }
+});
+
+test("najbolje ocenjeni traže identifikatore spolja, jer prosek nije `orderBy`", () => {
+  const upit = normalizujUpit({ izvor: "najboljeOcenjeni", broj: 4 });
+  assert.deepEqual(planUpita(upit), []);
+  assert.deepEqual(planUpita(upit, { idjeviNajboljeOcenjenih: [] }), []);
+
+  const plan = planUpita(upit, { idjeviNajboljeOcenjenih: ["a", "b"] });
+  assert.equal(plan.length, 1);
+  assert.deepEqual(plan[0].where.id, { in: ["a", "b"] });
+  assert.equal(plan[0].take, 2);
 });
 
 test("`izdvojenoISnizeno` ostaje dva koraka, da redosled ostane isti", () => {
@@ -149,6 +161,14 @@ test("proizvod koji je u međuvremenu nestao se preskače, ne ostavlja rupu", ()
   const izBaze = [{ slug: "a" }, { slug: "c" }];
   assert.deepEqual(
     poredjajPoIzboru(izBaze, ["a", "obrisan", "c"]).map((s) => s.slug),
+    ["a", "c"],
+  );
+});
+
+test("isti poredak radi i nad identifikatorima, za najbolje ocenjene", () => {
+  const izBaze = [{ id: "c" }, { id: "a" }];
+  assert.deepEqual(
+    poredjajPoRedosledu(izBaze, ["a", "b", "c"], (stavka) => stavka.id).map((s) => s.id),
     ["a", "c"],
   );
 });

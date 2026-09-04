@@ -801,9 +801,10 @@ jedna za sve: hero ide u profil sa 4 MB i 2000×1200, ikona u 256 KB i 256×256.
 ### Blok proizvoda (faza 4)
 
 Jedan tip `proizvodi` pokriva osam WoodMart elemenata: izvor bira admin
-(izdvojeno, sniženo, novo, najnovije, iz kategorije, jednog brenda, ručni
-izbor), a uz njega ide prikaz (mreža ili karusel), broj kolona zasebno za
-telefon i za desktop, sortiranje i do četiri taba.
+(izdvojeno, sniženo, novo, najnovije, iz kategorije, jednog brenda, najbolje
+ocenjeni, ručni izbor), a uz njega ide prikaz (mreža ili karusel), broj kolona
+zasebno za telefon i za desktop, sortiranje, do četiri taba i prekidači za
+oznake i za dugme želja.
 
 **Sekcija nikad ne čuva cenu.** Konfiguracija nosi samo opis upita; cena i
 dostupnost se čitaju sa servera pri svakom prikazu. Zapamćena cena bi na
@@ -833,6 +834,18 @@ katalog na početnu. Isto važi za `brend` i ručni izbor.
 `{ sr, en }`, pa bi `ORDER BY name` sortirao po tekstu celog JSON zapisa. To bi
 ličilo na azbučni red a ne bi bilo — tiho pogrešan red je gori od opcije koje
 nema.
+
+**„Najbolje ocenjeni” je jedini izvor sa dva koraka.** Prosek ocena se ne može
+izraziti kao `orderBy` nad `Product`, pa sloj baze prvo grupiše `ProductReview`
+po `productId` i tek onda čita proizvode. Dve zamke: `productId` je **nullable**
+(recenzija vezana samo za ERP šifru napravila bi grupu `null`), a
+`getProductReviewStats` agregira po `productCode` — **nije isti ključ** i njegov
+rezultat se ne sme ponovo upotrebiti. Pri jednakom proseku prednost ima proizvod
+sa više recenzija.
+
+**Kartica taksonomije je `div`, ne `Link`.** Kad su uključene veze ka
+podkategorijama, one bi kao ugnežđene veze bile nevažeći HTML, a čitač ekrana bi
+celu karticu pročitao kao jednu veliku vezu.
 
 **Klase mreže i klizača se ispisuju doslovno** (`MREZA_PROIZVODA`,
 `KLIZAC_PROIZVODA` u `components/sekcije/stilovi.ts`). Tailwind ne vidi klase

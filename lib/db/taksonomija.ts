@@ -16,6 +16,8 @@ export interface KarticaTaksonomije {
   /** Putanja slike iz medijateke, ili `null` kad je admin nije postavio. */
   slika: string | null;
   veza: string;
+  /** Podkategorije; kod brendova uvek prazno, jer brend nema podelu. */
+  podstavke: { id: string; naziv: unknown; veza: string }[];
 }
 
 /**
@@ -27,7 +29,17 @@ export const ucitajKarticeKategorija = cache(
     const redovi = await prisma.category.findMany({
       where: { active: true, showInNav: true, parentId: null },
       orderBy: { navOrder: "asc" },
-      select: { id: true, name: true, slug: true, image: true },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        image: true,
+        children: {
+          where: { active: true },
+          orderBy: { sortOrder: "asc" },
+          select: { id: true, name: true, slug: true },
+        },
+      },
     });
     return redovi.map((red) => ({
       id: red.id,
@@ -35,6 +47,12 @@ export const ucitajKarticeKategorija = cache(
       slug: red.slug,
       slika: red.image,
       veza: `/category/${red.slug}`,
+      podstavke: red.children.map((dete) => ({
+        id: dete.id,
+        naziv: dete.name,
+        // Podkategorija se otvara kroz istu `[...slug]` rutu, sa dva segmenta.
+        veza: `/category/${red.slug}/${dete.slug}`,
+      })),
     }));
   },
 );
@@ -56,6 +74,7 @@ export const ucitajKarticeBrendova = cache(
       slug: red.slug,
       slika: red.logo,
       veza: `/catalog/brand/${red.slug}`,
+      podstavke: [],
     }));
   },
 );
