@@ -3,6 +3,11 @@
 import { prisma } from "@/lib/db";
 import { getLocalized } from "@/lib/i18n/localized";
 import type { Prisma } from "@prisma/client";
+import {
+  buildProductOrderBy,
+  buildProductWhere,
+  type ProductFilterOptions,
+} from "./products-filter";
 
 /**
  * Local product data layer - replaces Balans API calls
@@ -57,145 +62,14 @@ export interface ProductCardData {
   brand: { name: unknown } | null;
 }
 
-export interface ProductFilterOptions {
-  categorySlug?: string;
-  brandSlug?: string;
-  brandIds?: string[]; // For FilterSidebar compatibility (resolved to slugs)
-  gender?: string;
-  onSale?: boolean;
-  novo?: boolean;
-  featured?: boolean;
-  search?: string;
-  minPrice?: number;
-  maxPrice?: number;
-  maxPriceOnly?: number; // Alias for maxPrice (FilterSidebar uses priceMax)
-  sizes?: string[];
-  colors?: string[];
-  types?: string[]; // Category slugs for footwear type (CIPELE -> cipele, etc.)
-  sort?: "price_asc" | "price_desc" | "newest" | "name";
-  page?: number;
-  limit?: number;
-}
-
 /**
  * Fetch products list with filtering, sorting, and pagination
  */
 export async function fetchProducts(options: ProductFilterOptions = {}) {
-  const {
-    categorySlug,
-    brandSlug,
-    brandIds,
-    gender,
-    onSale,
-    novo,
-    featured,
-    search,
-    minPrice,
-    maxPrice,
-    maxPriceOnly,
-    sizes,
-    colors,
-    types,
-    sort = "newest",
-    page = 1,
-    limit = 12,
-  } = options;
+  const { page = 1, limit = 12, sort = "newest" } = options;
 
-  const where: Prisma.ProductWhereInput = {
-    active: true,
-  };
-
-  if (categorySlug && !types?.length) {
-    where.OR = [
-      { category: { slug: categorySlug } },
-      { categories: { some: { category: { slug: categorySlug } } } },
-    ];
-  }
-  if (brandSlug) {
-    where.brand = { slug: brandSlug };
-  }
-  if (brandIds && brandIds.length > 0) {
-    where.brandId = { in: brandIds };
-  }
-  if (gender) {
-    // Map muske/zenske from FilterSidebar to muski/zenski in DB
-    const genderMap: Record<string, string> = {
-      muske: "muski",
-      zenske: "zenski",
-    };
-    where.gender = genderMap[gender] || gender;
-  }
-  if (onSale) {
-    where.onSale = true;
-  }
-  if (featured) {
-    where.featured = true;
-  }
-  if (novo) {
-    where.novo = true;
-  }
-  if (search) {
-    where.OR = [
-      { name: { path: ["sr"], string_contains: search } },
-      { name: { path: ["en"], string_contains: search } },
-      { description: { path: ["sr"], string_contains: search } },
-      { description: { path: ["en"], string_contains: search } },
-      { sku: { contains: search, mode: "insensitive" } },
-    ];
-  }
-  const effectiveMaxPrice = maxPrice ?? maxPriceOnly;
-  if (minPrice !== undefined) {
-    where.price = { ...((where.price as object) || {}), gte: minPrice };
-  }
-  if (effectiveMaxPrice !== undefined) {
-    where.price = { ...((where.price as object) || {}), lte: effectiveMaxPrice };
-  }
-  if (sizes && sizes.length > 0) {
-    where.sizes = {
-      some: {
-        size: { in: sizes },
-        stock: { gt: 0 },
-        active: true,
-      },
-    };
-  }
-  if (colors && colors.length > 0) {
-    const colorCondition = {
-      OR: colors.map((c) => ({
-        color: { equals: c, mode: "insensitive" as const },
-      })),
-    };
-    where.AND = [...((where.AND as object[]) || []), colorCondition];
-  }
-  if (types && types.length > 0) {
-    const typeSlugs = types.map((t) =>
-      t.toLowerCase().replace(/\s+/g, "-")
-    );
-    const typeCondition = {
-      OR: [
-        { category: { slug: { in: typeSlugs } } },
-        { categories: { some: { category: { slug: { in: typeSlugs } } } } },
-      ],
-    };
-    where.AND = [...((where.AND as object[]) || []), typeCondition];
-  }
-
-  // Sort options
-  let orderBy: Prisma.ProductOrderByWithRelationInput;
-  switch (sort) {
-    case "price_asc":
-      orderBy = { price: "asc" };
-      break;
-    case "price_desc":
-      orderBy = { price: "desc" };
-      break;
-    case "name":
-      orderBy = { name: "asc" };
-      break;
-    case "newest":
-    default:
-      orderBy = { createdAt: "desc" };
-  }
+  const where = buildProductWhere(options);
+  const orderBy = buildProductOrderBy(sort);
 
   const [products, total] = await Promise.all([
     prisma.product.findMany({

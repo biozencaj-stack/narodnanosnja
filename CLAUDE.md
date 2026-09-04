@@ -122,6 +122,12 @@ sve što tvrde.
 - **Podrazumevana paleta stoji u CSS-u, runtime paleta u Settings.** Admin
   vrednosti se postavljaju kao CSS promenljive iz `app/layout.tsx`; pri
   dodavanju novog semantičkog tokena dopuni i registry i `storeThemeStyle`.
+- **Iz fajla sa `"use server"` ne sme se ponovo izvoziti tip.** `export interface`
+  prolazi, ali `export type { Nesto }` Turbopack tretira kao Server Action; tip u
+  izgradnji ne postoji, pa `npm run build` pada sa „Export ... doesn't exist in
+  target module“ na svakoj stranici koja taj modul dodiruje. `npm run typecheck`
+  to ne vidi. Čiste funkcije i tipovi zato idu u zaseban modul — vidi
+  `lib/products-filter.ts` pored `lib/products.ts`.
 - **Portovi na serveru su zauzeti.** 3000 (shopdemo), 3001 (kore), 3002, 8000,
   8080. Ova prodavnica radi na **3007**, nginx je izlaže na **8090**.
 
