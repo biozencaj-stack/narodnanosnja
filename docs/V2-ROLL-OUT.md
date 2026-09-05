@@ -2,11 +2,11 @@
 
 Ova grana menja Prisma šemu i **ne sme** direktno na postojeću produkcionu
 bazu. Kod je kompatibilno proširen, ali baza prvo mora dobiti nove
-order/payment kolone, payment event dnevnik, expand-only kataloške tabele i tri
-odvojeno pregledane auth expand promene. Činjenica da su prve četiri migracije
-ranije primenjene ne znači da su kasnije auth migracije već na produkciji.
-Aktivni lanac ima sedam migracija, ali produkciona evidencija ovog preseka i
-dalje ima samo prve četiri; verified-login rad nije čitao, menjao ili migrirao
+order/payment kolone, payment event dnevnik, expand-only kataloške tabele i
+četiri odvojeno pregledane auth expand promene. Činjenica da su prve četiri
+migracije ranije primenjene ne znači da su kasnije auth migracije već na
+produkciji. Aktivni lanac ima osam migracija, ali produkciona evidencija ovog
+preseka i dalje ima samo prve četiri; verified-login rad nije čitao, menjao ili migrirao
 produkcijsku bazu.
 
 ## Šta šema dodaje
