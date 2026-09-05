@@ -90,3 +90,57 @@ test("admin path detection does not accept prefix lookalikes", () => {
   assert.equal(isAdminApiPath("/api/admin/orders"), true);
   assert.equal(isAdminApiPath("/api/administrator"), false);
 });
+
+test("sekcije stranica su ADMIN-only na svakoj novoj putanji", () => {
+  // Politika je deny-by-default, pa nove rute ne traže izmenu pravila. Ovaj
+  // test to i dokazuje: da neko ikad doda `/admin/sekcije` u OPERATOR spisak
+  // „da bi mogli da menjaju sadržaj”, ovde puca.
+  const apiPutanje: readonly (readonly [string, string])[] = [
+    ["/api/admin/sekcije", "GET"],
+    ["/api/admin/sekcije", "POST"],
+    ["/api/admin/sekcije/section-1", "PUT"],
+    ["/api/admin/sekcije/section-1", "DELETE"],
+    ["/api/admin/sekcije/redosled", "POST"],
+    ["/api/admin/sekcije/objavi", "POST"],
+  ];
+
+  for (const [pathname, method] of apiPutanje) {
+    assert.deepEqual(
+      getAdminApiAccess("ADMIN", pathname, method),
+      { allowed: true, role: "ADMIN" },
+      `${method} ${pathname}`,
+    );
+    assert.deepEqual(
+      getAdminApiAccess("OPERATOR", pathname, method),
+      { allowed: false, reason: "OPERATOR_SCOPE" },
+      `${method} ${pathname}`,
+    );
+    assert.deepEqual(
+      getAdminApiAccess("CUSTOMER", pathname, method),
+      { allowed: false, reason: "NOT_ADMIN_STAFF" },
+      `${method} ${pathname}`,
+    );
+    assert.deepEqual(
+      getAdminApiAccess(undefined, pathname, method),
+      { allowed: false, reason: "UNAUTHENTICATED" },
+      `${method} ${pathname}`,
+    );
+    assert.equal(isAdminApiPath(pathname), true, pathname);
+  }
+
+  for (const pathname of ["/admin/sekcije", "/admin/sekcije/pregled/home"]) {
+    assert.deepEqual(getAdminPageAccess("ADMIN", pathname), {
+      allowed: true,
+      role: "ADMIN",
+    });
+    assert.deepEqual(getAdminPageAccess("OPERATOR", pathname), {
+      allowed: false,
+      reason: "OPERATOR_SCOPE",
+    });
+    assert.deepEqual(getAdminPageAccess(undefined, pathname), {
+      allowed: false,
+      reason: "UNAUTHENTICATED",
+    });
+    assert.equal(isAdminPagePath(pathname), true, pathname);
+  }
+});

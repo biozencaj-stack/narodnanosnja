@@ -1692,6 +1692,357 @@ BEGIN
 END;
 $$;
 
+-- ============================================================
+-- Sekcije stranica (20260902120000_expand_page_sections)
+-- ============================================================
+--
+-- Baza ne zna oblik `config`-a; to proverava registar u aplikaciji. Ovde se
+-- proverava samo ono što ne sme da zavisi od ispravnosti aplikacije: da tabele
+-- i indeksi postoje u dogovorenom obliku i da devet CHECK ograničenja zaista
+-- odbija loše redove. Svaki negativan scenario ide u sopstvenu subtransakciju,
+-- pa neuspeh jednog ne obara ostale.
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE "table_schema" = 'public'
+      AND "table_name" IN ('PageSection', 'MediaAsset', 'MediaAssetUsage')
+    GROUP BY "table_schema"
+    HAVING count(*) = 3
+  ) THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: page section tables are missing';
+  END IF;
+
+  -- `config` je obavezan i mora biti jsonb; nacrt-kolone moraju biti nullable,
+  -- jer NULL je jedini način da se kaže „nema nacrta”.
+  IF (
+    SELECT count(*)
+    FROM information_schema.columns
+    WHERE "table_schema" = 'public'
+      AND "table_name" = 'PageSection'
+      AND (
+        ("column_name" = 'config' AND "is_nullable" = 'NO' AND "data_type" = 'jsonb')
+        OR ("column_name" = 'draftConfig' AND "is_nullable" = 'YES' AND "data_type" = 'jsonb')
+        OR ("column_name" = 'draftOrder' AND "is_nullable" = 'YES')
+        OR ("column_name" = 'draftIsActive' AND "is_nullable" = 'YES')
+        OR ("column_name" = 'publishedAt' AND "is_nullable" = 'YES')
+      )
+  ) IS DISTINCT FROM 5 THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: PageSection draft/publish column contract is invalid';
+  END IF;
+
+  -- Čitanje javne početne ide po ova tri polja; bez indeksa upit radi, ali
+  -- sekvencijalno.
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_indexes
+    WHERE "schemaname" = 'public'
+      AND "tablename" = 'PageSection'
+      AND "indexname" = 'PageSection_pageKey_isActive_order_idx'
+  ) THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: PageSection lookup index is missing';
+  END IF;
+
+  -- Bez ovog jedinstvenog indeksa isto polje može dvaput da zabeleži upotrebu
+  -- medija, pa brojanje referenci prestaje da bude pouzdano.
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_indexes
+    WHERE "schemaname" = 'public'
+      AND "tablename" = 'MediaAssetUsage'
+      AND "indexname" = 'MediaAssetUsage_sectionId_polje_key'
+  ) THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: MediaAssetUsage uniqueness index is missing';
+  END IF;
+
+  RAISE NOTICE 'PASS: page section schema contract is present';
+END;
+$$;
+
+-- Pozitivan fixture: ispravna sekcija, ispravan medij i veza između njih moraju
+-- proći. Bez ovoga bi provera prolazila i da ograničenja odbijaju baš sve.
+DO $$
+BEGIN
+  INSERT INTO "PageSection" (
+    "id", "pageKey", "kind", "order", "isActive", "config",
+    "draftConfig", "draftOrder", "draftIsActive",
+    "schemaVersion", "version", "updatedAt"
+  ) VALUES (
+    'codex-smoke-sekcija', 'home', 'hero', 0, true, '{"naslov": {}}'::jsonb,
+    '{"naslov": {}}'::jsonb, 1, false,
+    1, 0, CURRENT_TIMESTAMP
+  );
+
+  INSERT INTO "MediaAsset" (
+    "id", "path", "folder", "mimeType", "width", "height", "bytes", "createdAt"
+  ) VALUES (
+    'codex-smoke-medij', '/uploads/sekcije/1-a.webp', 'sekcije',
+    'image/webp', 1600, 900, 42000, CURRENT_TIMESTAMP
+  );
+
+  INSERT INTO "MediaAssetUsage" ("id", "assetId", "sectionId", "polje")
+  VALUES ('codex-smoke-upotreba', 'codex-smoke-medij', 'codex-smoke-sekcija', 'slika');
+
+  RAISE NOTICE 'PASS: valid page section fixture was accepted';
+END;
+$$;
+
+DO $$
+DECLARE
+  rejected BOOLEAN := false;
+BEGIN
+  BEGIN
+    INSERT INTO "PageSection" (
+      "id", "pageKey", "kind", "order", "config", "schemaVersion", "version", "updatedAt"
+    ) VALUES (
+      'codex-smoke-negativan-redosled', 'home', 'hero', -1, '{}'::jsonb, 1, 0, CURRENT_TIMESTAMP
+    );
+  EXCEPTION
+    WHEN check_violation THEN
+      rejected := true;
+  END;
+
+  IF NOT rejected THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: negative PageSection order was accepted';
+  END IF;
+
+  RAISE NOTICE 'PASS: negative PageSection order was rejected';
+END;
+$$;
+
+DO $$
+DECLARE
+  rejected BOOLEAN := false;
+BEGIN
+  BEGIN
+    INSERT INTO "PageSection" (
+      "id", "pageKey", "kind", "order", "config", "schemaVersion", "version", "updatedAt"
+    ) VALUES (
+      'codex-smoke-negativna-verzija', 'home', 'hero', 0, '{}'::jsonb, 1, -1, CURRENT_TIMESTAMP
+    );
+  EXCEPTION
+    WHEN check_violation THEN
+      rejected := true;
+  END;
+
+  IF NOT rejected THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: negative PageSection version was accepted';
+  END IF;
+
+  RAISE NOTICE 'PASS: negative PageSection version was rejected';
+END;
+$$;
+
+DO $$
+DECLARE
+  rejected BOOLEAN := false;
+BEGIN
+  BEGIN
+    INSERT INTO "PageSection" (
+      "id", "pageKey", "kind", "order", "config", "draftOrder",
+      "schemaVersion", "version", "updatedAt"
+    ) VALUES (
+      'codex-smoke-negativan-nacrt-redosled', 'home', 'hero', 0, '{}'::jsonb, -1,
+      1, 0, CURRENT_TIMESTAMP
+    );
+  EXCEPTION
+    WHEN check_violation THEN
+      rejected := true;
+  END;
+
+  IF NOT rejected THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: negative PageSection draftOrder was accepted';
+  END IF;
+
+  RAISE NOTICE 'PASS: negative PageSection draftOrder was rejected';
+END;
+$$;
+
+-- Dvotačka je namerno zabranjena dok odluka o dometu (`stranica:<slug>`) ne
+-- bude doneta. Ovaj scenario je čuva od tihog uvođenja.
+DO $$
+DECLARE
+  rejected BOOLEAN := false;
+BEGIN
+  BEGIN
+    INSERT INTO "PageSection" (
+      "id", "pageKey", "kind", "order", "config", "schemaVersion", "version", "updatedAt"
+    ) VALUES (
+      'codex-smoke-los-pagekey', 'stranica:o-nama', 'hero', 0, '{}'::jsonb, 1, 0, CURRENT_TIMESTAMP
+    );
+  EXCEPTION
+    WHEN check_violation THEN
+      rejected := true;
+  END;
+
+  IF NOT rejected THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: malformed PageSection pageKey was accepted';
+  END IF;
+
+  RAISE NOTICE 'PASS: malformed PageSection pageKey was rejected';
+END;
+$$;
+
+DO $$
+DECLARE
+  rejected BOOLEAN := false;
+BEGIN
+  BEGIN
+    INSERT INTO "PageSection" (
+      "id", "pageKey", "kind", "order", "config", "schemaVersion", "version", "updatedAt"
+    ) VALUES (
+      'codex-smoke-los-kind', 'home', 'Hero-Sekcija', 0, '{}'::jsonb, 1, 0, CURRENT_TIMESTAMP
+    );
+  EXCEPTION
+    WHEN check_violation THEN
+      rejected := true;
+  END;
+
+  IF NOT rejected THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: malformed PageSection kind was accepted';
+  END IF;
+
+  RAISE NOTICE 'PASS: malformed PageSection kind was rejected';
+END;
+$$;
+
+-- Niz ili skalar u `config`-u znači da čitač dobija oblik koji ne ume da
+-- pročita, a greška bi izbila tek pri renderu javne stranice.
+DO $$
+DECLARE
+  rejected BOOLEAN := false;
+BEGIN
+  BEGIN
+    INSERT INTO "PageSection" (
+      "id", "pageKey", "kind", "order", "config", "schemaVersion", "version", "updatedAt"
+    ) VALUES (
+      'codex-smoke-config-niz', 'home', 'hero', 0, '[]'::jsonb, 1, 0, CURRENT_TIMESTAMP
+    );
+  EXCEPTION
+    WHEN check_violation THEN
+      rejected := true;
+  END;
+
+  IF NOT rejected THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: non-object PageSection config was accepted';
+  END IF;
+
+  RAISE NOTICE 'PASS: non-object PageSection config was rejected';
+END;
+$$;
+
+DO $$
+DECLARE
+  rejected BOOLEAN := false;
+BEGIN
+  BEGIN
+    INSERT INTO "PageSection" (
+      "id", "pageKey", "kind", "order", "config", "draftConfig",
+      "schemaVersion", "version", "updatedAt"
+    ) VALUES (
+      'codex-smoke-nacrt-skalar', 'home', 'hero', 0, '{}'::jsonb, '"tekst"'::jsonb,
+      1, 0, CURRENT_TIMESTAMP
+    );
+  EXCEPTION
+    WHEN check_violation THEN
+      rejected := true;
+  END;
+
+  IF NOT rejected THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: non-object PageSection draftConfig was accepted';
+  END IF;
+
+  RAISE NOTICE 'PASS: non-object PageSection draftConfig was rejected';
+END;
+$$;
+
+-- Putanja mora početi alfanumerikom, pa `..` ne može da izađe iz foldera.
+DO $$
+DECLARE
+  rejected BOOLEAN := false;
+BEGIN
+  BEGIN
+    INSERT INTO "MediaAsset" (
+      "id", "path", "folder", "mimeType", "width", "height", "bytes", "createdAt"
+    ) VALUES (
+      'codex-smoke-izlazak', '/uploads/sekcije/../../etc/passwd', 'sekcije',
+      'image/webp', 10, 10, 10, CURRENT_TIMESTAMP
+    );
+  EXCEPTION
+    WHEN check_violation THEN
+      rejected := true;
+  END;
+
+  IF NOT rejected THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: traversing MediaAsset path was accepted';
+  END IF;
+
+  RAISE NOTICE 'PASS: traversing MediaAsset path was rejected';
+END;
+$$;
+
+DO $$
+DECLARE
+  rejected BOOLEAN := false;
+BEGIN
+  BEGIN
+    INSERT INTO "MediaAsset" (
+      "id", "path", "folder", "mimeType", "width", "height", "bytes", "createdAt"
+    ) VALUES (
+      'codex-smoke-nulta-visina', '/uploads/sekcije/2-b.webp', 'sekcije',
+      'image/webp', 1600, 0, 42000, CURRENT_TIMESTAMP
+    );
+  EXCEPTION
+    WHEN check_violation THEN
+      rejected := true;
+  END;
+
+  IF NOT rejected THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: zero MediaAsset dimension was accepted';
+  END IF;
+
+  RAISE NOTICE 'PASS: zero MediaAsset dimension was rejected';
+END;
+$$;
+
+-- Isto polje iste sekcije ne sme dvaput da zabeleži upotrebu medija: brojanje
+-- referenci je jedina zaštita od brisanja slike sa žive stranice.
+DO $$
+DECLARE
+  rejected BOOLEAN := false;
+BEGIN
+  BEGIN
+    INSERT INTO "MediaAssetUsage" ("id", "assetId", "sectionId", "polje")
+    VALUES ('codex-smoke-upotreba-duplikat', 'codex-smoke-medij', 'codex-smoke-sekcija', 'slika');
+  EXCEPTION
+    WHEN unique_violation THEN
+      rejected := true;
+  END;
+
+  IF NOT rejected THEN
+    RAISE EXCEPTION
+      'DB invariant smoke failed: duplicate MediaAssetUsage field was accepted';
+  END IF;
+
+  RAISE NOTICE 'PASS: duplicate MediaAssetUsage field was rejected';
+END;
+$$;
+
 SET CONSTRAINTS ALL IMMEDIATE;
 
 ROLLBACK;

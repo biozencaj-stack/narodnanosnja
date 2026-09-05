@@ -46,6 +46,10 @@ git switch --no-track -c dodatak/kratak-opis \
   origin/verzija/v2.0-univerzalna-platforma
 ```
 
+Svaka tvrdnja o stanju koda proverava se nad
+`origin/verzija/v2.0-univerzalna-platforma`, nikad nad lokalnim refom — lokalni
+ume da zaostaje za nekoliko spajanja.
+
 | Vrsta posla        | Oblik imena                | Primer                        |
 | ------------------ | -------------------------- | ----------------------------- |
 | Nova verzija       | `verzija/vX.Y-kratak-opis` | `verzija/v1.1-fotografije`    |
@@ -759,7 +763,7 @@ Release tag se ne pravi tokom običnog razvoja; verified-login paket nije live,
 produkcijska baza/server nisu menjani, a main-push presentation workflow nije
 aktiviran. Live i svaki-push-na-`main` objavljivanje ostaju poslednji korak.
 
-## Sekcije stranica (faza 1 — registar i renderer)
+## Sekcije stranica (faze 1 i 2 — registar, renderer, model i admin)
 
 Početna strana je od sada **podatak, ne JSX**. `app/(shop)/page.tsx` je sveden na
 `<RenderSekcije pageKey="home" />`; sav tekst, redosled i izgled sekcija dolaze
@@ -814,10 +818,61 @@ Pravila koja se ne smeju razblažiti:
 stavka faze 3 i uslovljeno je proverom nad produkcijom da objavljene sekcije
 zaista postoje — inače bi javna početna ostala prazna.
 
-Dve tvrdnje iz plana i dalje važe: migracija za sekcije bi bila **deveta** u
-lancu, iza četiri neprimenjene auth expand migracije, i svaka tvrdnja o stanju
-koda proverava se nad `origin/verzija/v2.0-univerzalna-platforma`, jer lokalni
-ref zna da zaostaje.
+### Faza 2 — model, rute i admin ekran
+
+Sekcije žive u bazi. Deveta migracija
+`20260902120000_expand_page_sections` dodaje `PageSection`, `MediaAsset` i
+`MediaAssetUsage` — samo nove tabele, indeksi i devet CHECK ograničenja.
+
+```
+lib/db/sekcije.ts           keširano čitanje OBJAVLJENIH sekcija + čitanje nacrta
+lib/sekcije/invalidacija.ts pravilo koje oznake keša pada posle koje izmene
+lib/sekcije/rute.ts         rukovaoci admin ruta kao fabrike sa zavisnostima
+lib/sekcije/prisma-veze.ts  vezivanje tih fabrika za Prismu i next/cache
+app/api/admin/sekcije/…     GET, POST, PUT, DELETE, redosled, objavi
+app/admin/sekcije/          ekran i pregled nacrta
+components/admin/sekcije/   obrazac generisan iz registra
+components/admin/BogatiTekst.tsx   uređivač bogatog teksta za polja sekcija
+```
+
+**Nacrt ima tri kolone**, ne jednu: `draftConfig`, `draftOrder` i
+`draftIsActive`. Bez druge dve bi preslagivanje i gašenje menjali javni sajt
+uživo, dok pregled nacrta te promene ne bi pokazivao — čime nacrt gubi smisao.
+
+**Javni čitač ne sme da vidi nacrt.** `citajObjavljeneSekcije` u `select`-u
+namerno ne navodi nijednu nacrt-kolonu. To je granica, ne optimizacija: da su
+tu, jedan pogrešan `??` u komponenti objavio bi neobjavljen sadržaj.
+
+**Čuvanje nacrta NIŠTA ne poništava u kešu.** Javna stranica bi se pregradila
+iz istih objavljenih podataka, pa bi svaki potez u obrascu rušio keš početne za
+sve posetioce bez ikakve koristi.
+
+**Objava ide po stranici**, ne po sekciji: nacrt je slika celog rasporeda, a
+objavljivanje jedne po jedne pokazalo bi posetiocu novi naslov iznad starog
+rasporeda.
+
+### Zamke koje su ovde već pojele vreme
+
+- **Rute koje čitaju sesiju moraju biti fabrike sa ubrizganim zavisnostima.**
+  `lib/auth/server-session-callsite-inventory.test.ts` dozvoljava
+  `resolveServerSession` samo rutama upisanim u njegov `SESSION_FACTORY_SPECS`,
+  a sirovi `getServerSession(authOptions)` stoji na spisku koji se **smanjuje**.
+  Zavisnosti se pišu izričito (`nadjiSekciju: nadjiSekciju`) — skraćeni zapis je
+  drugi AST čvor i test ga odbija. Test drži i tvrde ukupne brojeve; kad dodaješ
+  poziv, osveži i njih.
+- **ADMIN provera na admin STRANICI ide kroz `zahtevajAdminaNaStranici`.**
+  `app/admin/layout.tsx` propušta i OPERATOR-a, jer `isAdminRole` obuhvata obe
+  uloge. Pomoćnik je jedan zajednički da spisak raste za jedan unos umesto za
+  svaku stranicu.
+- **`Prisma.DbNull`, ne `null`,** kad se nullable Json kolona vraća na prazno.
+  `null` upisuje JSON vrednost `null`, koju `draftConfig ?? config` čita kao
+  postojeći nacrt.
+- **Traka bogatog teksta sme da nudi samo ono što preživi
+  `lib/security/html.ts`.** Poravnanje (`TextAlign`) proizvodi
+  `style="text-align:…"`, a beli spisak ne dozvoljava `style` — dugme bi radilo
+  u uređivaču, a poravnanje bi nestalo pri snimanju, bez ijedne poruke.
+- **Ikone admin navigacije moraju u `ADMIN_ICONS`.** `DynamicIcon` za nepoznato
+  ime tiho vraća `null`, pa stavka ostane bez ikone.
 
 ## Šta još nije urađeno
 

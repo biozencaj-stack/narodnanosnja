@@ -2,12 +2,12 @@
 
 Ova grana menja Prisma šemu i **ne sme** direktno na postojeću produkcionu
 bazu. Kod je kompatibilno proširen, ali baza prvo mora dobiti nove
-order/payment kolone, payment event dnevnik, expand-only kataloške tabele i
-četiri odvojeno pregledane auth expand promene. Činjenica da su prve četiri
-migracije ranije primenjene ne znači da su kasnije auth migracije već na
-produkciji. Aktivni lanac ima osam migracija, ali produkciona evidencija ovog
-preseka i dalje ima samo prve četiri; verified-login rad nije čitao, menjao ili migrirao
-produkcijsku bazu.
+order/payment kolone, payment event dnevnik, expand-only kataloške tabele,
+četiri odvojeno pregledane auth expand promene i tabele sekcija stranica.
+Činjenica da su prve četiri migracije ranije primenjene ne znači da su kasnije
+migracije već na produkciji. Aktivni lanac ima devet migracija, ali produkciona
+evidencija ovog preseka i dalje ima samo prve četiri; verified-login i rad na
+sekcijama nisu čitali, menjali niti migrirali produkcijsku bazu.
 
 ## Šta šema dodaje
 
@@ -26,7 +26,12 @@ produkcijsku bazu.
   `20260830010000_expand_email_verification_cooldown`;
 - nullable/no-default `User.emailVerificationLoginGraceUntil`, bez dedicated
   indeksa ili backfilla, iz
-  `20260830020000_expand_verified_login_grace`.
+  `20260830020000_expand_verified_login_grace`;
+- `User.authSessionRevision`, session revizije, `Session.issuedAt` i
+  `AuthPolicyState` iz `20260830030000_expand_authoritative_sessions`;
+- tabele `PageSection`, `MediaAsset` i `MediaAssetUsage` iz
+  `20260902120000_expand_page_sections`. Samo nove tabele, indeksi i devet CHECK
+  ograničenja — nijedan ALTER nad postojećom tabelom i nijedan DML.
 
 Ništa postojeće se ne uklanja. `ProductSize` ostaje aktivni izvor zalihe dok
 se generičke varijante ne popune i ne provere.
@@ -39,9 +44,19 @@ se generičke varijante ne popune i ne provere.
    produkcionom bazom bez Prisma istorije, evidentirati baseline kao primenjen
    prema `docs/PRISMA-BASELINE.md`.
 4. Potvrditi tačno produkcijsko migration stanje. Prve četiri migracije su
-   istorijski završene; auth-token, cooldown i verified-login grace expand su
-   kasniji koraci koji zahtevaju zaseban audit/backup/restore/lock dokaz. Ne
-   generisati novi expand SQL i ne koristiti `prisma db push`.
+   istorijski završene; auth-token, cooldown, verified-login grace,
+   authoritative-sessions i sekcije stranica su kasniji koraci koji zahtevaju
+   zaseban audit/backup/restore/lock dokaz. Ne generisati novi expand SQL i ne
+   koristiti `prisma db push`.
+
+   **Redosled je odlučen: prvo sve četiri auth migracije, pa tek onda sekcije.**
+   Razlog nije tehnička zavisnost — tabele sekcija ne dodiruju nijednu auth
+   tabelu i lanac bi se primenio i obrnuto. Razlog je što auth migracije nose
+   pravi rizik: one diraju `User` i `Session`, imaju audit skripte, lock plan i
+   maintenance prozor. Sekcije su samo tri nove tabele. Ako bi sekcije išle
+   prve, svaki problem u auth prozoru zatekao bi bazu u stanju koje se razlikuje
+   od onog nad kojim su auth migracije probane na klonu, pa bi rollback morao da
+   razmršava dva nepovezana posla odjednom.
 5. Primeniti migraciju na klonu i pokrenuti Prisma validate/generate,
    TypeScript i produkcijski build.
 6. Smoke testirati: anonimnu i prijavljenu porudžbinu, izgubljen/replayed
@@ -50,7 +65,22 @@ se generičke varijante ne popune i ne provere.
    kontradiktoran payment callback.
 7. Seedovati tipove/atribute i pokrenuti idempotentni backfill iz zasebnog
    budućeg PR-a. Uporediti legacy i novi model pre uključivanja dual-read-a.
-8. Tek tada zakazati produkcijski prozor, ponoviti backup, primeniti pregledanu
+8. Posle migracije sekcija dodeliti prava aplikacionoj roli:
+
+   ```bash
+   psql -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -v app_user="$APP_DB_USER" <<'SQL'
+   GRANT SELECT, INSERT, UPDATE, DELETE
+     ON public."PageSection", public."MediaAsset", public."MediaAssetUsage"
+     TO :"app_user";
+   SQL
+   ```
+
+   U trenutnoj postavci je to no-op, jer je aplikaciona rola vlasnik baze. Korak
+   svejedno postoji: ako migraciju ikad primeni druga rola — superuser tokom
+   restore-a je realan scenario — bez njega bi `prisma validate`, `migrate diff`
+   i `build` uredno prolazili, a runtime padao na prvom upitu ka sekcijama.
+
+9. Tek tada zakazati produkcijski prozor, ponoviti backup, primeniti pregledanu
    migraciju i objaviti kod.
 
 ## Auth/verified-login gate pre javnog V2 rada

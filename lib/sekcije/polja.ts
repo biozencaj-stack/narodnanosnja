@@ -148,6 +148,18 @@ export type TipPolja = PoljeSekcije["tip"];
 export const OBRAZAC_PUTANJE_MEDIJA =
   /^\/uploads\/[a-z0-9-]{1,32}\/[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
 
+/**
+ * Ključ stranice. Isti izraz stoji kao CHECK nad `PageSection.pageKey`.
+ *
+ * Dvotačka je namerno izostavljena: `stranica:<slug>` je zamisao o proizvoljnim
+ * stranicama koja još nije odlučena, a jednom dozvoljena vrednost u bazi se
+ * teško povlači nazad.
+ */
+export const OBRAZAC_KLJUCA_STRANICE = /^[a-z][a-z0-9_-]{0,63}$/;
+
+/** Ključ tipa sekcije. Isti izraz stoji kao CHECK nad `PageSection.kind`. */
+export const OBRAZAC_KLJUCA_TIPA = /^[a-z][a-zA-Z0-9]{0,39}$/;
+
 /* ------------------------------------------------------------------ *
  * Pomoćne funkcije nad vrednostima
  * ------------------------------------------------------------------ */

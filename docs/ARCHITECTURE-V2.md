@@ -75,10 +75,33 @@ obračun i dalje prolaze kroz isto commerce jezgro.
 Moduli se uvode vertikalno: schema + servis + autorizacija + admin UX + audit +
 test. Stavka menija bez završenog toka ne smatra se funkcionalnošću.
 
+## Sekcije stranica
+
+Sadržaj stranica je podatak, ne JSX. `PageSection` nosi `kind` (ključ iz
+`lib/sekcije/registar.ts`) i `config` (Json koji taj registar validira). Baza
+namerno ne zna oblik konfiguracije — nad njom stoji devet CHECK ograničenja
+koja proveravaju samo ono što ne sme da zavisi od ispravnosti aplikacije:
+nenegativan redosled i verziju, oblik ključeva, i da je `config` objekat.
+
+Sloj se drži tri granice:
+
+- **Nacrt naspram objavljenog.** Tri nacrt-kolone (`draftConfig`, `draftOrder`,
+  `draftIsActive`) čuvaju radnu kopiju. Javni čitač u `select`-u ne navodi
+  nijednu — neobjavljena vrednost ne postoji u objektu koji render dobija.
+- **Dve sanitizacije.** Jednom na upisu (`sanitizujSekciju`), pa ponovo na
+  prikazu (`lib/sekcije/prikaz.ts`). Nijedna ne zamenjuje drugu.
+- **Optimističko zaključavanje.** `version` je obavezan uz svaku izmenu; bez
+  njega 428, na neslaganje 409. Bez toga bi dva otvorena taba tiho brisala rad
+  jedan drugome.
+
+Obrazac u admin panelu se **generiše iz registra**. Da se piše ručno po tipu,
+svaki novi tip tražio bi novi ekran, a registar bi prestao da bude jedini izvor
+istine o tome šta sekcija sadrži.
+
 ## Sledeće faze
 
 1. Pregledana baseline/expand migracija i staging smoke test.
 2. Type-driven editor proizvoda, opcija i varijanti sa backfillom legacy polja.
 3. Inventory ledger, povrati/refundacije i operativni admin dashboard.
-4. Konfigurabilni page builder, filteri po ProductType-u i industrijski seedovi.
+4. Medijateka i gašenje ugrađenog rasporeda početne — vidi `docs/PLAN-SEKCIJE.md`.
 5. Adapteri za dostavu, ERP/računovodstvo, naprednu pretragu i analitiku.

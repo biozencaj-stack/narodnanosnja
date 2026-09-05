@@ -81,6 +81,10 @@ const EXPECTED_LEGACY_CONSUMER_CALLS = Object.freeze({
   "app/api/user/addresses/route.ts": 2,
   "app/api/user/password/route.ts": 1,
   "app/api/user/profile/route.ts": 2,
+  // Jedan zajednički pomoćnik za ADMIN provere na admin STRANICAMA. Postoji da
+  // bi spisak rastao za jedan unos umesto za svaku novu admin stranicu;
+  // postojeće stranice mogu kasnije da pređu na njega i time ga smanje.
+  "lib/auth/admin-stranica.ts": 1,
   "lib/checkout/order-handler.ts": 1,
 } as const);
 
@@ -98,6 +102,11 @@ const CHECKOUT_DATA_FACTORY_MODULE =
   "@/lib/checkout/checkout-data-route";
 const WISHLIST_ROUTE = "app/api/wishlist/route.ts";
 const WISHLIST_FACTORY_MODULE = "@/lib/wishlist/wishlist-route";
+const SEKCIJE_ROUTE = "app/api/admin/sekcije/route.ts";
+const SEKCIJA_ROUTE = "app/api/admin/sekcije/[id]/route.ts";
+const SEKCIJE_REDOSLED_ROUTE = "app/api/admin/sekcije/redosled/route.ts";
+const SEKCIJE_OBJAVI_ROUTE = "app/api/admin/sekcije/objavi/route.ts";
+const SEKCIJE_FACTORY_MODULE = "@/lib/sekcije/rute";
 const SERVER_SESSION_FACADE_MODULE = "@/lib/auth/server-session";
 const NEXTAUTH_HANDLER = "app/api/auth/[...nextauth]/route.ts";
 const ROUTE_HTTP_METHOD_NAMES = new Set([
@@ -191,6 +200,81 @@ const SESSION_FACTORY_SPECS = Object.freeze([
     dependencyKeys: Object.freeze([
       "resolveSession",
       "deleteItems",
+      "reportFailure",
+    ]),
+  },
+  {
+    routePath: SEKCIJE_ROUTE,
+    factoryModule: SEKCIJE_FACTORY_MODULE,
+    factoryName: "createSekcijeGetHandler",
+    handlerExport: "GET",
+    dependencyKeys: Object.freeze([
+      "resolveSession",
+      "nadjiSekcije",
+      "reportFailure",
+    ]),
+  },
+  {
+    routePath: SEKCIJE_ROUTE,
+    factoryModule: SEKCIJE_FACTORY_MODULE,
+    factoryName: "createSekcijePostHandler",
+    handlerExport: "POST",
+    dependencyKeys: Object.freeze([
+      "resolveSession",
+      "prebrojTipNaStrani",
+      "poslednjiRedosled",
+      "napravi",
+      "reportFailure",
+    ]),
+  },
+  {
+    routePath: SEKCIJA_ROUTE,
+    factoryModule: SEKCIJE_FACTORY_MODULE,
+    factoryName: "createSekcijaPutHandler",
+    handlerExport: "PUT",
+    dependencyKeys: Object.freeze([
+      "resolveSession",
+      "nadjiSekciju",
+      "izmeniUslovno",
+      "ucitaj",
+      "ponistiKes",
+      "reportFailure",
+    ]),
+  },
+  {
+    routePath: SEKCIJA_ROUTE,
+    factoryModule: SEKCIJE_FACTORY_MODULE,
+    factoryName: "createSekcijaDeleteHandler",
+    handlerExport: "DELETE",
+    dependencyKeys: Object.freeze([
+      "resolveSession",
+      "nadjiSekciju",
+      "obrisiUslovno",
+      "ponistiKes",
+      "reportFailure",
+    ]),
+  },
+  {
+    routePath: SEKCIJE_REDOSLED_ROUTE,
+    factoryModule: SEKCIJE_FACTORY_MODULE,
+    factoryName: "createRedosledPostHandler",
+    handlerExport: "POST",
+    dependencyKeys: Object.freeze([
+      "resolveSession",
+      "presloziUTransakciji",
+      "ponistiKes",
+      "reportFailure",
+    ]),
+  },
+  {
+    routePath: SEKCIJE_OBJAVI_ROUTE,
+    factoryModule: SEKCIJE_FACTORY_MODULE,
+    factoryName: "createObjaviPostHandler",
+    handlerExport: "POST",
+    dependencyKeys: Object.freeze([
+      "resolveSession",
+      "objaviStranicu",
+      "ponistiKes",
       "reportFailure",
     ]),
   },
@@ -1780,14 +1864,15 @@ test("legacy session reads remain on the exact shrinking transitional allowlist"
     EXPECTED_NEUTRAL_SESSION_CONSUMER_IMPORTS,
   );
 
-  assert.equal(Object.keys(expectedConsumerCalls).length, 52);
-  assert.equal(sum(expectedConsumerCalls), 93);
-  assert.equal(Object.keys(sortedRecord(serverSessionCalls)).length, 53);
-  assert.equal(sum(sortedRecord(serverSessionCalls)), 94);
-  assert.equal(Object.keys(sortedRecord(neutralSessionCalls)).length, 2);
-  assert.equal(sum(sortedRecord(neutralSessionCalls)), 4);
-  assert.equal(Object.keys(sortedRecord(neutralSessionImports)).length, 2);
-  assert.equal(sum(sortedRecord(neutralSessionImports)), 2);
+  assert.equal(Object.keys(expectedConsumerCalls).length, 53);
+  assert.equal(sum(expectedConsumerCalls), 94);
+  assert.equal(Object.keys(sortedRecord(serverSessionCalls)).length, 54);
+  assert.equal(sum(sortedRecord(serverSessionCalls)), 95);
+  // Migrirani put raste: checkout-data, wishlist i četiri rute nad sekcijama.
+  assert.equal(Object.keys(sortedRecord(neutralSessionCalls)).length, 6);
+  assert.equal(sum(sortedRecord(neutralSessionCalls)), 10);
+  assert.equal(Object.keys(sortedRecord(neutralSessionImports)).length, 6);
+  assert.equal(sum(sortedRecord(neutralSessionImports)), 6);
   assert.equal(Object.keys(sortedRecord(getTokenCalls)).length, 2);
   assert.equal(sum(sortedRecord(getTokenCalls)), 2);
 });
