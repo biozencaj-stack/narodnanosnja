@@ -1,13 +1,22 @@
 # V2 rollout: bezbedan prelazak
 
+> **Stanje produkcije na dan 2026-09-05: svih devet migracija je primenjeno.**
+> Prve četiri 2026-08-29, četiri auth expand migracije 2026-08-31, a
+> `20260902120000_expand_page_sections` 2026-09-05 uz bekap, klon-probu i
+> `db-invariant-smoke.sql` sa izlaznim kodom 0. Ovaj dokument je do tada tvrdio
+> da produkcija ima samo prve četiri — pa je bio zastareo pet dana. Ko ga
+> sledeći put čita: **evidencija u bazi je istina, ne ovaj tekst.**
+> ```bash
+> sudo -u postgres psql -X -q -A -t -d narodnanosnja_db \
+>   -c "SELECT migration_name FROM _prisma_migrations ORDER BY started_at;"
+> ```
+
 Ova grana menja Prisma šemu i **ne sme** direktno na postojeću produkcionu
 bazu. Kod je kompatibilno proširen, ali baza prvo mora dobiti nove
 order/payment kolone, payment event dnevnik, expand-only kataloške tabele,
 četiri odvojeno pregledane auth expand promene i tabele sekcija stranica.
-Činjenica da su prve četiri migracije ranije primenjene ne znači da su kasnije
-migracije već na produkciji. Aktivni lanac ima devet migracija, ali produkciona
-evidencija ovog preseka i dalje ima samo prve četiri; verified-login i rad na
-sekcijama nisu čitali, menjali niti migrirali produkcijsku bazu.
+Činjenica da je jedna migracija primenjena ne znači da su i kasnije; svaka
+sledeća traži zaseban audit, bekap i klon-probu.
 
 ## Šta šema dodaje
 
@@ -75,10 +84,51 @@ se generičke varijante ne popune i ne provere.
    SQL
    ```
 
-   U trenutnoj postavci je to no-op, jer je aplikaciona rola vlasnik baze. Korak
-   svejedno postoji: ako migraciju ikad primeni druga rola — superuser tokom
-   restore-a je realan scenario — bez njega bi `prisma validate`, `migrate diff`
-   i `build` uredno prolazili, a runtime padao na prvom upitu ka sekcijama.
+   **Ovaj korak NIJE no-op i ranija tvrdnja da jeste bila je netačna.** Provereno
+   na klonu 2026-09-05: pošto se `migrate deploy` mora pokrenuti kao `postgres`
+   (vidi ispod), sve tri nove tabele nastaju kao **vlasništvo `postgres`**, a
+   aplikaciona rola nema nad njima ni `SELECT`. `prisma validate`, `migrate diff`
+   i `build` pri tom uredno prolaze — padne tek prvi runtime upit ka sekcijama.
+
+   Uz `GRANT` se dodaje i prenos vlasništva, da tri nove tabele budu iste kao
+   svaka druga u bazi:
+
+   ```bash
+   psql -X "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+   ALTER TABLE public."PageSection"     OWNER TO nosnja;
+   ALTER TABLE public."MediaAsset"      OWNER TO nosnja;
+   ALTER TABLE public."MediaAssetUsage" OWNER TO nosnja;
+   SQL
+   ```
+
+   Isti obrazac već postoji u bazi: `AuthPolicyState` je od auth migracije
+   2026-08-31 ostao u vlasništvu `postgres`, sa naknadno dodeljenim `arwd` za
+   aplikacionu rolu.
+
+### Migracije se pokreću kao `postgres`, ne kao aplikaciona rola
+
+Nad `public._prisma_migrations` su **sve privilegije oduzete** — i vlasniku.
+`relacl` je prazan niz, ne `NULL`, pa je to bila namerna odluka a ne propust.
+Posledica: `prisma migrate status` i `migrate deploy` pokrenuti sa aplikacionim
+`DATABASE_URL`-om padaju odmah, sa `permission denied for table
+_prisma_migrations`. Radna komanda ide preko unix soketa kao superuser:
+
+```bash
+export DATABASE_URL="postgresql://postgres@localhost/narodnanosnja_db?host=/var/run/postgresql&schema=public"
+sudo -u postgres --preserve-env=DATABASE_URL \
+  /var/www/narodnanosnja/current/node_modules/.bin/prisma migrate deploy \
+  --schema prisma/schema.prisma
+```
+
+Radni direktorijum mora biti čitljiv za korisnika `postgres`; `/root/...` nije,
+i Prisma tamo pada na traženju `prisma.config` sa `EACCES`.
+
+### Bekap nije automatizovan
+
+Na serveru **ne postoji** ni cron ni systemd timer koji pravi dump baze. Svi
+snimci u `/var/backups/narodnanosnja/` su ručni, iz pojedinačnih sesija, svaki
+sa `.sha256` fajlom pored sebe. Dok se to ne promeni, „svež bekap“ znači da ga
+je neko upravo napravio — ne da postoji.
 
 9. Tek tada zakazati produkcijski prozor, ponoviti backup, primeniti pregledanu
    migraciju i objaviti kod.
