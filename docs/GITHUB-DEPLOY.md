@@ -89,12 +89,13 @@ backup/migracije, kartice i operativni prozor pre odobravanja Environment-a.
   ime određuje `APP_NAME`;
 - PostgreSQL je dostupan i njegova šema je već usklađena sa Prisma šemom.
 
-Za ovaj auth release „usklađena šema” znači da su sve tri kasnije auth expand
-migracije kontrolisano primenjene posle read-only audita, backup/restore i
-restore-clone probe: compat token hash, tri verification throttle kolone i
-nullable/no-default `User.emailVerificationLoginGraceUntil`. Ranije četiri
-produkcione migracije nisu dovoljne za aktuelni kod. Aktivni Git lanac ima sedam
-migracija, dok produkcijska evidencija ovog preseka i dalje ima četiri;
+Za ovaj auth release „usklađena šema” znači da su sve četiri kasnije auth
+expand migracije kontrolisano primenjene posle read-only audita, backup/restore
+i restore-clone probe: compat token hash, tri verification throttle kolone,
+nullable/no-default `User.emailVerificationLoginGraceUntil` i authoritative
+session kolone uz `AuthPolicyState`. Ranije četiri produkcione migracije nisu
+dovoljne za aktuelni kod. Aktivni Git lanac ima osam migracija, dok produkcijska
+evidencija ovog preseka i dalje ima četiri;
 workflow namerno neće popravljati taj nedostatak preko SSH-a.
 
 Reverse proxy mora prosleđivati zahteve na `APP_PORT`, a `SMOKE_PORT` mora biti
@@ -291,8 +292,9 @@ Pre required-reviewer odobrenja auth deo dodatno mora imati:
 - transactional auth-email outbox/durable worker sa retry-em, monitoringom i
   shutdown/redeploy dokazom, jer Next.js `after()` može izgubiti posao posle
   već vraćenog HTTP 202;
-- kontrolisanu primenu auth-token, cooldown i verified-login grace expand
-  migracija; aktivni lanac ima sedam, produkcija i dalje samo četiri;
+- kontrolisanu primenu auth-token, cooldown, verified-login grace i
+  authoritative-sessions expand migracija; aktivni lanac ima osam, produkcija i
+  dalje samo četiri;
 - potvrdu fixed 24h kvote od pet poruka uključujući initial, 60s cooldown-a i
   retained ranije neisteklih verification linkova;
 - potvrdu da je 900+0–200 ms registration padding samo timing

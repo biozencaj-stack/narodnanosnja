@@ -148,6 +148,12 @@ sve što tvrde.
   sa `stroke` nestane a oblik sa `fill` padne na crno. Ništa se ne prijavljuje —
   šara se prosto ne vidi. `lib/ukras/boja.ts` sada odbija sve što nije HEX i pada
   na podrazumevanu vrednost, uz upozorenje u razvoju.
+- **Iz fajla sa `"use server"` ne sme se ponovo izvoziti tip.** `export interface`
+  prolazi, ali `export type { Nesto }` Turbopack tretira kao Server Action; tip u
+  izgradnji ne postoji, pa `npm run build` pada sa „Export ... doesn't exist in
+  target module“ na svakoj stranici koja taj modul dodiruje. `npm run typecheck`
+  to ne vidi. Čiste funkcije i tipovi zato idu u zaseban modul — vidi
+  `lib/products-filter.ts` pored `lib/products.ts`.
 - **Portovi na serveru su zauzeti.** 3000 (shopdemo), 3001 (kore), 3002, 8000,
   8080. Ova prodavnica radi na **3007**, nginx je izlaže na **8090**.
 
@@ -188,6 +194,12 @@ Mapiranje koje nije očigledno:
 
 Arhitektonske granice platforme i redosled narednih faza su u
 `docs/ARCHITECTURE-V2.md`.
+
+Rad na sekcijama stranica: plan i istraživanje u `docs/PLAN-SEKCIJE.md`, dnevnik
+izvršenja sa presekom na 4. 9. 2026. u
+`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-09-04.md`. Drugi dokument nabraja i šta
+**nije** provereno — pročitaj taj odeljak pre nego što se osloniš na bilo koju
+tvrdnju o ponašanju nad bazom.
 
 `prisma/schema.prisma` sadrži novu, opcionu osnovu za više branši:
 
@@ -391,9 +403,10 @@ odluka dodeli jedan tačan staged deadline samo odgovarajućim legacy CUSTOMER
 nalozima; ne označava nikoga verifikovanim i sama ne menja login ponašanje.
 Isti metadata-only/`ACCESS EXCLUSIVE` oprez, `search_path`, 10s lock timeout,
 2min statement timeout, restore-clone i maintenance pravila važe i za nju.
-Aktivni lanac zato ima sedam migracija, dok je na produkciji dokazano samo
-ranijih četiri. Sve tri auth expand migracije ostaju neprimenjene na produkciju
-u ovom preseku.
+Aktivni lanac zato ima osam migracija, dok je na produkciji dokazano samo
+ranijih četiri. Sve četiri auth expand migracije — token hash, verification
+cooldown, verified-login grace i authoritative sessions — ostaju neprimenjene
+na produkciju u ovom preseku.
 
 Registracija sada koristi centralni email normalizer, strogi request shape,
 trusted same-origin guard i centralnu bcrypt granicu od najviše 72 UTF-8 bajta.
@@ -918,9 +931,10 @@ jedna za sve: hero ide u profil sa 4 MB i 2000×1200, ikona u 256 KB i 256×256.
       read-only prozorom; skripte postoje, ali produkcijski audit nije izvršen
 - [ ] Zasebno odobriti data remediation/backfill postojećeg `emailVerified` i
       tačnih legacy grace vrednosti; ne postoji automatski „svi su verified” put
-- [ ] Kontrolisano primeniti auth-token, verification-cooldown i verified-login
-      grace expand migracije uz backup/restore, lock plan i runtime dokaz;
-      aktivni lanac ima sedam migracija, produkcija je i dalje na četiri
+- [ ] Kontrolisano primeniti auth-token, verification-cooldown, verified-login
+      grace i authoritative-sessions expand migracije uz backup/restore, lock
+      plan i runtime dokaz; aktivni lanac ima osam migracija, produkcija je i
+      dalje na četiri
 - [ ] DB-backed revalidacija/revokacija rolling JWT sesija posle policy/grace
       promene, reset/change lozinke i role promene; do tada politika ostaje audit
 - [ ] Shared auth/reset/login limiter i eksplicitan trusted-proxy/client-IP
