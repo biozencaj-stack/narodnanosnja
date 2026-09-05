@@ -150,7 +150,15 @@ export const config = {
      * - _next/image (image optimization files)
      * - favicon.ico, sitemap.xml, robots.txt (metadata files)
      * - public folder
+     * - uploads/ (otpremljene slike; služe se sa diska i nemaju šta da traže
+     *   u middleware-u — svaka slika na stranici inače nepotrebno pokreće
+     *   proveru sesije)
+     *
+     * `uploads/` je namerno napisan SA kosom crtom. Negativni lookahead nije
+     * vezan za granicu segmenta, pa bi go `uploads` isključio i putanju
+     * `/uploadsX`. Isti oprez ne važi za `images` i `logo` — tamo je prefiks
+     * namerni, jer se traži i sam fajl `/logo.svg`.
      */
-    "/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|images|logo).*)",
+    "/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|images|logo|uploads/).*)",
   ],
 };

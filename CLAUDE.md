@@ -101,6 +101,34 @@ Invarijanta `createdAt <= emailVerified` je bila i ranije proverena, ali samo u
 integracionom testu koji ide putanjom **ažuriranja** postojećeg naloga, gde je
 `createdAt` stariji. Putanja pravljenja novog naloga nije bila pokrivena. Sada
 je pokriva `lib/auth/privileged-account.test.ts`, bez baze.
+## Slike i kretanje
+
+**Granice otpremanja dolaze iz profila**, ne iz tvrdo upisanog broja.
+`lib/media/profili.ts` drži po jedan profil za svaku fasciklu: zatečene
+(`products`, `articles`, `categories`, `brands`) ostaju na 1 MB i 800×800, a
+`sekcije-hero` prima 4 MB i 2000×1200. Isti modul čita i serverska ruta i
+`ImageUpload` u pregledaču — zato u njemu nema uvoza React-a, Prisme ni Next-a.
+Ako granicu promeniš samo na jednom mestu, veća vrednost na serveru postane
+nedostižna jer je klijent odbije ranije.
+
+**`quality` mora ostati u `[70, 75]`.** Ispod 70 se na tkaninama i vezu vide
+artefakti, iznad 75 fajl raste bez vidljive razlike. `next.config.ts` to već
+ograničava kroz `qualities`, ali **tiho** — vrednost van spiska ne obara
+izgradnju. Zato pravilo drži i test (`lib/media/kvalitet-slika.test.ts`), koji
+pada sa imenom fajla i linijom.
+
+**Svaki karusel sa autoplayem mora imati vidljivo dugme za pauzu.** WCAG 2.2.2
+traži mehanizam za zaustavljanje kretanja dužeg od pet sekundi.
+`stopOnInteraction` iz embla-e ga ne zamenjuje — staje tek kad posetilac
+dodirne sam sadržaj. Pauza na hover takođe ne prolazi: na dodirnom ekranu hover
+ne postoji, a tastatura ga ne pokreće. Koristi `usePauzaKarusela` i
+`DugmePauze`; pravilo čuva `lib/media/autoplay-pauza.test.ts`.
+
+**Semafor nad `sharp` obradama nije zaštita od DoS-a.** `lib/media/semafor.ts` i
+`checkRateLimit` žive u memoriji **jednog procesa**: pod PM2 cluster režimom
+svaka instanca ima svoj brojač, a restart briše brojanje. Štite od nenamerne
+preopterećenosti — administrator koji izabere trideset slika odjednom — i to je
+sve što tvrde.
 
 ## Zamke koje su već jednom pojele vreme
 
@@ -120,6 +148,12 @@ je pokriva `lib/auth/privileged-account.test.ts`, bez baze.
   sa `stroke` nestane a oblik sa `fill` padne na crno. Ništa se ne prijavljuje —
   šara se prosto ne vidi. `lib/ukras/boja.ts` sada odbija sve što nije HEX i pada
   na podrazumevanu vrednost, uz upozorenje u razvoju.
+- **Iz fajla sa `"use server"` ne sme se ponovo izvoziti tip.** `export interface`
+  prolazi, ali `export type { Nesto }` Turbopack tretira kao Server Action; tip u
+  izgradnji ne postoji, pa `npm run build` pada sa „Export ... doesn't exist in
+  target module“ na svakoj stranici koja taj modul dodiruje. `npm run typecheck`
+  to ne vidi. Čiste funkcije i tipovi zato idu u zaseban modul — vidi
+  `lib/products-filter.ts` pored `lib/products.ts`.
 - **Portovi na serveru su zauzeti.** 3000 (shopdemo), 3001 (kore), 3002, 8000,
   8080. Ova prodavnica radi na **3007**, nginx je izlaže na **8090**.
 
@@ -160,6 +194,12 @@ Mapiranje koje nije očigledno:
 
 Arhitektonske granice platforme i redosled narednih faza su u
 `docs/ARCHITECTURE-V2.md`.
+
+Rad na sekcijama stranica: plan i istraživanje u `docs/PLAN-SEKCIJE.md`, dnevnik
+izvršenja sa presekom na 4. 9. 2026. u
+`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-09-04.md`. Drugi dokument nabraja i šta
+**nije** provereno — pročitaj taj odeljak pre nego što se osloniš na bilo koju
+tvrdnju o ponašanju nad bazom.
 
 `prisma/schema.prisma` sadrži novu, opcionu osnovu za više branši:
 
@@ -363,9 +403,10 @@ odluka dodeli jedan tačan staged deadline samo odgovarajućim legacy CUSTOMER
 nalozima; ne označava nikoga verifikovanim i sama ne menja login ponašanje.
 Isti metadata-only/`ACCESS EXCLUSIVE` oprez, `search_path`, 10s lock timeout,
 2min statement timeout, restore-clone i maintenance pravila važe i za nju.
-Aktivni lanac zato ima sedam migracija, dok je na produkciji dokazano samo
-ranijih četiri. Sve tri auth expand migracije ostaju neprimenjene na produkciju
-u ovom preseku.
+Aktivni lanac zato ima osam migracija, dok je na produkciji dokazano samo
+ranijih četiri. Sve četiri auth expand migracije — token hash, verification
+cooldown, verified-login grace i authoritative sessions — ostaju neprimenjene
+na produkciju u ovom preseku.
 
 Registracija sada koristi centralni email normalizer, strogi request shape,
 trusted same-origin guard i centralnu bcrypt granicu od najviše 72 UTF-8 bajta.
@@ -862,9 +903,10 @@ rasporeda.
       read-only prozorom; skripte postoje, ali produkcijski audit nije izvršen
 - [ ] Zasebno odobriti data remediation/backfill postojećeg `emailVerified` i
       tačnih legacy grace vrednosti; ne postoji automatski „svi su verified” put
-- [ ] Kontrolisano primeniti auth-token, verification-cooldown i verified-login
-      grace expand migracije uz backup/restore, lock plan i runtime dokaz;
-      aktivni lanac ima sedam migracija, produkcija je i dalje na četiri
+- [ ] Kontrolisano primeniti auth-token, verification-cooldown, verified-login
+      grace i authoritative-sessions expand migracije uz backup/restore, lock
+      plan i runtime dokaz; aktivni lanac ima osam migracija, produkcija je i
+      dalje na četiri
 - [ ] DB-backed revalidacija/revokacija rolling JWT sesija posle policy/grace
       promene, reset/change lozinke i role promene; do tada politika ostaje audit
 - [ ] Shared auth/reset/login limiter i eksplicitan trusted-proxy/client-IP

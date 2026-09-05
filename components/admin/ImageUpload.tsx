@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { Upload, X, Loader2 } from "lucide-react";
+import { DOZVOLJENI_MIME, profilZaFolder } from "@/lib/media/profili";
 
 interface ImageUploadProps {
   value?: string | null;
@@ -23,19 +24,26 @@ export default function ImageUpload({
     async (file: File) => {
       if (!file) return;
 
-      // Validate
-      const allowedTypes = [
-        "image/jpeg",
-        "image/png",
-        "image/webp",
-        "image/gif",
-      ];
-      if (!allowedTypes.includes(file.type)) {
-        alert("Dozvoljeni formati: JPEG, PNG, WebP, GIF");
+      // Granica dolazi iz profila, ne iz tvrdo upisane vrednosti: hero fascikla
+      // prima 4 MB, a ikona 256 KB. Tvrdih 1 MB ovde bi značilo da veća granica
+      // na serveru nikad ne može ni da se dosegne kroz ovaj obrazac.
+      const profil = profilZaFolder(folder);
+      if (!profil) {
+        alert("Nepoznata fascikla za otpremanje.");
         return;
       }
-      if (file.size > 1 * 1024 * 1024) {
-        alert("Maksimalna veličina je 1MB. Smanjite rezoluciju ili kompresujte sliku pre uploada.");
+      if (!DOZVOLJENI_MIME.includes(file.type)) {
+        alert("Dozvoljeni formati: JPEG, PNG, WebP, GIF, AVIF");
+        return;
+      }
+      if (file.size > profil.maxBajtova) {
+        const granica =
+          profil.maxBajtova >= 1_048_576
+            ? `${Math.round(profil.maxBajtova / 1_048_576)} MB`
+            : `${Math.round(profil.maxBajtova / 1024)} KB`;
+        alert(
+          `Slika je prevelika. Za „${profil.folder}” granica je ${granica}. Smanjite rezoluciju ili kompresujte sliku.`,
+        );
         return;
       }
 
@@ -54,7 +62,16 @@ export default function ImageUpload({
           const data = await res.json();
           onChange(data.path);
         } else {
-          alert("Greška pri uploadu slike");
+          // Poruka servera nosi razlog i granicu za tu fasciklu; uopšteno
+          // „greška pri uploadu” ostavlja korisnika da nagađa šta je pogrešio.
+          const podaci = (await res.json().catch(() => null)) as {
+            error?: unknown;
+          } | null;
+          alert(
+            typeof podaci?.error === "string"
+              ? podaci.error
+              : "Greška pri uploadu slike",
+          );
         }
       } catch (error) {
         console.error("Upload error:", error);

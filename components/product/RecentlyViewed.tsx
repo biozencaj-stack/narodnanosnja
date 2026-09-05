@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 import useEmblaCarousel from 'embla-carousel-react';
 import Autoplay from 'embla-carousel-autoplay';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { DugmePauze } from '@/components/ui/DugmePauze';
+import { usePauzaKarusela } from '@/hooks/usePauzaKarusela';
 import { useRecentlyViewed } from '@/hooks/useRecentlyViewed';
 import { ProductCard } from './ProductCard';
 import type { ProductCard as ProductCardType } from '@/types/product';
@@ -26,6 +28,11 @@ export function RecentlyViewed({
     { loop: true, align: 'start', slidesToScroll: 1 },
     [Autoplay({ delay: 5000, stopOnInteraction: true })]
   );
+
+  // Autoplay traje duže od pet sekundi, pa mora postojati vidljiv način
+  // da se zaustavi. `stopOnInteraction` to ne ispunjava — staje tek kad
+  // posetilac dodirne sadržaj, a kriterijum traži mehanizam i pre toga.
+  const pauza = usePauzaKarusela(emblaApi);
 
   const [canScrollPrev, setCanScrollPrev] = useState(false);
   const [canScrollNext, setCanScrollNext] = useState(false);
@@ -101,6 +108,11 @@ export function RecentlyViewed({
           >
             <ChevronRight className="h-5 w-5" />
           </button>
+          <DugmePauze
+            pauzirano={pauza.pauzirano}
+            onPrebaci={pauza.prebaci}
+            naziv="Nedavno pregledano"
+          />
         </div>
       </div>
 
@@ -133,6 +145,12 @@ export function RecentlyViewed({
         >
           <ChevronRight className="h-5 w-5" />
         </button>
+        <DugmePauze
+          pauzirano={pauza.pauzirano}
+          onPrebaci={pauza.prebaci}
+          naziv="Nedavno pregledano"
+          className="p-3"
+        />
       </div>
     </section>
   );

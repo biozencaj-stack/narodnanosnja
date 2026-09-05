@@ -4,89 +4,102 @@ import { authOptions } from "@/lib/auth";
 import sharp from "sharp";
 import path from "path";
 import fs from "fs/promises";
+import { checkRateLimit } from "@/lib/rate-limit";
+import { proveriUlazUploada } from "@/lib/media/upload-ulaz";
+import { saOgranicenjemObrade } from "@/lib/media/semafor";
 
 /**
  * POST /api/admin/upload
- * Upload an image file, resize it, and save to public/uploads/
- * Accepts FormData with: file (File), folder (string: products|articles|categories|brands)
+ *
+ * Prima `FormData` sa `file` i `folder`. Granice veličine i dimenzija dolaze iz
+ * profila u `lib/media/profili.ts` — razlikuju se po fascikli, jer hero slika i
+ * ikona nemaju istu namenu.
+ *
+ * Odgovor nosi i `width`/`height`. To nije besplatan podatak: dobija se tako
+ * što `.toBuffer()` postaje `.toBuffer({ resolveWithObject: true })`. Bez njih
+ * bi pozivalac morao ponovo da otvara fajl da bi znao šta je dobio.
  */
+
+const MAX_UPLOADA_U_MINUTU = 20;
+
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!session?.user) {
+    return NextResponse.json({ error: "Prijava je obavezna." }, { status: 401 });
+  }
+  if (session.user.role !== "ADMIN") {
+    return NextResponse.json(
+      { error: "Nemate dozvolu za ovu administrativnu akciju." },
+      { status: 403 },
+    );
+  }
+
+  // Ključ je korisnik, ne IP: administratori rade iza iste kancelarijske adrese,
+  // pa bi po IP-u jedan blokirao ostale.
+  if (!checkRateLimit(`upload:${session.user.id}`, MAX_UPLOADA_U_MINUTU)) {
+    return NextResponse.json(
+      { error: "Previše otpremanja u kratkom roku. Sačekaj minut." },
+      { status: 429 },
+    );
   }
 
   try {
     const formData = await request.formData();
-    const file = formData.get("file") as File | null;
-    const folder = (formData.get("folder") as string) || "products";
+    const file = formData.get("file");
+    const folder = formData.get("folder") ?? "products";
 
-    if (!file) {
-      return NextResponse.json({ error: "No file provided" }, { status: 400 });
+    const ulaz = proveriUlazUploada(
+      file instanceof File ? { type: file.type, size: file.size } : null,
+      folder,
+    );
+    if (!ulaz.ok) {
+      return NextResponse.json({ error: ulaz.poruka }, { status: ulaz.status });
     }
-
-    // Validate file type
-    const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-    if (!allowedTypes.includes(file.type)) {
+    if (!(file instanceof File)) {
       return NextResponse.json(
-        { error: "Invalid file type. Allowed: JPEG, PNG, WebP, GIF" },
+        { error: "Nijedan fajl nije poslat." },
         { status: 400 },
       );
     }
 
-    // Validate file size (max 1MB - images should be optimized before upload)
-    if (file.size > 1 * 1024 * 1024) {
-      return NextResponse.json(
-        { error: "Fajl je prevelik. Maksimalna veličina je 1MB. Smanjite rezoluciju ili kompresujte sliku pre uploada." },
-        { status: 400 },
-      );
-    }
+    const profil = ulaz.profil;
+    const buffer = Buffer.from(await file.arrayBuffer());
 
-    // Validate folder
-    const allowedFolders = ["products", "articles", "categories", "brands"];
-    if (!allowedFolders.includes(folder)) {
-      return NextResponse.json({ error: "Invalid folder" }, { status: 400 });
-    }
+    // Semafor: `sharp` drži dekodovani bitmap u memoriji, pa nekoliko
+    // istovremenih velikih slika obori ceo proces, ne samo jedan zahtev.
+    const { data: processed, info } = await saOgranicenjemObrade(() =>
+      sharp(buffer)
+        .resize(profil.maxSirina, profil.maxVisina, {
+          fit: "inside",
+          withoutEnlargement: true,
+        })
+        .webp({ quality: profil.kvalitet })
+        .toBuffer({ resolveWithObject: true }),
+    );
 
-    // Read file buffer
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-
-    // Process image with sharp - resize to max 800x800, convert to WebP with strong compression
-    const processed = await sharp(buffer)
-      .resize(800, 800, {
-        fit: "inside",
-        withoutEnlargement: true,
-      })
-      .webp({ quality: 75 })
-      .toBuffer();
-
-    // Generate unique filename
     const timestamp = Date.now();
     const randomStr = Math.random().toString(36).substring(2, 8);
     const filename = `${timestamp}-${randomStr}.webp`;
 
-    // Ensure upload directory exists
-    const uploadDir = path.join(process.cwd(), "public", "uploads", folder);
+    const uploadDir = path.join(process.cwd(), "public", "uploads", profil.folder);
     await fs.mkdir(uploadDir, { recursive: true });
-
-    // Save file
-    const filePath = path.join(uploadDir, filename);
-    await fs.writeFile(filePath, processed);
-
-    // Return the public URL path
-    const publicPath = `/uploads/${folder}/${filename}`;
+    await fs.writeFile(path.join(uploadDir, filename), processed);
 
     return NextResponse.json({
-      path: publicPath,
+      path: `/uploads/${profil.folder}/${filename}`,
       filename,
       size: processed.length,
+      width: info.width,
+      height: info.height,
     });
   } catch (error) {
+    // `sharp` puca i na fajlu koji tvrdi da je slika a nije — `file.type` u
+    // `FormData` postavlja klijent i može da laže. To je greška klijenta, ne
+    // servera, pa je odgovor 400.
     console.error("Upload error:", error);
     return NextResponse.json(
-      { error: "Failed to upload file" },
-      { status: 500 },
+      { error: "Fajl nije moguće pročitati kao sliku." },
+      { status: 400 },
     );
   }
 }
