@@ -718,6 +718,19 @@ Release tag se ne pravi tokom običnog razvoja; verified-login paket nije live,
 produkcijska baza/server nisu menjani, a main-push presentation workflow nije
 aktiviran. Live i svaki-push-na-`main` objavljivanje ostaju poslednji korak.
 
+## Sekcije stranica (plan, još nije implementirano)
+
+Plan da početna i ostale stranice postanu sekcije kojima upravlja admin — jedan
+`PageSection` model sa `config Json`, registar tipova sa šemom polja po uzoru na
+`lib/config/store-settings-schema.ts`, i medijateka nad `public/uploads` — stoji u
+`docs/PLAN-SEKCIJE.md`. Tamo su i istraživanje WoodMart elemenata, popis zatečenog
+koda, osam faza sa granama, rizici i odluke koje traže vlasnikovu reč.
+
+Ništa od toga još nije implementirano. Dva nalaza iz tog dokumenta važe odmah:
+migracija za sekcije bi bila **deveta** u lancu, iza četiri neprimenjene auth expand
+migracije, i svaka tvrdnja o stanju koda mora se proveravati nad
+`origin/verzija/v2.0-univerzalna-platforma`, jer lokalni ref zna da zaostaje.
+
 ## Šta još nije urađeno
 
 - [ ] Fotografije proizvoda — sve su prazne, stoje sivi mestodržači
@@ -727,6 +740,7 @@ aktiviran. Live i svaki-push-na-`main` objavljivanje ostaju poslednji korak.
 - [ ] Backfill i dual-read generičkih atributa/opcija u ProductForm/storefrontu
 - [ ] Dinamički filteri izvedeni iz `AttributeDefinition` umesto legacy polja
 - [ ] Page builder za početnu, zajednička medijateka i redirect/404 SEO centar
+      (plan i faze: `docs/PLAN-SEKCIJE.md`)
 - [ ] Zone/težinska pravila i integracija kurirske službe
 - [ ] NestPay kartice — tek kad postoji ugovor sa bankom; do tada radi pouzeće
 - [ ] Instalacija i provera VPS cleanup timera; kod endpointa postoji, ali još
