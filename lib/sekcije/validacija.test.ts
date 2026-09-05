@@ -451,3 +451,70 @@ test("cenovnik čuva osobine kao višelinijski tekst, bez ugnežđene liste", ()
   const paketi = vrednosti.paketi as Record<string, unknown>[];
   assert.equal((paketi[0].osobine as { sr: string }).sr, "Prva\nDruga");
 });
+
+/* ------------------------------------------------------------------ *
+ * Faza 6 — mediji koji dodiruju CSP
+ * ------------------------------------------------------------------ */
+
+test("video prima samo identifikator, nikad celu adresu", () => {
+  // Kad bi cela adresa ulazila u bazu, domen bi birao PODATAK a ne renderer —
+  // i jedan pogrešan upis bi značio `iframe` ka proizvoljnom sajtu.
+  for (const zlo of [
+    "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "youtu.be/dQw4w9WgXcQ",
+    "dQw4w9WgXc",
+    "dQw4w9WgXcQ2",
+    "<iframe src=x>",
+  ]) {
+    const { greske } = validirajSekciju("video", sa("video", { youtubeId: zlo }));
+    assert.ok(greske.youtubeId, zlo);
+  }
+});
+
+test("ispravan identifikator prolazi, a prazan ne smeta", () => {
+  assert.deepEqual(
+    validirajSekciju("video", sa("video", { youtubeId: "dQw4w9WgXcQ" })).greske,
+    {},
+  );
+  // Tek dodata sekcija još nije popunjena; tada se prosto ne renderuje.
+  assert.deepEqual(validirajSekciju("video", sa("video", { youtubeId: "" })).greske, {});
+});
+
+test("poređenje pre/posle traži dve slike", () => {
+  const { greske } = validirajSekciju(
+    "medij",
+    sa("medij", { prikaz: "uporedi", slike: [] }),
+  );
+  assert.ok(greske.slike, JSON.stringify(greske));
+});
+
+test("tačka van fotografije se odbija", () => {
+  for (const tacka of [{ x: -1, y: 50 }, { x: 50, y: 101 }, { x: 50 }]) {
+    const { greske } = validirajSekciju(
+      "hotspot",
+      sa("hotspot", { tacke: [{ ...tacka, proizvod: "sal-vuna" }] }),
+    );
+    // Procenti van 0–100 bi iscrtali tačku izvan slike.
+    assert.ok(
+      greske["tacke[0].x"] || greske["tacke[0].y"],
+      JSON.stringify(greske),
+    );
+  }
+});
+
+test("tačka bez sluga proizvoda se odbija", () => {
+  const { greske } = validirajSekciju(
+    "hotspot",
+    sa("hotspot", { tacke: [{ x: 10, y: 20, proizvod: "" }] }),
+  );
+  assert.ok(greske["tacke[0].proizvod"]);
+});
+
+test("ispravna tačka prolazi i čuva procente", () => {
+  const { greske, vrednosti } = validirajSekciju(
+    "hotspot",
+    sa("hotspot", { tacke: [{ x: 12.5, y: 80.1, proizvod: "sal-vuna" }] }),
+  );
+  assert.deepEqual(greske, {});
+  assert.deepEqual(vrednosti.tacke, [{ x: 12.5, y: 80.1, proizvod: "sal-vuna" }]);
+});

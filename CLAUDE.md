@@ -763,7 +763,7 @@ Release tag se ne pravi tokom običnog razvoja; verified-login paket nije live,
 produkcijska baza/server nisu menjani, a main-push presentation workflow nije
 aktiviran. Live i svaki-push-na-`main` objavljivanje ostaju poslednji korak.
 
-## Sekcije stranica (faze 1, 2, 4, 5 i 7 — registar, renderer, model, admin, tipovi, zone)
+## Sekcije stranica (faze 1, 2, 4, 5, 6 i 7 — registar, renderer, model, admin, tipovi, zone)
 
 Početna strana je od sada **podatak, ne JSX**. `app/(shop)/page.tsx` je sveden na
 `<RenderSekcije pageKey="home" />`; sav tekst, redosled i izgled sekcija dolaze
@@ -1087,6 +1087,78 @@ podnožje je vezu već krilo, ali sama stranica nije imala ništa.
 - **Filter blok.** Katalog već ima `FilterSidebar` i `SortDropdown` koji rade;
   sekcija ograničena na `sale`, `novo` i `sort` bila bi drugi način da se uradi
   isto, sa sopstvenim vezivanjem za adresu. Plan ga i sam vodi kao poznat dug.
+
+### Mediji koji dodiruju CSP (faza 6)
+
+Četiri nova tipa: `medij` (baner, galerija, poređenje pre/posle, parallax),
+`video`, `hotspot` i `instagram`.
+
+**CSP se NIJE menjao i ne sme se menjati usput.** `frame-src` je i pre faze 6
+dozvoljavao `https://www.youtube.com`, pa video ne traži nijednu izmenu.
+`lib/security/csp.test.ts` tvrdi tačan spisak izvora i pada ako se pojavi Vimeo
+ili `youtube-nocookie.com` — oboje je zasebna odluka vlasnika. Isti test
+proverava i da se `VideoOkidac` ugrađuje samo sa domena koji CSP dozvoljava.
+
+**U bazi stoji SAMO YouTube identifikator, nikad adresa.** Adresu sastavlja
+renderer, pa domen bira kod a ne podatak; jedan pogrešan upis inače znači
+`iframe` ka proizvoljnom sajtu. Validator odbija i celu adresu i `youtu.be`
+oblik. Prazna vrednost je dozvoljena — tek dodata sekcija se prosto ne renderuje,
+kao i svaki drugi tip.
+
+**Video se ne učitava dok posetilac ne pritisne dugme.** Do tada stoji slika:
+sopstvena iz medijateke ili YouTube-ov poster (`i.ytimg.com`, dodat u
+`images.remotePatterns` — to je `next/image`, ne CSP). Time početna ne vuče
+nekoliko stotina kilobajta i ne prima tuđe kolačiće zbog videa koji većina
+posetilaca nikad ne pusti.
+
+**Parallax ide preko `transform`, nikad `background-attachment: fixed`.** Taj
+svojstvo iOS Safari ignoriše i slika ostane zaglavljena. Isključen je ispod
+1024 px i uz `prefers-reduced-motion`; pomeraj se računa u
+`requestAnimationFrame`, sa `passive` slušaocem.
+
+**Poređenje pre/posle koristi `input[type=range]`, ne prevlačenje.** Prevlačenje
+izgleda bolje na demou i ne može se koristiti bez miša. Otkrivanje ide preko
+`clip-path`, ne preko širine — menjanje širine bi skaliralo gornju sliku pa se
+dve ne bi poklapale u tački reza.
+
+**Tačke na fotografiji nose samo slug i procente.** Cena stiže sa servera pri
+prikazu, kroz isti `ucitajBlokProizvoda` kao blok proizvoda, pa deli keš sa
+svakim blokom koji traži iste proizvode. Procenti, ne pikseli — tačka mora
+ostati na mestu i kad se slika skalira. U adminu se postavlja KLIKOM po slici:
+procenat širine je broj koji čovek ne ume da proceni gledajući sliku.
+
+**Instagram ne zove Graph API.** `app/api/instagram-feed` je `force-dynamic` sa
+`cache: 'no-store'`, pa bi svaki pogodak početne otišao na Instagram, sa tokenom
+koji ističe. Tip `instagram` zato uzima ručno izabrane slike. Dok ta ruta ne
+dobije sopstveni keš, API put se ne nudi kao izvor.
+
+### Animacije: klase koje su postojale samo u imenu
+
+`Dialog`, `Drawer`, `Accordion` i filter traka su do faze 6 pisali `animate-in`,
+`slide-in-from-*`, `zoom-in-95` i `animate-accordion-*`. **Nijedna od tih klasa
+nije bila definisana:** dolaze iz plugina `tailwindcss-animate`, koji nije
+zavisnost, a `tailwind.config.ts` se u Tailwind-u 4 **uopšte ne učitava** bez
+`@config` direktive. Dijalog, fioka i harmonika su skakali bez animacije, bez
+ijedne greške u konzoli i bez ijednog pada u izgradnji.
+
+Animacije su sada obična CSS pravila u `app/globals.css`, vezana za
+`[data-state]` — stanje već stoji na elementu, pa Tailwind varijanta nije
+potrebna i pravilo ne zavisi ni od jednog plugina. `lib/ui/animacije.test.ts`
+pada ako se klasa iz plugina vrati, ako se plugin doda kao zavisnost, ili ako
+komponenta koristi klasu koje nema u `globals.css`.
+
+**`tailwind.config.ts` je obrisan.** Stajao je pun boja koje izgledaju kao izvor
+istine a nikad se nisu učitavale. Paleta je u `@theme` bloku u `app/globals.css`.
+
+### Šta faza 6 NIJE donela i zašto
+
+- **MP4 iz medijateke.** Upload ruta prima četiri image MIME tipa i svaki fajl
+  provlači kroz `sharp(...).webp()`, pa MP4 nikad ne bi ni dobio `MediaAsset`
+  red. Podrška traži zaseban limit, proveru magic bajtova i put bez `sharp`-a —
+  odluka vlasnika.
+- **Vimeo.** Traži `frame-src` izmenu, dakle zasebnu bezbednosnu odluku.
+- **Instagram preko Graph API-ja.** Prvo keš na postojećoj ruti, pa tek onda
+  izvor.
 
 ### Zamke koje su ovde već pojele vreme
 

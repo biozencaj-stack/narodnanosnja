@@ -19,10 +19,18 @@
  * `NewsletterSection` je od faze 5 sekcija (`kind: "newsletter"`) i renderuje je
  * `components/sekcije/SekcijaNewsletter.tsx`; izvoz ostaje jer ga ta komponenta
  * koristi.
+ *
+ * Faza 6 je odnela `InstagramFeed` i `ParallaxBanner`. Prvu zamenjuje tip
+ * `instagram` sa RUČNO izabranim slikama — Graph API put nije ponuđen jer je
+ * `app/api/instagram-feed` `force-dynamic` sa `cache: no-store`, pa bi svaki
+ * pogodak početne otišao na Instagram. Drugu zamenjuje prikaz `parallax` u tipu
+ * `medij`, i to preko `transform` umesto `background-attachment: fixed`, koji na
+ * iOS Safariju ne radi.
+ *
+ * Ostale su tri: `HeroCarousel` i `CategoryBanners` čekaju odluku o proizvoljnim
+ * stranicama i banerima, `NewsletterSection` je živa kroz sekciju.
  */
 
 export { HeroCarousel } from './HeroCarousel';
 export { CategoryBanners } from './CategoryBanners';
 export { NewsletterSection } from './NewsletterSection';
-export { InstagramFeed } from './InstagramFeed';
-export { ParallaxBanner } from './ParallaxBanner';

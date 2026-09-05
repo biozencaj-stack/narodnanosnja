@@ -221,10 +221,19 @@ export const RAZMACI = [
   { vrednost: "uvodni", natpis: "Uvodni — vrh stranice" },
 ] as const;
 
+/**
+ * Katalog ulaznih animacija.
+ *
+ * Svaka vrednost mora imati klasu u `app/globals.css` i unos u
+ * `KLASE_ANIMACIJE`; `lib/ui/animacije.test.ts` pada ako se to razidje. Nova
+ * animacija se ne dodaje kao proizvoljan CSS iz baze — u bazi nema CSS-a.
+ */
 export const ANIMACIJE = [
   { vrednost: "bez", natpis: "Bez animacije" },
   { vrednost: "blago", natpis: "Blago pojavljivanje" },
   { vrednost: "odozdo", natpis: "Klizanje odozdo" },
+  { vrednost: "sleva", natpis: "Klizanje sleva" },
+  { vrednost: "uvecanje", natpis: "Blago uvećanje" },
 ] as const;
 
 export type Razmak = (typeof RAZMACI)[number]["vrednost"];
