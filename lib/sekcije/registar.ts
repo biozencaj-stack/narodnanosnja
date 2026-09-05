@@ -22,8 +22,103 @@ import {
   type VrednostiOkvira,
 } from "./okvir";
 
-export const STRANICE = ["home"] as const;
+/**
+ * Zone u koje admin sme da postavi sekciju.
+ *
+ * Jedna zona = jedan `pageKey` = jedan uređivački ekran. Stranica sa sadržajem
+ * iznad i ispod ima DVE zone, a ne jednu sa poljem „gore/dole“: redosled je
+ * svojstvo zone, pa bi jedan spisak morao da nosi i granicu između njih.
+ *
+ * Ključevi nemaju dvotačku. `stranica:<slug>` za proizvoljne stranice je i
+ * dalje samo zamisao i CHECK nad `PageSection.pageKey` je namerno ne dozvoljava
+ * — da u shemi ne stoji neispunjeno obećanje. Vidi `docs/PLAN-SEKCIJE.md`.
+ */
+export const STRANICE = [
+  "home",
+  "catalog-iznad",
+  "catalog-ispod",
+  "category-iznad",
+  "category-ispod",
+  "product-ispod",
+  "not-found",
+  "prefooter",
+] as const;
+
 export type KljucStranice = (typeof STRANICE)[number];
+
+export interface OpisStranice {
+  kljuc: KljucStranice;
+  naziv: string;
+  opis: string;
+}
+
+export const OPISI_STRANICA: OpisStranice[] = [
+  {
+    kljuc: "home",
+    naziv: "Početna",
+    opis: "Cela početna strana. Ovde nema sadržaja izvan sekcija.",
+  },
+  {
+    kljuc: "catalog-iznad",
+    naziv: "Katalog — iznad proizvoda",
+    opis: "Između navigacije i naslova kataloga.",
+  },
+  {
+    kljuc: "catalog-ispod",
+    naziv: "Katalog — ispod proizvoda",
+    opis: "Posle poslednje strane rezultata.",
+  },
+  {
+    kljuc: "category-iznad",
+    naziv: "Kategorija — iznad proizvoda",
+    opis: "Na svakoj stranici kategorije, iznad spiska.",
+  },
+  {
+    kljuc: "category-ispod",
+    naziv: "Kategorija — ispod proizvoda",
+    opis: "Na svakoj stranici kategorije, ispod spiska.",
+  },
+  {
+    kljuc: "product-ispod",
+    naziv: "Proizvod — ispod opisa",
+    opis:
+      "Ispod opisa i sličnih proizvoda. Iznad proizvoda nema zone namerno: " +
+      "sve što stoji tamo gura sam proizvod ispod prvog ekrana.",
+  },
+  {
+    kljuc: "not-found",
+    naziv: "Stranica 404",
+    opis: "Ono što vidi posetilac koji je stigao na adresu koje nema.",
+  },
+  {
+    kljuc: "prefooter",
+    naziv: "Iznad podnožja (sve stranice)",
+    opis:
+      "Renderuje se na SVAKOJ stranici prodavnice. Zato ovde nema tipova koji " +
+      "čitaju katalog — oni bi radili upit na svakom pogotku.",
+  },
+];
+
+const KLJUCEVI_STRANICA = new Set<string>(STRANICE);
+
+export function postojiStranica(pageKey: string): pageKey is KljucStranice {
+  return KLJUCEVI_STRANICA.has(pageKey);
+}
+
+export function opisStranice(pageKey: string): OpisStranice | undefined {
+  return OPISI_STRANICA.find((stranica) => stranica.kljuc === pageKey);
+}
+
+/**
+ * Zone u koje sme tip koji čita katalog.
+ *
+ * Sve osim `prefooter`: ta zona stoji na svakoj stranici prodavnice, pa bi blok
+ * proizvoda tamo značio upit ka bazi na svakom pogotku, na serveru koji deli
+ * mašinu sa još tri aplikacije.
+ */
+const STRANICE_BEZ_PREFOOTERA = STRANICE.filter(
+  (kljuc) => kljuc !== "prefooter",
+) as readonly KljucStranice[];
 
 export interface TipSekcije {
   /** Vrednost kolone `kind`. Mala slova, bez razmaka. */
@@ -292,7 +387,7 @@ const TAKSONOMIJA: TipSekcije = {
     broj: 6,
     podkategorije: false,
   },
-  stranice: STRANICE,
+  stranice: STRANICE_BEZ_PREFOOTERA,
   asinhrona: true,
   kostur: "mrezaKartica",
 };
@@ -382,7 +477,7 @@ const PROIZVODI: TipSekcije = {
     oznake: true,
     zelje: true,
   },
-  stranice: STRANICE,
+  stranice: STRANICE_BEZ_PREFOOTERA,
   asinhrona: true,
   kostur: "mrezaProizvoda",
   /**
@@ -537,7 +632,7 @@ const CLANCI: TipSekcije = {
     broj: 3,
     sazetak: true,
   },
-  stranice: STRANICE,
+  stranice: STRANICE_BEZ_PREFOOTERA,
   asinhrona: true,
   kostur: "mrezaKartica",
 };
@@ -581,7 +676,7 @@ const ODBROJAVANJE: TipSekcije = {
     datum: "",
     dugmad: [],
   },
-  stranice: STRANICE,
+  stranice: STRANICE_BEZ_PREFOOTERA,
   asinhrona: true,
   kostur: "tekstualni",
 };
@@ -664,7 +759,7 @@ const UTISCI: TipSekcije = {
     najmanjaOcena: 4,
     samoSaKomentarom: true,
   },
-  stranice: STRANICE,
+  stranice: STRANICE_BEZ_PREFOOTERA,
   asinhrona: true,
   kostur: "mrezaKartica",
   capability: "reviews",
@@ -729,6 +824,20 @@ export function poljaTipa(tip: TipSekcije): PoljeSekcije[] {
  * uvozi i admin obrazac u pregledaču, pa ne sme da zavisi od trenutka u kom se
  * `process.env` pročita, a ovako je pravilo i proverivo testom.
  */
+/**
+ * Da li tip sme na datu zonu.
+ *
+ * Nepoznat tip prolazi (o njemu odlučuje pozivalac), nepoznata zona ne prolazi:
+ * sekcija upisana na `pageKey` koji nijedna stranica ne renderuje postoji u
+ * bazi a nikad se ne vidi, i to bez ijedne poruke.
+ */
+export function tipDozvoljenNaStranici(kind: string, pageKey: string): boolean {
+  if (!postojiStranica(pageKey)) return false;
+  const tip = PO_KLJUCU.get(kind);
+  if (!tip) return true;
+  return (tip.stranice as readonly string[]).includes(pageKey);
+}
+
 export function tipJeDostupan(
   kind: string,
   prekidaci: Record<string, boolean>,

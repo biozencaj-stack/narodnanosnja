@@ -14,6 +14,7 @@ import { getStoreSettings } from "@/lib/config/store-settings";
 import { storeCapabilities } from "@/lib/config/capabilities";
 import { sanitizeLocalizedRichText } from "@/lib/security/html";
 import { serializeJsonLd } from "@/lib/security/json-ld";
+import { RenderSekcije } from "@/components/sekcije";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -161,7 +162,8 @@ async function ProductContent({ id }: { id: string }) {
 export default async function ProductPage({ params }: PageProps) {
   const { id } = await params;
   return (
-    <div className="container-wide py-8 lg:py-12">
+    <>
+      <div className="container-wide py-8 lg:py-12">
       <Suspense
         fallback={
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12">
@@ -176,6 +178,12 @@ export default async function ProductPage({ params }: PageProps) {
       >
         <ProductContent id={id} />
       </Suspense>
-    </div>
+      </div>
+
+      {/* Zona kojom upravlja admin. Stoji IZVAN `container-wide`, jer svaka
+          sekcija nosi sopstvenu podlogu preko cele širine. Zone iznad proizvoda
+          nema namerno: sve što stoji tamo gura sam proizvod ispod prvog ekrana. */}
+      <RenderSekcije pageKey="product-ispod" />
+    </>
   );
 }

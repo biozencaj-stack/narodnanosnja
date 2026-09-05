@@ -679,7 +679,7 @@ Release tag se ne pravi tokom običnog razvoja; verified-login paket nije live,
 produkcijska baza/server nisu menjani, a main-push presentation workflow nije
 aktiviran. Live i svaki-push-na-`main` objavljivanje ostaju poslednji korak.
 
-## Sekcije stranica (faze 1, 2, 4 i 5 — registar, renderer, model, admin, tipovi)
+## Sekcije stranica (faze 1, 2, 4, 5 i 7 — registar, renderer, model, admin, tipovi, zone)
 
 Početna strana je od sada **podatak, ne JSX**. `app/(shop)/page.tsx` je sveden na
 `<RenderSekcije pageKey="home" />`; sav tekst, redosled i izgled sekcija dolaze
@@ -698,6 +698,8 @@ lib/db/blok-proizvoda.ts    izvršenje tog plana nad bazom, kroz React cache()
 lib/db/taksonomija.ts       kartice kategorija i brendova, sa slikom
 lib/db/jeftini-tipovi.ts    pitanja, članci, utisci i istek akcije (faza 5)
 lib/promotions-prikaz.ts    čisto mapiranje `Promotion` reda u prikaz
+lib/seo/staticke-stranice.ts  spisak statičkih adresa za `sitemap.xml`
+components/layout/OkvirProdavnice.tsx  jedan okvir za `(shop)` i `(legal)`
 components/sekcije/         okvir, zaglavlje, mapa kind -> komponenta, renderer
 ```
 
@@ -925,6 +927,82 @@ migraciju kolone i ne krije se u sekciji.
 **Asinhron tip mora imati kostur.** `mrezaKartica` je do faze 5 bila deklarisana
 ali je `Kostur` za nju vraćao `null` — sekcija bi se pojavila niotkuda i gurnula
 sve ispod sebe. Sada postoje tri kostura, uključujući `tekstualni`.
+
+### Zone stranica (faza 7)
+
+Sekcije više nisu samo početna. `STRANICE` u registru nabraja **osam zona**, a
+svaka je jedan `pageKey`, jedan uređivački ekran i jedno dugme „Objavi”:
+
+| Zona | Gde se renderuje |
+| --- | --- |
+| `home` | cela početna |
+| `catalog-iznad` / `catalog-ispod` | oko spiska na `/catalog` |
+| `category-iznad` / `category-ispod` | oko spiska na `/category/…` |
+| `product-ispod` | ispod opisa proizvoda |
+| `not-found` | 404 stranica |
+| `prefooter` | iznad podnožja, na **svakoj** stranici prodavnice |
+
+**Stranica sa sadržajem iznad i ispod ima DVE zone, ne jednu sa poljem
+„gore/dole“.** Redosled je svojstvo zone; jedan spisak bi morao da nosi i
+granicu između njih, pa bi „pomeri gore“ ponekad značilo „prebaci na drugu
+stranu stranice“.
+
+**Iznad proizvoda zone nema namerno.** Sve što stoji tamo gura sam proizvod
+ispod prvog ekrana.
+
+**`prefooter` ne prima tipove koji čitaju katalog.** Ta zona stoji na svakoj
+stranici, pa bi blok proizvoda tamo značio upit ka bazi na svakom pogotku, na
+serveru koji deli mašinu sa još tri aplikacije. Pravilo nosi `TipSekcije.stranice`
+i sprovodi ga `tipDozvoljenNaStranici`, u ruti i u obrascu.
+
+**Nepoznata zona se odbija sa 400.** Oblik ključa nije dovoljan: sekcija upisana
+na `pageKey` koji nijedna stranica ne renderuje postoji u bazi a nikad se ne vidi,
+bez ijedne poruke.
+
+**`RenderSekcije` ne obara stranicu kad baza ne odgovori.** Sekcije su sadržaj,
+ali ne uslov da stranica postoji. Najviše se vidi na `app/not-found.tsx`: ona se
+iscrtava i pri izgradnji, kad baze nema. Zbog te zone `/_not-found` je sada
+dinamična ruta; status odgovora ostaje **404** i to čuva E2E test.
+
+**Zone stoje IZVAN `container-wide`.** Svaka sekcija nosi sopstvenu podlogu preko
+cele širine i sopstveni kontejner; unutar kontejnera bi se udvostručili.
+
+**`app/(shop)/layout.tsx` i `app/(legal)/layout.tsx` dele
+`components/layout/OkvirProdavnice.tsx`.** Razlike su izričite zastavice, a ne
+dve kopije: pravne stranice se prelamaju u uzak `prose` članak i nemaju
+`QuickViewModal` ni `ChatWidget`. Skup montiranih komponenti je namerno ostao
+isti kakav je bio.
+
+### Mapa sajta
+
+`app/sitemap.ts` je do faze 7 imao **dve greške koje se ne smeju vratiti**:
+
+1. Kategorije su izlazile kao `/catalog?category=<slug>`. Katalog taj parametar
+   **nikad nije čitao**, pa je svaka takva adresa vraćala ceo katalog — desetine
+   duplikata iste stranice u indeksu, dok prave adrese `/category/<slug>` u mapi
+   nisu ni postojale. Podkategorija ide kao `<roditelj>/<dete>`, jer
+   `resolveCategory` proverava da prvi segment zaista bude roditelj.
+2. Svaka statička stranica je nosila `lastModified: new Date()` i pri svakom
+   čitanju tvrdila da se upravo promenila. Datum koji uvek laže isti je kao datum
+   kog nema, samo skuplji.
+
+Spisak statičkih adresa stoji u `lib/seo/staticke-stranice.ts`, odvojen od
+sitemapa da bi ga test poredio sa stvarnim rutama pod `app/`. **Stranica sa
+`capability` mora imati istu proveru i u svom `page.tsx`** — inače mapa
+prijavljuje adresu koja vraća 404. `/karijera` je tu proveru dobio u fazi 7:
+podnožje je vezu već krilo, ali sama stranica nije imala ništa.
+
+### Šta faza 7 NIJE donela i zašto
+
+- **Proizvoljne stranice `stranica:<slug>`.** CHECK nad `PageSection.pageKey`
+  namerno ne dozvoljava dvotačku, pa u shemi ne stoji neispunjeno obećanje.
+  Isporuka traži odluku vlasnika o rutiranju i SEO podacima.
+- **Podešavanja po stranici** (sakrij trakicu, sakrij podnožje, LCP slika).
+  Traže desetu migraciju, a deveta još nije primenjena na produkciju. Dve
+  neprimenjene migracije u redu su veći rizik od funkcije koja se čeka.
+- **Filter blok.** Katalog već ima `FilterSidebar` i `SortDropdown` koji rade;
+  sekcija ograničena na `sale`, `novo` i `sort` bila bi drugi način da se uradi
+  isto, sa sopstvenim vezivanjem za adresu. Plan ga i sam vodi kao poznat dug.
 
 ### Zamke koje su ovde već pojele vreme
 

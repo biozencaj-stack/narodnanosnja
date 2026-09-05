@@ -269,3 +269,57 @@ test("odgovori admin ruta se ne keširaju", async () => {
     "private, no-store, max-age=0",
   );
 });
+
+/* ------------------------------------------------------------------ *
+ * Zone stranica
+ * ------------------------------------------------------------------ */
+
+/** Zavisnosti koje padnu ako se do upisa uopšte stigne. */
+function odbijajuciPost() {
+  return createSekcijePostHandler({
+    resolveSession: async () => ADMIN,
+    prebrojTipNaStrani: async () => 0,
+    poslednjiRedosled: async () => null,
+    napravi: async () => {
+      throw new Error("ne sme se stići dovde");
+    },
+    reportFailure: () => undefined,
+  });
+}
+
+test("zona koju nijedna stranica ne renderuje se odbija", async () => {
+  // Oblik ključa je ispravan, pa raniji `OBRAZAC_KLJUCA_STRANICE` ne bi ništa
+  // primetio. Sekcija bi postojala u bazi a nikad se ne bi videla.
+  const odgovor = await odbijajuciPost()(
+    zahtev({ pageKey: "izmisljena-zona", kind: "naslov" }),
+  );
+  assert.equal(odgovor.status, 400);
+  assert.match((await odgovor.json()).error, /zona/i);
+});
+
+test("tip koji zona ne podržava se odbija u ruti, ne samo u obrascu", async () => {
+  // Zona iznad podnožja stoji na svakoj stranici prodavnice; blok proizvoda bi
+  // tamo značio upit ka bazi na svakom pogotku.
+  const odgovor = await odbijajuciPost()(
+    zahtev({ pageKey: "prefooter", kind: "proizvodi" }),
+  );
+  assert.equal(odgovor.status, 400);
+});
+
+test("dozvoljen tip u dozvoljenoj zoni prolazi do upisa", async () => {
+  let upisano: { pageKey: string; kind: string } | null = null;
+  const rukovalac = createSekcijePostHandler({
+    resolveSession: async () => ADMIN,
+    prebrojTipNaStrani: async () => 0,
+    poslednjiRedosled: async () => null,
+    napravi: async (podaci) => {
+      upisano = { pageKey: podaci.pageKey, kind: podaci.kind };
+      return { id: "novo" };
+    },
+    reportFailure: () => undefined,
+  });
+
+  const odgovor = await rukovalac(zahtev({ pageKey: "catalog-iznad", kind: "naslov" }));
+  assert.equal(odgovor.status, 201);
+  assert.deepEqual(upisano, { pageKey: "catalog-iznad", kind: "naslov" });
+});

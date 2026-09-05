@@ -15,7 +15,13 @@
 import type { ServerSessionResolution } from "../auth/server-session-contract";
 import { readBoundedJson } from "../security/bounded-json";
 import { OBRAZAC_KLJUCA_STRANICE } from "./polja";
-import { podrazumevanaKonfiguracija, tipJeDostupan, tipSekcije } from "./registar";
+import {
+  podrazumevanaKonfiguracija,
+  postojiStranica,
+  tipDozvoljenNaStranici,
+  tipJeDostupan,
+  tipSekcije,
+} from "./registar";
 import { storeCapabilities } from "../config/capabilities";
 import {
   MAX_BAJTOVA_KONFIGURACIJE,
@@ -291,6 +297,19 @@ export function createSekcijePostHandler(zavisnosti: ZavisnostiPravljenja) {
     const tip = tipSekcije(kind);
     if (!tip) {
       return odgovor({ error: `Nepoznat tip sekcije: ${kind}` }, 400);
+    }
+
+    // Oblik ključa nije dovoljan: sekcija upisana na `pageKey` koji nijedna
+    // stranica ne renderuje postoji u bazi a nikad se ne vidi, i to bez ijedne
+    // poruke. Isto važi za tip koji ta zona ne podržava.
+    if (!postojiStranica(pageKey)) {
+      return odgovor({ error: `Nepoznata zona: ${pageKey}` }, 400);
+    }
+    if (!tipDozvoljenNaStranici(kind, pageKey)) {
+      return odgovor(
+        { error: `Tip „${kind}” se ne može postaviti u zonu „${pageKey}”.` },
+        400,
+      );
     }
 
     // Onemogućen izbor u obrascu nije ovlašćenje. Tip koji zavisi od ugašenog
