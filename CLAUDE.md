@@ -46,6 +46,10 @@ git switch --no-track -c dodatak/kratak-opis \
   origin/verzija/v2.0-univerzalna-platforma
 ```
 
+Svaka tvrdnja o stanju koda proverava se nad
+`origin/verzija/v2.0-univerzalna-platforma`, nikad nad lokalnim refom — lokalni
+ume da zaostaje za nekoliko spajanja.
+
 | Vrsta posla        | Oblik imena                | Primer                        |
 | ------------------ | -------------------------- | ----------------------------- |
 | Nova verzija       | `verzija/vX.Y-kratak-opis` | `verzija/v1.1-fotografije`    |
@@ -81,6 +85,22 @@ npx tsx scripts/uvoz-nosnja.ts   # uvoz kategorija i proizvoda iz podaci/
 npx tsx scripts/create-admin.ts --email … --role ADMIN # maskirani TTY unos
 ```
 
+## Privilegovani nalozi i politika prijave
+
+**`createdAt` privilegovanog naloga mora biti isti trenutak kao `emailVerified`.**
+`provisionPrivilegedAccount` čita `clock_timestamp()` **pre** upisa reda, pa bi
+podrazumevani `createdAt` nastao kasnije — i ispalo bi da je nalog verifikovan
+pre nego što je nastao. `evaluateVerifiedLoginPolicy` takav snimak odbija kao
+nemoguć, prijava puca sa `POLICY_DECISION / INTERNAL_FAILURE`, i nalog se ne
+može prijaviti **nikada**. U CI-ju je razlika bila jedan milisekund.
+
+Poruka pri tom izgleda kao kvar politike, a greška je u podacima — zato se lako
+juri na pogrešnom mestu.
+
+Invarijanta `createdAt <= emailVerified` je bila i ranije proverena, ali samo u
+integracionom testu koji ide putanjom **ažuriranja** postojećeg naloga, gde je
+`createdAt` stariji. Putanja pravljenja novog naloga nije bila pokrivena. Sada
+je pokriva `lib/auth/privileged-account.test.ts`, bez baze.
 ## Slike i kretanje
 
 **Granice otpremanja dolaze iz profila**, ne iz tvrdo upisanog broja.
@@ -122,6 +142,12 @@ sve što tvrde.
 - **Podrazumevana paleta stoji u CSS-u, runtime paleta u Settings.** Admin
   vrednosti se postavljaju kao CSS promenljive iz `app/layout.tsx`; pri
   dodavanju novog semantičkog tokena dopuni i registry i `storeThemeStyle`.
+- **Šara i traka primaju samo doslovan HEX.** `components/ukras` crta SVG unutar
+  `data:` URI-ja, a to je zaseban dokument u kome CSS promenljive stranice ne
+  postoje: `var(--color-zlatna)` tamo nije boja nego neispravan paint, pa linija
+  sa `stroke` nestane a oblik sa `fill` padne na crno. Ništa se ne prijavljuje —
+  šara se prosto ne vidi. `lib/ukras/boja.ts` sada odbija sve što nije HEX i pada
+  na podrazumevanu vrednost, uz upozorenje u razvoju.
 - **Iz fajla sa `"use server"` ne sme se ponovo izvoziti tip.** `export interface`
   prolazi, ali `export type { Nesto }` Turbopack tretira kao Server Action; tip u
   izgradnji ne postoji, pa `npm run build` pada sa „Export ... doesn't exist in
@@ -640,6 +666,57 @@ namerno odbija svaku bazu čiji naziv jasno ne sadrži `e2e`, `test` ili
 produkcijskom bazom. CI koristi zaseban PostgreSQL service i instalira Chromium
 pre browser testa.
 
+Playwright ima **tri projekta** i oni se ne mešaju:
+
+| Projekat | Šta vozi | Sesija |
+| --- | --- | --- |
+| `setup-admin` | `e2e/fixtures/admin.ts` | prijavljuje se i snima stanje |
+| `mobile-chromium` | sve osim `admin-*.spec.ts` (Pixel 7) | bez prijave |
+| `desktop-chromium` | samo `admin-*.spec.ts` | snimljena admin sesija |
+
+Novi test admin ekrana ide u fajl po obrascu `admin-<nesto>.spec.ts`, inače ga
+`desktop-chromium` neće pokupiti, a `mobile-chromium` bi ga vozio bez prijave i
+test bi pao na preusmerenju.
+
+`setup-admin` se prijavljuje kroz **stvarni obrazac**, ne ubacivanjem kolačića,
+pa provera pokriva i NextAuth tok. Snimljeno stanje ide u `e2e/.auth/admin.json`,
+koji je u `.gitignore` — to je kredencijal i nikad ne ulazi u git. Za provere
+koje moraju da se dogode bez prijave koristi se `PRAZNO_STANJE` iz
+`e2e/fixtures/admin-stanje.ts` uz `test.use({ storageState })`.
+
+Konstante harnesa stoje u `e2e/fixtures/admin-stanje.ts`, odvojeno od
+`e2e/fixtures/admin.ts`: konfiguraciju uvozi Playwright pre nego što sme da
+postoji ijedan prijavljen test, pa fajl koji zove `setup(...)` ne sme biti
+uvezen iz `playwright.config.ts`.
+
+ADMIN nalog pravi `scripts/seed-e2e.ts`, iza **istog** guarda kao ostatak seed-a,
+i to kroz `provisionPrivilegedAccount` — isti put kojim ide
+`scripts/create-admin.ts`, ne ručnim `prisma.user.create` sa bcrypt hešom. Tako
+nalog dobija isto verified stanje i očišćene tokene, pa verified-login politika
+ne obara prijavu. Email i lozinka se mogu promeniti kroz `E2E_ADMIN_EMAIL` i
+`E2E_ADMIN_PASSWORD`; podrazumevana lozinka je javna i važi samo za test bazu, a
+slaba vrednost obara seed pre nego što se baza uopšte otvori.
+
+`webServer.env` izričito postavlja `DEMO_MODE: "false"`. Demo režim blokira svaki
+API upis, pa bi admin tokovi u njemu tiho otkazali.
+
+**Ne čekaj da dugme za slanje nestane kao znak da je radnja gotova.** Obrazac za
+prijavu menja natpis dugmeta u „Prijava...” dok zahtev traje, pa uslov
+`getByRole("button", { name: "Prijavite se" }).toHaveCount(0)` postane tačan
+odmah po kliku — pre nego što NextAuth uopšte odgovori. Sledeći `goto` tada
+krene bez kolačića sesije, proxy ga ispravno vrati na `/login`, a prekinuti
+zahtev ostavi `ECONNRESET` u dnevniku servera; greška izgleda kao pokvarena
+autorizacija, a zapravo je pogrešno čekanje. Čeka se odgovor
+`/api/auth/callback/credentials` (čekanje se postavlja **pre** klika, da ne
+promakne), pa stvarni odlazak sa `/login`. Isto važi za svako dugme sa
+stanjem učitavanja.
+
+Odbijena prijava takođe vraća **200** — greška je u telu odgovora, ne u statusu.
+Zato `ok()` nije dokaz uspeha; dokaz je da je stranica napustila `/login`. Iz
+istog razloga `page.goto("/admin")` može vratiti `ok()` iako je posetilac
+preusmeren na prijavu: preusmerenje se završava statusom 200, pa se adresa mora
+proveriti zasebno.
+
 Demo seed ima još stroži opt-in: `npm run db:seed-demo` radi samo uz
 `DEMO_DATABASE_SEED=true`, validan PostgreSQL `DATABASE_URL` čiji naziv baze
 sadrži odvojen marker `demo`, `e2e`, `test` ili `provera`, a ne sadrži `prod`,
@@ -1036,6 +1113,7 @@ podnožje je vezu već krilo, ali sama stranica nije imala ništa.
 - [ ] Backfill i dual-read generičkih atributa/opcija u ProductForm/storefrontu
 - [ ] Dinamički filteri izvedeni iz `AttributeDefinition` umesto legacy polja
 - [ ] Page builder za početnu, zajednička medijateka i redirect/404 SEO centar
+      (plan i faze: `docs/PLAN-SEKCIJE.md`)
 - [ ] Zone/težinska pravila i integracija kurirske službe
 - [ ] NestPay kartice — tek kad postoji ugovor sa bankom; do tada radi pouzeće
 - [ ] Instalacija i provera VPS cleanup timera; kod endpointa postoji, ali još

@@ -9,6 +9,7 @@ import {
   type PrivilegedAccountSecurityWrite,
   type PrivilegedAccountTransaction,
 } from "./privileged-account";
+import { evaluateVerifiedLoginPolicy } from "./verified-login-policy";
 
 const DATABASE_TIME = new Date("2026-08-30T16:20:30.456Z");
 const PASSWORD_HASH = `$2b$12$${"a".repeat(53)}`;
@@ -127,6 +128,9 @@ test("creates a normalized, verified privileged account atomically", async () =>
       email: "privileged@example.com",
       firstName: "Admin",
       lastName: "[COMPANY_NAME]",
+      // Isti trenutak kao `emailVerified`: nalog se pravi i verifikuje u istoj
+      // transakciji, pa je jedan isti sat jedini tačan opis.
+      createdAt: DATABASE_TIME,
       ...expectedSecurityWrite(),
     },
   ]);
@@ -510,4 +514,59 @@ test("Prisma adapter fails closed for an invalid advisory lock wrapper result", 
     "query:advisory-lock",
   ]);
   assert.deepEqual(fake.creates, []);
+});
+
+test("napravljen nalog prolazi politiku prijave", async () => {
+  // Ovo je veza koja je nedostajala, i zbog čije je odsutnosti greška mogla da
+  // postoji: pravljenje naloga i politika prijave su se proveravali odvojeno.
+  //
+  // Bez izričitog `createdAt`, podrazumevana vrednost nastaje POSLE očitanog
+  // `clock_timestamp()`, pa je `emailVerified` raniji od `createdAt` — u CI-ju
+  // se to videlo kao razlika od jednog milisekunda. Politika takav snimak
+  // odbija kao nemoguć, prijava puca sa `POLICY_DECISION / INTERNAL_FAILURE`, i
+  // nalog se ne može prijaviti nikada.
+  const harness = createHarness();
+  await provisionPrivilegedAccount(INPUT, harness.database);
+
+  const upisano = harness.creates[0];
+  assert.ok(upisano);
+
+  const odluka = evaluateVerifiedLoginPolicy({
+    policy: "audit",
+    role: upisano.role,
+    createdAt: upisano.createdAt,
+    emailVerified: upisano.emailVerified,
+    emailVerificationLoginGraceUntil:
+      upisano.emailVerificationLoginGraceUntil,
+    stagedGraceDeadline: null,
+    // Prijava se dešava kasnije, po satu iste baze.
+    evaluatedAt: new Date(DATABASE_TIME.getTime() + 5_000),
+  });
+
+  assert.equal(odluka.allowed, true);
+  assert.equal(odluka.reason, "VERIFIED");
+});
+
+test("napravljen nalog prolazi politiku i pod strict režimom", async () => {
+  // `strict` odbija neverifikovan nalog. Privilegovan nalog je verifikovan u
+  // istoj transakciji, pa mora proći i tu — inače bi pooštravanje politike
+  // zaključalo same administratore.
+  const harness = createHarness();
+  await provisionPrivilegedAccount(INPUT, harness.database);
+
+  const upisano = harness.creates[0];
+  assert.ok(upisano);
+
+  const odluka = evaluateVerifiedLoginPolicy({
+    policy: "strict",
+    role: upisano.role,
+    createdAt: upisano.createdAt,
+    emailVerified: upisano.emailVerified,
+    emailVerificationLoginGraceUntil:
+      upisano.emailVerificationLoginGraceUntil,
+    stagedGraceDeadline: null,
+    evaluatedAt: new Date(DATABASE_TIME.getTime() + 5_000),
+  });
+
+  assert.equal(odluka.allowed, true);
 });
