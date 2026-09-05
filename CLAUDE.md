@@ -197,9 +197,13 @@ Arhitektonske granice platforme i redosled narednih faza su u
 
 Rad na sekcijama stranica: plan i istraživanje u `docs/PLAN-SEKCIJE.md`, dnevnik
 izvršenja sa presekom na 4. 9. 2026. u
-`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-09-04.md`. Drugi dokument nabraja i šta
+`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-09-04.md` (stanje dok nijedna grana još
+nije bila spojena), a nastavak — spajanje svih 17 PR-ova, faze 4–7, migracija
+produkcione baze i priprema V2 taga — u
+`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-09-05.md`. Oba dokumenta nabrajaju i šta
 **nije** provereno — pročitaj taj odeljak pre nego što se osloniš na bilo koju
-tvrdnju o ponašanju nad bazom.
+tvrdnju o ponašanju nad bazom. Zbirni spisak zamki (Tailwind v4, `cache()` po
+identitetu, prazan `relacl`, Playwright `exact`) je u odeljku 11 novijeg.
 
 `prisma/schema.prisma` sadrži novu, opcionu osnovu za više branši:
 
