@@ -91,7 +91,7 @@ export async function Footer() {
   return (
     <footer className="bg-text text-white">
       {/* Tkana traka razdvaja podnožje od sadržaja iznad */}
-      <Traka boja="var(--color-zlatna)" bojaDruga="var(--color-primary)" visina={20} />
+      <Traka boja="#b98f21" bojaDruga="#a4161a" visina={20} />
 
       {/* Top section: Brand + Contact + Map */}
       <div className="container-wide pt-14 pb-10 lg:pt-16 lg:pb-12">
