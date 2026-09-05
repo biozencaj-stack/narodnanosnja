@@ -111,33 +111,61 @@ function blokTrake(): { id: string; kind: string; config: Record<string, unknown
   };
 }
 
+/**
+ * Naslov u jednoj zoni izvan početne.
+ *
+ * Zone kataloga, kategorije, proizvoda i 404 stranice su prazne dok admin
+ * ništa ne postavi, pa bez ovih zapisa E2E ne bi imao šta da proveri — ni to da
+ * se zona pojavljuje tamo gde treba, ni to da se NE pojavljuje drugde.
+ */
+function naslovZone(
+  id: string,
+  tekst: string,
+): { id: string; kind: string; config: Record<string, unknown> } {
+  return {
+    id,
+    kind: "naslov",
+    config: {
+      ...podrazumevanaKonfiguracija("naslov"),
+      naslov: { sr: tekst, en: tekst },
+    },
+  };
+}
+
+const ZONE_ZA_SEJANJE: Record<string, { id: string; kind: string; config: Record<string, unknown> }[]> = {
+  home: [...podrazumevanRaspored("home"), blokSnizenog(), blokTrake()],
+  "catalog-iznad": [naslovZone("e2e-zona-katalog", "E2E zona kataloga")],
+  "not-found": [naslovZone("e2e-zona-404", "E2E zona 404")],
+};
+
 async function zasejSekcije(): Promise<void> {
-  const raspored = [...podrazumevanRaspored("home"), blokSnizenog(), blokTrake()];
   const trenutak = new Date();
 
-  for (const [redniBroj, sekcija] of raspored.entries()) {
-    await prisma.pageSection.upsert({
-      where: { id: sekcija.id },
-      update: {
-        kind: sekcija.kind,
-        order: redniBroj,
-        isActive: true,
-        config: sekcija.config as Prisma.InputJsonObject,
-        draftConfig: Prisma.DbNull,
-        draftOrder: null,
-        draftIsActive: null,
-        publishedAt: trenutak,
-      },
-      create: {
-        id: sekcija.id,
-        pageKey: "home",
-        kind: sekcija.kind,
-        order: redniBroj,
-        isActive: true,
-        config: sekcija.config as Prisma.InputJsonObject,
-        publishedAt: trenutak,
-      },
-    });
+  for (const [pageKey, raspored] of Object.entries(ZONE_ZA_SEJANJE)) {
+    for (const [redniBroj, sekcija] of raspored.entries()) {
+      await prisma.pageSection.upsert({
+        where: { id: sekcija.id },
+        update: {
+          kind: sekcija.kind,
+          order: redniBroj,
+          isActive: true,
+          config: sekcija.config as Prisma.InputJsonObject,
+          draftConfig: Prisma.DbNull,
+          draftOrder: null,
+          draftIsActive: null,
+          publishedAt: trenutak,
+        },
+        create: {
+          id: sekcija.id,
+          pageKey,
+          kind: sekcija.kind,
+          order: redniBroj,
+          isActive: true,
+          config: sekcija.config as Prisma.InputJsonObject,
+          publishedAt: trenutak,
+        },
+      });
+    }
   }
 }
 

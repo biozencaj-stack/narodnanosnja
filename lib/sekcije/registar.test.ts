@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { OBRAZAC_KLJUCA_STRANICE } from "./polja";
 import { OBRAZAC_SIDRA, POLJA_OKVIRA } from "./okvir";
 import {
   TIPOVI_SEKCIJA,
   podrazumevanaKonfiguracija,
   poljaTipa,
+  OPISI_STRANICA,
+  postojiStranica,
   postojiTip,
+  STRANICE,
+  tipDozvoljenNaStranici,
   tipJeDostupan,
   tipSekcije,
 } from "./registar";
@@ -177,5 +182,57 @@ test("svaki prekidač u registru postoji i u `storeCapabilities`", () => {
   for (const tip of TIPOVI_SEKCIJA) {
     if (!tip.capability) continue;
     assert.ok(poznati.has(tip.capability), `${tip.kind}: ${tip.capability}`);
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * Zone stranica
+ * ------------------------------------------------------------------ */
+
+test("svaka zona ima opis, i nijedan opis nije bez zone", () => {
+  assert.deepEqual(
+    OPISI_STRANICA.map((stranica) => stranica.kljuc),
+    [...STRANICE],
+  );
+});
+
+test("ključ zone prolazi isti obrazac koji stoji kao CHECK u bazi", () => {
+  for (const kljuc of STRANICE) {
+    assert.match(kljuc, OBRAZAC_KLJUCA_STRANICE, kljuc);
+    // Dvotačka je namerno zabranjena: `stranica:<slug>` je i dalje samo
+    // zamisao, a jednom dozvoljena vrednost u bazi se teško povlači nazad.
+    assert.equal(kljuc.includes(":"), false, kljuc);
+  }
+});
+
+test("nepoznata zona ne postoji i ne prima nijedan tip", () => {
+  assert.equal(postojiStranica("nepostojeca"), false);
+  assert.equal(tipDozvoljenNaStranici("naslov", "nepostojeca"), false);
+  // Sekcija upisana na ključ koji nijedna stranica ne renderuje postojala bi u
+  // bazi a nikad se ne bi videla — i to bez ijedne poruke.
+  assert.equal(tipDozvoljenNaStranici("naslov", "stranica:o-nama"), false);
+});
+
+test("zona iznad podnožja ne prima tipove koji čitaju katalog", () => {
+  // Ta zona stoji na SVAKOJ stranici prodavnice, pa bi blok proizvoda tamo
+  // značio upit ka bazi na svakom pogotku.
+  for (const kind of ["proizvodi", "taksonomija", "clanci", "utisci", "odbrojavanje"]) {
+    assert.equal(tipDozvoljenNaStranici(kind, "prefooter"), false, kind);
+    assert.equal(tipDozvoljenNaStranici(kind, "home"), true, kind);
+  }
+});
+
+test("jeftini tipovi smeju u svaku zonu, uključujući onu iznad podnožja", () => {
+  for (const kind of ["naslov", "hero", "tekst", "tabela", "cenovnik", "traka"]) {
+    for (const zona of STRANICE) {
+      assert.equal(tipDozvoljenNaStranici(kind, zona), true, `${kind} / ${zona}`);
+    }
+  }
+});
+
+test("svaki tip sme bar u jednu zonu", () => {
+  for (const tip of TIPOVI_SEKCIJA) {
+    const zone = STRANICE.filter((zona) => tipDozvoljenNaStranici(tip.kind, zona));
+    assert.ok(zone.length > 0, `${tip.kind} nema nijednu zonu`);
   }
 });

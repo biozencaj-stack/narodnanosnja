@@ -15,6 +15,7 @@ import { LocalProductCard } from "@/components/product/LocalProductCard";
 import { ProductGridSkeleton } from "@/components/ui/Skeleton";
 import { Pagination } from "@/components/ui/Pagination";
 import { BreadcrumbJsonLd } from "@/components/seo";
+import { RenderSekcije } from "@/components/sekcije";
 import { fetchProducts, fetchBrands } from "@/lib/products";
 import type { ProductCardData } from "@/lib/products";
 
@@ -169,6 +170,10 @@ export default async function KatalogPage({ searchParams }: PageProps) {
 
       <MobileFilters brands={localizedBrands} />
 
+      {/* Zone kojima upravlja admin. Prazne su dok admin ništa ne postavi i
+          tada ne renderuju nijedan element — vidi `RenderSekcije`. */}
+      <RenderSekcije pageKey="catalog-iznad" />
+
       <div className="border-b border-stone-200 bg-stone-50">
         <div className="container-wide py-5 lg:py-6">
           <nav className="flex items-center gap-2 text-sm text-stone-400 mb-3">
@@ -216,6 +221,8 @@ export default async function KatalogPage({ searchParams }: PageProps) {
           </div>
         </div>
       </div>
+
+      <RenderSekcije pageKey="catalog-ispod" />
     </>
   );
 }

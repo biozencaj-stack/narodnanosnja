@@ -119,9 +119,18 @@ async function ucitajSekcije(
   pageKey: string,
   nacrt: boolean,
 ): Promise<SekcijaZaPrikaz[]> {
-  const izBaze = nacrt
-    ? await citajNacrtSekcija(pageKey)
-    : await citajObjavljeneSekcije(pageKey);
+  let izBaze: Awaited<ReturnType<typeof citajObjavljeneSekcije>> = [];
+  try {
+    izBaze = nacrt
+      ? await citajNacrtSekcija(pageKey)
+      : await citajObjavljeneSekcije(pageKey);
+  } catch (greska) {
+    // Sekcije su sadržaj stranice, ali ne i uslov da stranica postoji. Ovo se
+    // najviše vidi na `app/not-found.tsx`: ona se iscrtava i pri izgradnji, kad
+    // baze nema, i mora da ostane 404 stranica a ne greška izgradnje.
+    console.error(`Ne mogu da učitam sekcije za „${pageKey}”:`, greska);
+    return podrazumevanRaspored(pageKey);
+  }
 
   if (izBaze.length > 0) {
     return izBaze.map((red) => ({

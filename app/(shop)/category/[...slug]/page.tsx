@@ -11,6 +11,7 @@ import {
 } from "@/components/filter";
 import { LocalProductCard } from "@/components/product/LocalProductCard";
 import { ProductGridSkeleton } from "@/components/ui/Skeleton";
+import { RenderSekcije } from "@/components/sekcije";
 import { Pagination } from "@/components/ui/Pagination";
 import { fetchProducts, fetchBrands } from "@/lib/products";
 import { prisma } from "@/lib/db";
@@ -191,7 +192,12 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
   breadcrumbs.push({ name: catName, href: `/category/${slug.join("/")}` });
 
   return (
-    <div className="container-wide py-8 lg:py-12">
+    <>
+      {/* Zone kojima upravlja admin. Stoje IZVAN `container-wide`, jer svaka
+          sekcija nosi sopstvenu podlogu preko cele širine i sopstveni kontejner. */}
+      <RenderSekcije pageKey="category-iznad" />
+
+      <div className="container-wide py-8 lg:py-12">
       {/* Breadcrumbs */}
       <nav className="mb-6 text-sm text-text-muted">
         <ol className="flex items-center gap-1.5 flex-wrap">
@@ -244,6 +250,9 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
           locale={locale}
         />
       </Suspense>
-    </div>
+      </div>
+
+      <RenderSekcije pageKey="category-ispod" />
+    </>
   );
 }

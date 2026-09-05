@@ -15,6 +15,7 @@ import { PoljeObrasca } from "./PoljeObrasca";
 import { ListaObrasca } from "./ListaObrasca";
 import {
   poljaTipa,
+  tipDozvoljenNaStranici,
   tipJeDostupan,
   TIPOVI_SEKCIJA,
   tipSekcije,
@@ -317,6 +318,7 @@ export function EkranSekcija({ pageKey }: { pageKey: string }) {
           onVidljivost={promeniVidljivost}
           onDupliraj={dupliraj}
           onObrisi={obrisi}
+          pageKey={pageKey}
           onDodaj={dodaj}
         />
 
@@ -347,6 +349,7 @@ export function EkranSekcija({ pageKey }: { pageKey: string }) {
 }
 
 function SpisakSekcija({
+  pageKey,
   sekcije,
   izabrana,
   zauzeto,
@@ -357,6 +360,7 @@ function SpisakSekcija({
   onObrisi,
   onDodaj,
 }: {
+  pageKey: string;
   sekcije: Sekcija[];
   izabrana: string | null;
   zauzeto: boolean;
@@ -367,10 +371,20 @@ function SpisakSekcija({
   onObrisi: (sekcija: Sekcija) => void;
   onDodaj: (kind: string) => void;
 }) {
-  // Prvi DOSTUPAN tip, ne prosto prvi: inače bi dugme „dodaj” podrazumevano
+  // Tip mora biti i uključen prekidačem i dozvoljen u OVOJ zoni: blok proizvoda
+  // ne ide iznad podnožja, jer ta zona stoji na svakoj stranici.
+  const ponuda = TIPOVI_SEKCIJA.map((tip) => ({
+    tip,
+    razlog: !tipDozvoljenNaStranici(tip.kind, pageKey)
+      ? " — nije za ovu zonu"
+      : !jeDostupan(tip.kind)
+        ? " — isključeno u podešavanjima"
+        : "",
+  }));
+
+  // Prvi PONUĐEN tip, ne prosto prvi: inače bi dugme „dodaj” podrazumevano
   // nudilo tip koji ruta odbija.
-  const prviDostupan =
-    TIPOVI_SEKCIJA.find((tip) => jeDostupan(tip.kind))?.kind ?? "";
+  const prviDostupan = ponuda.find((stavka) => stavka.razlog === "")?.tip.kind ?? "";
   const [noviTip, setNoviTip] = useState(prviDostupan);
 
   return (
@@ -385,18 +399,15 @@ function SpisakSekcija({
             onChange={(dogadjaj) => setNoviTip(dogadjaj.target.value)}
             className="flex-1 rounded-lg border border-stone-300 px-2 py-1.5 text-sm"
           >
-            {TIPOVI_SEKCIJA.map((tip) => {
-              // Ugašen prekidač se PRIKAZUJE kao onemogućen izbor sa razlogom.
-              // Ranije je takva sekcija prosto nestajala sa sajta bez poruke,
-              // pa je izgledalo kao kvar.
-              const dostupan = jeDostupan(tip.kind);
-              return (
-                <option key={tip.kind} value={tip.kind} disabled={!dostupan}>
-                  {tip.naziv}
-                  {dostupan ? "" : " — isključeno u podešavanjima"}
-                </option>
-              );
-            })}
+            {ponuda.map(({ tip, razlog }) => (
+              // Nedostupan tip se PRIKAZUJE kao onemogućen izbor sa razlogom.
+              // Ranije je takva sekcija prosto nestajala sa sajta bez poruke, pa
+              // je izgledalo kao kvar.
+              <option key={tip.kind} value={tip.kind} disabled={razlog !== ""}>
+                {tip.naziv}
+                {razlog}
+              </option>
+            ))}
           </select>
           <button
             type="button"
