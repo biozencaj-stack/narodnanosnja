@@ -97,6 +97,34 @@ Invarijanta `createdAt <= emailVerified` je bila i ranije proverena, ali samo u
 integracionom testu koji ide putanjom **ažuriranja** postojećeg naloga, gde je
 `createdAt` stariji. Putanja pravljenja novog naloga nije bila pokrivena. Sada
 je pokriva `lib/auth/privileged-account.test.ts`, bez baze.
+## Slike i kretanje
+
+**Granice otpremanja dolaze iz profila**, ne iz tvrdo upisanog broja.
+`lib/media/profili.ts` drži po jedan profil za svaku fasciklu: zatečene
+(`products`, `articles`, `categories`, `brands`) ostaju na 1 MB i 800×800, a
+`sekcije-hero` prima 4 MB i 2000×1200. Isti modul čita i serverska ruta i
+`ImageUpload` u pregledaču — zato u njemu nema uvoza React-a, Prisme ni Next-a.
+Ako granicu promeniš samo na jednom mestu, veća vrednost na serveru postane
+nedostižna jer je klijent odbije ranije.
+
+**`quality` mora ostati u `[70, 75]`.** Ispod 70 se na tkaninama i vezu vide
+artefakti, iznad 75 fajl raste bez vidljive razlike. `next.config.ts` to već
+ograničava kroz `qualities`, ali **tiho** — vrednost van spiska ne obara
+izgradnju. Zato pravilo drži i test (`lib/media/kvalitet-slika.test.ts`), koji
+pada sa imenom fajla i linijom.
+
+**Svaki karusel sa autoplayem mora imati vidljivo dugme za pauzu.** WCAG 2.2.2
+traži mehanizam za zaustavljanje kretanja dužeg od pet sekundi.
+`stopOnInteraction` iz embla-e ga ne zamenjuje — staje tek kad posetilac
+dodirne sam sadržaj. Pauza na hover takođe ne prolazi: na dodirnom ekranu hover
+ne postoji, a tastatura ga ne pokreće. Koristi `usePauzaKarusela` i
+`DugmePauze`; pravilo čuva `lib/media/autoplay-pauza.test.ts`.
+
+**Semafor nad `sharp` obradama nije zaštita od DoS-a.** `lib/media/semafor.ts` i
+`checkRateLimit` žive u memoriji **jednog procesa**: pod PM2 cluster režimom
+svaka instanca ima svoj brojač, a restart briše brojanje. Štite od nenamerne
+preopterećenosti — administrator koji izabere trideset slika odjednom — i to je
+sve što tvrde.
 
 ## Zamke koje su već jednom pojele vreme
 
