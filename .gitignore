@@ -34,6 +34,8 @@ yarn-error.log*
 /coverage/
 /playwright-report/
 /test-results/
+# Snimljena Playwright sesija administratora — kredencijal, nikad u git
+/e2e/.auth/
 /.turbo/
 /.vercel/
 
