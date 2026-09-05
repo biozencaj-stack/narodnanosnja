@@ -83,19 +83,92 @@ export type VrednostVeze = {
   noviTab: boolean;
 };
 
-/** Izvori proizvoda koje faza 1 podržava. Ostale donosi blok proizvoda. */
+/**
+ * Izvori proizvoda za blok proizvoda.
+ *
+ * `izdvojenoISnizeno` je zatečena podrazumevana vrednost iz faze 1 i ostaje u
+ * listi zauvek: redovi upisani pre faze 4 je nose, a uklanjanje vrednosti iz
+ * liste bi ih pri prvom čitanju tiho vratilo na drugi izvor.
+ *
+ * Redosled u listi je redosled u admin biraču, pa ide od najčešćeg ka najređem.
+ */
 export const IZVORI_PROIZVODA = [
   "izdvojeno",
   "snizeno",
   "izdvojenoISnizeno",
+  "novo",
+  "najnovije",
+  "kategorija",
+  "brend",
+  "najboljeOcenjeni",
+  "izabrani",
 ] as const;
 
 export type IzvorProizvoda = (typeof IZVORI_PROIZVODA)[number];
 
+/** Natpisi izvora u admin obrascu. Ključ enuma nije tekst za čoveka. */
+export const NATPISI_IZVORA: Record<IzvorProizvoda, string> = {
+  izdvojeno: "Izdvojeni proizvodi",
+  snizeno: "Na sniženju",
+  izdvojenoISnizeno: "Izdvojeni pa sniženi",
+  novo: "Označeni kao novo",
+  najnovije: "Najskorije dodati",
+  kategorija: "Iz jedne kategorije",
+  brend: "Jednog brenda",
+  najboljeOcenjeni: "Najbolje ocenjeni",
+  izabrani: "Ručno izabrani",
+};
+
+/**
+ * Sortiranja bloka.
+ *
+ * Sortiranje po nazivu namerno NE postoji: `Product.name` je `Json` kolona
+ * oblika `{ sr, en }`, pa bi `ORDER BY name` sortirao po tekstu celog JSON
+ * zapisa, a ne po srpskom nazivu. To bi izgledalo kao azbučni red i ne bi bilo
+ * — a tiho pogrešan red je gori od nepostojeće opcije.
+ */
+export const SORTIRANJA_PROIZVODA = [
+  "najnovije",
+  "cenaRastuce",
+  "cenaOpadajuce",
+] as const;
+
+export type SortProizvoda = (typeof SORTIRANJA_PROIZVODA)[number];
+
+export const NATPISI_SORTIRANJA: Record<SortProizvoda, string> = {
+  najnovije: "Najnovije prvo",
+  cenaRastuce: "Cena rastuće",
+  cenaOpadajuce: "Cena opadajuće",
+};
+
+/**
+ * Vrednost polja `upitProizvoda`.
+ *
+ * `kategorija`, `brend` i `izabrani` se čuvaju i kad izabrani izvor ne koristi
+ * to polje, da se izbor ne izgubi kad admin privremeno prebaci izvor. Pri
+ * čitanju ih `normalizujUpit` briše, pa dva bloka koja se razlikuju samo po
+ * nekorišćenom polju i dalje dele isti upit ka bazi.
+ */
 export type VrednostUpitaProizvoda = {
   izvor: IzvorProizvoda;
   broj: number;
+  sort: SortProizvoda;
+  /** Slug kategorije; koristi se samo uz izvor `kategorija`. */
+  kategorija: string;
+  /** Slug brenda; koristi se samo uz izvor `brend`. */
+  brend: string;
+  /** Slugovi proizvoda, redom kojim ih je admin poređao; samo uz `izabrani`. */
+  izabrani: string[];
 };
+
+/** Najviše proizvoda u jednom bloku. Ista granica važi i u validatoru. */
+export const MAX_PROIZVODA_U_BLOKU = 24;
+
+/**
+ * Oblik sluga kategorije, brenda i proizvoda. Namerno uži od svega što baza
+ * dozvoljava: vrednost ulazi u `where` klauzulu sastavljenu od admin unosa.
+ */
+export const OBRAZAC_SLUGA = /^[a-z0-9][a-z0-9-]{0,127}$/;
 
 /* ------------------------------------------------------------------ *
  * Definicija polja

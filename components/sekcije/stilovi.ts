@@ -107,6 +107,50 @@ const MREZE: Record<VrstaMreze, { razmak: string; kolone: Record<string, string>
   },
 };
 
+/**
+ * Mreža i klizač bloka proizvoda, sa zasebnim brojem kolona na telefonu.
+ *
+ * Tailwind ne vidi klase sastavljene u vreme izvršavanja, pa se svaka
+ * kombinacija ispisuje doslovno. Kombinacija „2 na telefonu” daje tačno one
+ * klase koje je blok imao pre faze 4, pa zatečeni redovi izgledaju isto.
+ */
+const MREZA_PROIZVODA: Record<string, Record<string, string>> = {
+  "1": {
+    "2": "grid-cols-1 sm:grid-cols-2",
+    "3": "grid-cols-1 sm:grid-cols-2 md:grid-cols-3",
+    "4": "grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4",
+  },
+  "2": {
+    "2": "grid-cols-2",
+    "3": "grid-cols-2 md:grid-cols-3",
+    "4": "grid-cols-2 md:grid-cols-3 lg:grid-cols-4",
+  },
+};
+
+const KLIZAC_PROIZVODA: Record<string, Record<string, string>> = {
+  "1": {
+    "2": "basis-full sm:basis-1/2",
+    "3": "basis-full sm:basis-1/2 md:basis-1/3",
+    "4": "basis-full sm:basis-1/2 md:basis-1/3 lg:basis-1/4",
+  },
+  "2": {
+    "2": "basis-1/2",
+    "3": "basis-1/2 md:basis-1/3",
+    "4": "basis-1/2 md:basis-1/3 lg:basis-1/4",
+  },
+};
+
+export function klaseMrezeProizvoda(kolone: string, koloneMobilno: string): string {
+  const red = MREZA_PROIZVODA[koloneMobilno] ?? MREZA_PROIZVODA["2"];
+  return spoji("grid", MREZE.proizvodi.razmak, red[kolone] ?? red["4"]);
+}
+
+/** Širina jednog polja klizača. Razmak nosi `pl-*` na samom polju. */
+export function klaseKlizacaProizvoda(kolone: string, koloneMobilno: string): string {
+  const red = KLIZAC_PROIZVODA[koloneMobilno] ?? KLIZAC_PROIZVODA["2"];
+  return spoji("min-w-0 shrink-0 grow-0", red[kolone] ?? red["4"]);
+}
+
 export function klaseMreze(vrsta: VrstaMreze, kolone: string): string {
   const mreza = MREZE[vrsta];
   return spoji("grid", mreza.razmak, mreza.kolone[kolone] ?? mreza.kolone["4"]);

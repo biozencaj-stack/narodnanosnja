@@ -3,9 +3,9 @@
 import { LocalizedInput } from "@/components/admin/LocalizedInput";
 import { LocalizedTextarea } from "@/components/admin/LocalizedTextarea";
 import { BogatiTekst } from "@/components/admin/BogatiTekst";
-import { MedijatekaPicker, type VrednostMedija } from "./MedijatekaPicker";
+import { MedijatekaPicker } from "./MedijatekaPicker";
+import { PoljeUpitaProizvoda } from "./PoljeUpitaProizvoda";
 import {
-  IZVORI_PROIZVODA,
   TOKENI_POZADINE,
   TOKENI_UKRASA,
   type Lokalizovano,
@@ -297,45 +297,17 @@ export function PoljeObrasca({
       );
     }
 
-    case "upitProizvoda": {
-      const upit =
-        typeof vrednost === "object" && vrednost !== null
-          ? (vrednost as Record<string, unknown>)
-          : {};
+    case "upitProizvoda":
       return (
         <Natpis polje={polje}>
-          <div className="flex gap-2">
-            <select
-              value={typeof upit.izvor === "string" ? upit.izvor : "izdvojeno"}
-              disabled={disabled}
-              onChange={(dogadjaj) =>
-                onChange({ ...upit, izvor: dogadjaj.target.value })
-              }
-              className={KLASA_UNOSA}
-            >
-              {IZVORI_PROIZVODA.map((izvor) => (
-                <option key={izvor} value={izvor}>
-                  {izvor}
-                </option>
-              ))}
-            </select>
-            <input
-              type="number"
-              min={1}
-              max={24}
-              value={typeof upit.broj === "number" ? upit.broj : 4}
-              disabled={disabled}
-              onChange={(dogadjaj) =>
-                onChange({ ...upit, broj: Number(dogadjaj.target.value) })
-              }
-              className={`${KLASA_UNOSA} w-24`}
-              aria-label="Broj proizvoda"
-            />
-          </div>
+          <PoljeUpitaProizvoda
+            vrednost={vrednost}
+            disabled={disabled}
+            onChange={onChange}
+          />
           {greskaIspod}
         </Natpis>
       );
-    }
 
     case "medij":
       return (

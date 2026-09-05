@@ -14,6 +14,7 @@ import {
   lok,
   prazanTekst,
 } from "./polja";
+import { PODRAZUMEVAN_UPIT } from "./upit-proizvoda";
 import {
   PODRAZUMEVAN_OKVIR,
   POLJA_OKVIRA,
@@ -53,6 +54,15 @@ const KOLONE = [
   { vrednost: "2", natpis: "2 u redu" },
   { vrednost: "3", natpis: "3 u redu" },
   { vrednost: "4", natpis: "4 u redu" },
+] as const;
+
+/**
+ * Kolone na telefonu se biraju odvojeno od desktopa. Jedna kolona daje veliku
+ * fotografiju i koristi se za malobrojne, skupe komade; dve su podrazumevane.
+ */
+const KOLONE_MOBILNO = [
+  { vrednost: "1", natpis: "1 u redu" },
+  { vrednost: "2", natpis: "2 u redu" },
 ] as const;
 
 const STILOVI_DUGMETA = [
@@ -195,27 +205,47 @@ const STAVKE: TipSekcije = {
 
 const TAKSONOMIJA: TipSekcije = {
   kind: "taksonomija",
-  naziv: "Kategorije",
+  naziv: "Kategorije i brendovi",
   opis:
-    "Kartice kategorija koje su u admin panelu označene za prikaz u navigaciji.",
+    "Kartice kategorija označenih za navigaciju, ili kartice brendova. " +
+    "Prikazuje sliku koju admin već unosi uz kategoriju odnosno brend.",
   grupa: "katalog",
   faza: 1,
   polja: [
+    {
+      kljuc: "izvor",
+      natpis: "Šta se prikazuje",
+      tip: "izbor",
+      opcije: [
+        { vrednost: "kategorije", natpis: "Kategorije iz navigacije" },
+        { vrednost: "brendovi", natpis: "Brendovi sa bar jednim proizvodom" },
+      ],
+    },
     { kljuc: "kolone", natpis: "Kolona u redu", tip: "izbor", opcije: KOLONE },
     {
       kljuc: "broj",
-      natpis: "Najviše kategorija",
+      natpis: "Najviše kartica",
       tip: "broj",
       min: 1,
       max: 24,
       korak: 1,
     },
+    {
+      kljuc: "podkategorije",
+      natpis: "Veze ka podkategorijama",
+      opis:
+        "Ispod naziva kategorije stoje i njene podkategorije. Brendovi nemaju " +
+        "podelu, pa im ovo ne menja ništa.",
+      tip: "prekidac",
+    },
   ],
   podrazumevano: {
     ...PODRAZUMEVAN_OKVIR,
     razmak: "srednji",
+    izvor: "kategorije",
     kolone: "3",
     broj: 6,
+    podkategorije: false,
   },
   stranice: STRANICE,
   asinhrona: true,
@@ -245,26 +275,74 @@ const PROIZVODI: TipSekcije = {
   kind: "proizvodi",
   naziv: "Blok proizvoda",
   opis:
-    "Proizvodi iz kataloga po zadatom izvoru. Cena se uvek čita sa servera pri " +
-    "prikazu — sekcija je ne pamti.",
+    "Proizvodi iz kataloga po zadatom izvoru, kao mreža ili karusel. Cena se " +
+    "uvek čita sa servera pri prikazu — sekcija je ne pamti.",
   grupa: "katalog",
-  faza: 1,
+  faza: 4,
   polja: [
     { kljuc: "upit", natpis: "Izvor proizvoda", tip: "upitProizvoda" },
+    {
+      kljuc: "tabovi",
+      natpis: "Tabovi",
+      opis:
+        "Kad ima bar dva taba, gornji izvor se ne koristi — posetilac bira " +
+        "između tabova. Jedan tab nije tab, pa se tada prikazuje samo gornji izvor.",
+      tip: "lista",
+      maxStavki: 4,
+      natpisStavke: "Tab",
+      stavka: [
+        { kljuc: "naslov", natpis: "Natpis taba", tip: "tekstLok", maxDuzina: 40, obavezno: true },
+        { kljuc: "upit", natpis: "Izvor proizvoda", tip: "upitProizvoda" },
+      ],
+    },
+    {
+      kljuc: "prikaz",
+      natpis: "Prikaz",
+      tip: "izbor",
+      opcije: [
+        { vrednost: "mreza", natpis: "Mreža" },
+        { vrednost: "karusel", natpis: "Karusel koji klizi" },
+      ],
+    },
     { kljuc: "kolone", natpis: "Kolona u redu", tip: "izbor", opcije: KOLONE },
+    {
+      kljuc: "koloneMobilno",
+      natpis: "Kolona na telefonu",
+      tip: "izbor",
+      opcije: KOLONE_MOBILNO,
+    },
+    {
+      kljuc: "oznake",
+      natpis: "Oznake „Novo” i popust",
+      opis: "Isključi kad blok stoji uz drugi u kom oznake već stoje.",
+      tip: "prekidac",
+    },
+    {
+      kljuc: "zelje",
+      natpis: "Dugme „sačuvaj u želje”",
+      opis:
+        "Isključi kad blok služi kao izlog, a ne kao mesto sa kog se kupuje. " +
+        "Ako je funkcija želja ugašena u podešavanjima, dugmeta nema ni ovako.",
+      tip: "prekidac",
+    },
   ],
   podrazumevano: {
     ...PODRAZUMEVAN_OKVIR,
     razmak: "srednji",
-    upit: { izvor: "izdvojenoISnizeno", broj: 8 },
+    upit: { ...PODRAZUMEVAN_UPIT },
+    tabovi: [],
+    prikaz: "mreza",
     kolone: "4",
+    koloneMobilno: "2",
+    oznake: true,
+    zelje: true,
   },
   stranice: STRANICE,
   asinhrona: true,
   kostur: "mrezaProizvoda",
   /**
-   * Početna je `force-dynamic`, pa je svaki blok jedan nekeširani upit po
-   * zahtevu, na serveru koji deli mašinu sa još tri aplikacije. Ograničenje
+   * Početna je `force-dynamic`, pa je svaki blok najmanje jedan nekeširani upit
+   * po zahtevu, na serveru koji deli mašinu sa još tri aplikacije. Ograničenje
    * sprovodi ruta, ne savet u sučelju.
    */
   maxPoStrani: 3,
