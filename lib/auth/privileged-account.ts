@@ -53,6 +53,19 @@ export interface PrivilegedAccountCreateWrite
   email: string;
   firstName: string;
   lastName: string;
+  /**
+   * Isti trenutak kao `emailVerified`, i to namerno.
+   *
+   * Bez njega `createdAt` dobija podrazumevanu vrednost koja nastaje POSLE
+   * očitavanja `clock_timestamp()`, pa ispadne da je nalog verifikovan pre nego
+   * što je nastao. `evaluateVerifiedLoginPolicy` takav snimak odbija kao
+   * nemoguć i prijava puca sa `POLICY_DECISION / INTERNAL_FAILURE` — dakle
+   * nalog se ne može prijaviti nikada, a poruka izgleda kao kvar politike.
+   *
+   * Privilegovan nalog se pravi i verifikuje u istoj transakciji, pa je jedan
+   * isti trenutak i tačan opis onoga što se dogodilo.
+   */
+  createdAt: Date;
 }
 
 export interface PrivilegedAccountTransaction {
@@ -199,6 +212,7 @@ export async function provisionPrivilegedAccount(
         email: prepared.normalizedEmail,
         firstName: prepared.role === "ADMIN" ? "Admin" : "Operator",
         lastName: DEFAULT_LAST_NAME,
+        createdAt: verifiedAt,
         ...write,
       });
       if (!createdUser.id) {
