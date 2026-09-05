@@ -783,6 +783,196 @@ const NEWSLETTER: TipSekcije = {
 };
 
 /* ------------------------------------------------------------------ *
+ * Faza 6 — mediji koji dodiruju CSP
+ * ------------------------------------------------------------------ */
+
+/**
+ * Slike u sekciji — WoodMart „Banners“, „Images gallery“, „Compare images“ i
+ * „Parallax Scrolling“ pod jednim tipom.
+ *
+ * Prikaz određuje koliko se slika koristi: `baner` i `parallax` uzimaju prvu,
+ * `uporedi` prve dve, `galerija` sve. Zasebni tipovi za svaki prikaz ne bi
+ * doneli nijedno polje koje ostali nemaju.
+ */
+const MEDIJ: TipSekcije = {
+  kind: "medij",
+  naziv: "Slike",
+  opis:
+    "Baner preko cele širine, galerija, poređenje pre/posle, ili slika koja se " +
+    "pomera pri skrolovanju.",
+  grupa: "sadrzaj",
+  faza: 6,
+  polja: [
+    {
+      kljuc: "prikaz",
+      natpis: "Prikaz",
+      tip: "izbor",
+      opcije: [
+        { vrednost: "baner", natpis: "Baner — jedna slika preko širine" },
+        { vrednost: "galerija", natpis: "Galerija — mreža slika" },
+        { vrednost: "uporedi", natpis: "Poređenje — prva i druga slika, sa klizačem" },
+        { vrednost: "parallax", natpis: "Parallax — slika se pomera pri skrolovanju" },
+      ],
+    },
+    {
+      kljuc: "slike",
+      natpis: "Slike",
+      opis:
+        "Za „poređenje“ prve dve su stanje PRE i POSLE, tim redom. Za baner i " +
+        "parallax koristi se samo prva.",
+      tip: "medijLista",
+      maxStavki: 12,
+    },
+    { kljuc: "kolone", natpis: "Kolona u redu (galerija)", tip: "izbor", opcije: KOLONE },
+    {
+      kljuc: "visina",
+      natpis: "Visina banera i parallaxa (px)",
+      tip: "broj",
+      min: 160,
+      max: 720,
+      korak: 20,
+    },
+    POLJE_DUGMADI,
+  ],
+  podrazumevano: {
+    ...PODRAZUMEVAN_OKVIR,
+    razmak: "srednji",
+    prikaz: "baner",
+    slike: [],
+    kolone: "3",
+    visina: 360,
+    dugmad: [],
+  },
+  stranice: STRANICE,
+  asinhrona: false,
+};
+
+/**
+ * Video — WoodMart „Video“.
+ *
+ * Čuva se SAMO YouTube identifikator, nikad cela adresa i nikad HTML iz
+ * editora: renderer sam sastavlja adresu, pa domen bira kod a ne podatak.
+ *
+ * `frame-src` u `next.config.ts` već dozvoljava `https://www.youtube.com`, pa
+ * ovaj tip NE traži izmenu CSP-a. Vimeo bi je tražio i ostaje odluka vlasnika,
+ * kao i otpremanje MP4 fajlova — vidi „Šta faza 6 nije donela“ u `CLAUDE.md`.
+ *
+ * Okvir ne učitava ništa sa YouTube-a dok posetilac ne pritisne „Pusti“:
+ * do tada stoji sopstvena slika ili YouTube-ov poster.
+ */
+const VIDEO: TipSekcije = {
+  kind: "video",
+  naziv: "Video",
+  opis:
+    "YouTube snimak. Ništa se sa YouTube-a ne učitava dok posetilac ne pritisne " +
+    "dugme — do tada stoji samo slika.",
+  grupa: "sadrzaj",
+  faza: 6,
+  polja: [
+    {
+      kljuc: "youtubeId",
+      natpis: "YouTube identifikator",
+      opis:
+        "Jedanaest znakova iz adrese, posle `v=` ili `youtu.be/`. Ne cela adresa.",
+      tip: "tekst",
+      maxDuzina: 11,
+    },
+    {
+      kljuc: "slika",
+      natpis: "Sopstvena naslovna slika",
+      opis: "Ako se izostavi, uzima se YouTube-ov poster.",
+      tip: "medij",
+    },
+    {
+      kljuc: "odnos",
+      natpis: "Odnos stranica",
+      tip: "izbor",
+      opcije: [
+        { vrednost: "16-9", natpis: "16:9 — vodoravno" },
+        { vrednost: "9-16", natpis: "9:16 — uspravno" },
+        { vrednost: "1-1", natpis: "1:1 — kvadrat" },
+      ],
+    },
+  ],
+  podrazumevano: {
+    ...PODRAZUMEVAN_OKVIR,
+    razmak: "srednji",
+    youtubeId: "",
+    slika: null,
+    odnos: "16-9",
+  },
+  stranice: STRANICE,
+  asinhrona: false,
+};
+
+/**
+ * Klikabilne tačke preko fotografije — WoodMart „Image Hotspot“.
+ *
+ * Tačka nosi SAMO slug proizvoda i položaj u procentima. Cena i naziv se čitaju
+ * sa servera pri prikazu, kao i u bloku proizvoda — sekcija cenu ne pamti.
+ * Procenti, a ne pikseli, da tačka ostane na istom mestu i kad se slika skalira.
+ */
+const HOTSPOT: TipSekcije = {
+  kind: "hotspot",
+  naziv: "Tačke na fotografiji",
+  opis: "Fotografija sa tačkama koje vode na proizvode, sa cenom sa servera.",
+  grupa: "katalog",
+  faza: 6,
+  polja: [
+    { kljuc: "slika", natpis: "Fotografija", tip: "medij" },
+    {
+      kljuc: "tacke",
+      natpis: "Tačke",
+      opis: "Klikni po slici da dodaš tačku, pa upiši slug proizvoda.",
+      tip: "tackeNaSlici",
+      maxStavki: 8,
+      kljucSlike: "slika",
+    },
+  ],
+  podrazumevano: {
+    ...PODRAZUMEVAN_OKVIR,
+    razmak: "srednji",
+    slika: null,
+    tacke: [],
+  },
+  stranice: STRANICE_BEZ_PREFOOTERA,
+  asinhrona: true,
+  kostur: "tekstualni",
+};
+
+/**
+ * Instagram — WoodMart „Instagram“.
+ *
+ * Slike se unose RUČNO. Graph API put nije ponuđen kao izvor: postojeća ruta je
+ * `force-dynamic` sa `cache: 'no-store'`, pa bi svaki pogodak početne otišao na
+ * Instagram, sa tokenom koji ističe. Dok ta ruta ne dobije sopstveni keš, ovaj
+ * tip ne sme da je zove — vidi `CLAUDE.md`.
+ */
+const INSTAGRAM: TipSekcije = {
+  kind: "instagram",
+  naziv: "Instagram",
+  opis: "Ručno izabrane slike sa vezom ka profilu. Ne poziva Instagram API.",
+  grupa: "sadrzaj",
+  faza: 6,
+  polja: [
+    { kljuc: "slike", natpis: "Slike", tip: "medijLista", maxStavki: 12 },
+    { kljuc: "kolone", natpis: "Kolona u redu", tip: "izbor", opcije: KOLONE },
+    { kljuc: "veza", natpis: "Vodi na profil", tip: "veza" },
+    { kljuc: "korisnickoIme", natpis: "Korisničko ime", tip: "tekst", maxDuzina: 40 },
+  ],
+  podrazumevano: {
+    ...PODRAZUMEVAN_OKVIR,
+    razmak: "srednji",
+    slike: [],
+    kolone: "4",
+    veza: null,
+    korisnickoIme: "",
+  },
+  stranice: STRANICE,
+  asinhrona: false,
+};
+
+/* ------------------------------------------------------------------ *
  * Javni registar
  * ------------------------------------------------------------------ */
 
@@ -794,12 +984,16 @@ export const TIPOVI_SEKCIJA: TipSekcije[] = [
   TABELA,
   CENOVNIK,
   TRAKA,
+  MEDIJ,
+  VIDEO,
+  INSTAGRAM,
   ODBROJAVANJE,
   NEWSLETTER,
   TAKSONOMIJA,
   PROIZVODI,
   CLANCI,
   UTISCI,
+  HOTSPOT,
 ];
 
 const PO_KLJUCU = new Map(TIPOVI_SEKCIJA.map((tip) => [tip.kind, tip]));

@@ -4,6 +4,7 @@ import { LocalizedInput } from "@/components/admin/LocalizedInput";
 import { LocalizedTextarea } from "@/components/admin/LocalizedTextarea";
 import { BogatiTekst } from "@/components/admin/BogatiTekst";
 import { MedijatekaPicker } from "./MedijatekaPicker";
+import { PoljeTackeNaSlici } from "./PoljeTackeNaSlici";
 import { PoljeUpitaProizvoda } from "./PoljeUpitaProizvoda";
 import {
   TOKENI_POZADINE,
@@ -28,6 +29,12 @@ interface PoljeProps {
   onChange: (vrednost: Vrednost) => void;
   greska?: string;
   disabled?: boolean;
+  /**
+   * Ostale vrednosti iste sekcije. Traži ih samo `tackeNaSlici`, kome je
+   * potrebna slika iz susednog polja da bi se po njoj uopšte moglo kliknuti.
+   * Polja koja to ne traže je ne dobijaju i ne smeju je koristiti.
+   */
+  susedneVrednosti?: Record<string, Vrednost>;
 }
 
 function prazanLok(): Lokalizovano {
@@ -74,7 +81,13 @@ function Natpis({
  * stranica bi vukla desetostruko veći fajl nego što joj treba.
  */
 function folderZaPolje(kljuc: string): string {
-  if (kljuc === "slike" || kljuc === "slika" || kljuc === "pozadinskaSlika") {
+  if (
+    kljuc === "slike" ||
+    kljuc === "slika" ||
+    kljuc === "pozadinskaSlika" ||
+    kljuc === "slikaPre" ||
+    kljuc === "slikaPosle"
+  ) {
     return "sekcije-hero";
   }
   if (kljuc === "ikona" || kljuc === "motiv" || kljuc === "oznaka") {
@@ -92,6 +105,7 @@ export function PoljeObrasca({
   onChange,
   greska,
   disabled = false,
+  susedneVrednosti,
 }: PoljeProps) {
   const greskaIspod = greska ? (
     <p className="text-xs text-red-600">{greska}</p>
@@ -365,6 +379,20 @@ export function PoljeObrasca({
         </Natpis>
       );
     }
+
+    case "tackeNaSlici":
+      return (
+        <Natpis polje={polje}>
+          <PoljeTackeNaSlici
+            vrednost={vrednost}
+            slika={susedneVrednosti?.[polje.kljucSlike]}
+            maxStavki={polje.maxStavki}
+            disabled={disabled}
+            onChange={(tacke) => onChange(tacke)}
+          />
+          {greskaIspod}
+        </Natpis>
+      );
 
     case "datum":
       return (

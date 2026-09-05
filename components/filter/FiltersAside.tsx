@@ -233,7 +233,7 @@ export function FiltersAside({ brands = [] }: FiltersAsideProps) {
               Pol
               <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
             </Accordion.Trigger>
-            <Accordion.Content className="pb-4 overflow-hidden data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+            <Accordion.Content className="animacija-harmonike pb-4 overflow-hidden">
               <div className="space-y-2">
                 {GENDER_OPTIONS.map((gender) => (
                   <label key={gender.value} className="flex items-center gap-3 cursor-pointer group">
@@ -259,7 +259,7 @@ export function FiltersAside({ brands = [] }: FiltersAsideProps) {
                 Brendovi
                 <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
               </Accordion.Trigger>
-              <Accordion.Content className="pb-4 overflow-hidden data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+              <Accordion.Content className="animacija-harmonike pb-4 overflow-hidden">
                 <div className="space-y-2 max-h-64 overflow-y-auto">
                   {brands.map((brand) => (
                     <label key={brand.id} className="flex items-center gap-3 cursor-pointer group">
@@ -285,7 +285,7 @@ export function FiltersAside({ brands = [] }: FiltersAsideProps) {
               Tip obuće
               <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
             </Accordion.Trigger>
-            <Accordion.Content className="pb-4 overflow-hidden data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+            <Accordion.Content className="animacija-harmonike pb-4 overflow-hidden">
               <div className="space-y-2">
                 {FOOTWEAR_TYPES.map((type) => (
                   <label key={type.value} className="flex items-center gap-3 cursor-pointer group">
@@ -310,7 +310,7 @@ export function FiltersAside({ brands = [] }: FiltersAsideProps) {
               Veličina
               <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
             </Accordion.Trigger>
-            <Accordion.Content className="pb-4 overflow-hidden data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+            <Accordion.Content className="animacija-harmonike pb-4 overflow-hidden">
               <div className="flex flex-wrap gap-2">
                 {SIZE_OPTIONS.map((size) => (
                   <button
@@ -336,7 +336,7 @@ export function FiltersAside({ brands = [] }: FiltersAsideProps) {
               Boja
               <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
             </Accordion.Trigger>
-            <Accordion.Content className="pb-4 overflow-hidden data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+            <Accordion.Content className="animacija-harmonike pb-4 overflow-hidden">
               <div className="flex flex-wrap gap-3">
                 {COLOR_OPTIONS.map((color) => (
                   <button
@@ -362,7 +362,7 @@ export function FiltersAside({ brands = [] }: FiltersAsideProps) {
               Cena
               <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
             </Accordion.Trigger>
-            <Accordion.Content className="pb-4 overflow-hidden data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+            <Accordion.Content className="animacija-harmonike pb-4 overflow-hidden">
               <div className="space-y-2">
                 {PRICE_RANGES.map((range) => (
                   <label key={range.value} className="flex items-center gap-3 cursor-pointer group">

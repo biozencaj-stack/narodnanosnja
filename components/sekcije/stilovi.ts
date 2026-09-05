@@ -61,6 +61,8 @@ export const KLASE_ANIMACIJE: Record<Animacija, string> = {
   bez: "",
   blago: "sekcija-ulaz-blago",
   odozdo: "sekcija-ulaz-odozdo",
+  sleva: "sekcija-ulaz-sleva",
+  uvecanje: "sekcija-ulaz-uvecanje",
 };
 
 /**

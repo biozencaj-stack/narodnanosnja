@@ -148,6 +148,104 @@
   width: max-content;
 }
 
+/* Animacije Radix komponenti — dijalog, fioka i harmonika.
+
+   Do faze 6 su `Dialog`, `Drawer`, `Accordion` i filter traka pisali klase
+   `animate-in`, `slide-in-from-*`, `zoom-in-95` i `animate-accordion-*`, koje
+   NIGDE nisu bile definisane: `tailwindcss-animate` nije zavisnost, a
+   `tailwind.config.ts` se u Tailwind-u 4 uopšte ne učitava bez `@config`.
+   Nijedna od njih nije radila i nijedna se nije žalila.
+
+   Ovde su namerno obična CSS pravila sa `[data-state]` selektorom, ne Tailwind
+   utility klase: stanje već stoji na elementu, pa varijanta nije potrebna, a
+   pravilo ne zavisi ni od jednog plugina koji bi sutra mogao da nestane. */
+
+@keyframes preklopUlaz {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes preklopIzlaz {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+@keyframes dijalogUlaz {
+  from { opacity: 0; transform: translate(-50%, -48%) scale(0.95); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+@keyframes dijalogIzlaz {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to   { opacity: 0; transform: translate(-50%, -48%) scale(0.95); }
+}
+
+@keyframes fiokaUlazDesno {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
+@keyframes fiokaIzlazDesno {
+  from { transform: translateX(0); }
+  to   { transform: translateX(100%); }
+}
+
+@keyframes fiokaUlazLevo {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
+}
+
+@keyframes fiokaIzlazLevo {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-100%); }
+}
+
+/* Radix meri sadržaj i postavlja `--radix-accordion-content-height`; bez te
+   promenljive visina se ne može animirati jer `auto` nije interpolabilan. */
+@keyframes harmonikaOtvori {
+  from { height: 0; }
+  to   { height: var(--radix-accordion-content-height); }
+}
+
+@keyframes harmonikaZatvori {
+  from { height: var(--radix-accordion-content-height); }
+  to   { height: 0; }
+}
+
+.animacija-preklopa[data-state="open"]   { animation: preklopUlaz 200ms ease-out both; }
+.animacija-preklopa[data-state="closed"] { animation: preklopIzlaz 200ms ease-in both; }
+
+.animacija-dijaloga[data-state="open"]   { animation: dijalogUlaz 200ms ease-out both; }
+.animacija-dijaloga[data-state="closed"] { animation: dijalogIzlaz 160ms ease-in both; }
+
+.animacija-fioke-desno[data-state="open"]   { animation: fiokaUlazDesno 300ms ease-out both; }
+.animacija-fioke-desno[data-state="closed"] { animation: fiokaIzlazDesno 250ms ease-in both; }
+
+.animacija-fioke-levo[data-state="open"]   { animation: fiokaUlazLevo 300ms ease-out both; }
+.animacija-fioke-levo[data-state="closed"] { animation: fiokaIzlazLevo 250ms ease-in both; }
+
+.animacija-harmonike[data-state="open"]   { animation: harmonikaOtvori 220ms ease-out; }
+.animacija-harmonike[data-state="closed"] { animation: harmonikaZatvori 200ms ease-in; }
+
+/* Ulazne animacije sekcija — katalog koji admin bira po sekciji. */
+@keyframes sekcijaUlazSleva {
+  from { opacity: 0; transform: translateX(-24px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes sekcijaUlazUvecanje {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.sekcija-ulaz-sleva {
+  animation: sekcijaUlazSleva 480ms ease-out both;
+}
+
+.sekcija-ulaz-uvecanje {
+  animation: sekcijaUlazUvecanje 460ms ease-out both;
+}
+
 /* ========================================
    BASE STYLES
    ======================================== */

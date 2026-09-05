@@ -24,6 +24,8 @@ import {
   OBRAZAC_DATUMA,
   OBRAZAC_PUTANJE_MEDIJA,
   OBRAZAC_SLUGA,
+  OBRAZAC_YOUTUBE_ID,
+  PRIKAZI_MEDIJA,
   SORTIRANJA_PROIZVODA,
   TOKENI_POZADINE,
   TOKENI_TEKSTA,
@@ -368,6 +370,38 @@ function validirajPolje(
       return { url, noviTab: sirovo.noviTab === true };
     }
 
+    case "tackeNaSlici": {
+      if (sirovo === null || sirovo === undefined) return [];
+      if (!Array.isArray(sirovo)) {
+        greske[put] = "Očekuje se lista tačaka";
+        return [];
+      }
+      if (sirovo.length > polje.maxStavki) {
+        greske[put] = `Najviše ${polje.maxStavki} tačaka`;
+      }
+      return sirovo.slice(0, polje.maxStavki).map((stavka, i) => {
+        const izvor = jeObicanObjekat(stavka) ? stavka : {};
+        // Procenti, ne pikseli: tačka mora ostati na istom mestu i kad se slika
+        // skalira. Van opsega 0–100 tačka bi se iscrtala izvan fotografije.
+        const x = citajBroj(izvor.x);
+        const y = citajBroj(izvor.y);
+        if (x === null || x < 0 || x > 100) greske[`${put}[${i}].x`] = "Očekuje se 0–100";
+        if (y === null || y < 0 || y > 100) greske[`${put}[${i}].y`] = "Očekuje se 0–100";
+        const proizvod =
+          typeof izvor.proizvod === "string" && OBRAZAC_SLUGA.test(izvor.proizvod)
+            ? izvor.proizvod
+            : "";
+        if (proizvod.length === 0) {
+          greske[`${put}[${i}].proizvod`] = "Upiši slug proizvoda";
+        }
+        return {
+          x: x !== null && x >= 0 && x <= 100 ? x : 0,
+          y: y !== null && y >= 0 && y <= 100 ? y : 0,
+          proizvod,
+        };
+      });
+    }
+
     case "datum": {
       if (typeof sirovo !== "string" || sirovo.length === 0) {
         if (polje.obavezno) greske[put] = "Trenutak je obavezan";
@@ -517,6 +551,30 @@ function proveriUnakrsnaPravila(
     const datum = vrednosti.datum;
     if (typeof datum !== "string" || datum.length === 0) {
       greske.datum = "Uz izvor „do unetog trenutka” trenutak je obavezan";
+    }
+  }
+
+  if (kind === "medij") {
+    const prikaz = vrednosti.prikaz;
+    if (!(PRIKAZI_MEDIJA as readonly unknown[]).includes(prikaz)) {
+      greske.prikaz = `Dozvoljeno: ${PRIKAZI_MEDIJA.join(", ")}`;
+    }
+    const slike = Array.isArray(vrednosti.slike) ? vrednosti.slike : [];
+    if (prikaz === "uporedi" && slike.length < 2) {
+      // Poređenje bez druge slike nije poređenje nego obična slika sa klizačem
+      // koji ništa ne otkriva.
+      greske.slike = "Poređenje traži bar dve slike: stanje pre i posle";
+    }
+  }
+
+  if (kind === "video") {
+    const id = vrednosti.youtubeId;
+    // Prazno je dozvoljeno — tek dodata sekcija još nije popunjena i tada
+    // jednostavno ne renderuje ništa, kao i svaki drugi tip. Odbija se samo
+    // POPUNJENA a neispravna vrednost: cela adresa umesto identifikatora bi
+    // značila da domen bira podatak, a ne renderer.
+    if (typeof id === "string" && id.length > 0 && !OBRAZAC_YOUTUBE_ID.test(id)) {
+      greske.youtubeId = "Očekuje se jedanaest znakova identifikatora, ne cela adresa";
     }
   }
 

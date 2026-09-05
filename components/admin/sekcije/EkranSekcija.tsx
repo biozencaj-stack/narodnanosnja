@@ -585,6 +585,7 @@ function ObrazacSekcije({
             key={polje.kljuc}
             polje={polje}
             vrednost={vrednosti[polje.kljuc]}
+            susedneVrednosti={vrednosti}
             greska={greske[polje.kljuc]}
             disabled={zauzeto}
             onChange={(vrednost) => onPromena(polje.kljuc, vrednost)}

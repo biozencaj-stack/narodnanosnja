@@ -91,6 +91,13 @@ const nextConfig: NextConfig = {
         hostname: '*.cdninstagram.com',
         pathname: '/**',
       },
+      {
+        // YouTube poster za tip sekcije `video`. Samo slika — `frame-src` za
+        // sam snimak već dozvoljava `https://www.youtube.com` i ne menja se.
+        protocol: 'https',
+        hostname: 'i.ytimg.com',
+        pathname: '/vi/**',
+      },
     ],
   },
   async headers() {

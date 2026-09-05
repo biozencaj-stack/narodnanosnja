@@ -184,6 +184,37 @@ export type IzvorStavki = (typeof IZVORI_STAVKI)[number];
  */
 export const OBRAZAC_DATUMA = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/;
 
+/* ------------------------------------------------------------------ *
+ * Mediji koji dodiruju CSP
+ * ------------------------------------------------------------------ */
+
+/**
+ * YouTube identifikator videa.
+ *
+ * Čuva se SAMO identifikator, nikad cela adresa i nikad HTML iz editora. Time
+ * je nemoguće da u bazu uđe `<iframe>` ka bilo kom drugom domenu: renderer sam
+ * sastavlja adresu i domen bira kod, ne podatak.
+ */
+export const OBRAZAC_YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
+
+/**
+ * Prikazi tipa `medij`.
+ *
+ * `parallax` je namerno preko `transform`, ne `background-attachment: fixed` —
+ * to na iOS Safariju ne radi i daje zaglavljenu sliku. Isključuje se ispod
+ * 1024 px, gde pomeranje pozadine samo troši bateriju.
+ */
+export const PRIKAZI_MEDIJA = ["baner", "galerija", "uporedi", "parallax"] as const;
+export type PrikazMedija = (typeof PRIKAZI_MEDIJA)[number];
+
+/** Tačka nad fotografijom, u procentima širine i visine. */
+export type VrednostTacke = {
+  x: number;
+  y: number;
+  /** Slug proizvoda; cena se čita sa servera pri prikazu. */
+  proizvod: string;
+};
+
 /** Najviše proizvoda u jednom bloku. Ista granica važi i u validatoru. */
 export const MAX_PROIZVODA_U_BLOKU = 24;
 
@@ -225,6 +256,7 @@ export type PoljeSekcije =
   | (OsnovaPolja & { tip: "veza" })
   | (OsnovaPolja & { tip: "upitProizvoda" })
   | (OsnovaPolja & { tip: "datum" })
+  | (OsnovaPolja & { tip: "tackeNaSlici"; maxStavki: number; kljucSlike: string })
   | (OsnovaPolja & {
       tip: "lista";
       stavka: PoljeSekcije[];

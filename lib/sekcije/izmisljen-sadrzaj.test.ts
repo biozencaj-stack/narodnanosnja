@@ -61,6 +61,8 @@ test("obrisane šablonske komponente se ne vraćaju", () => {
   for (const ime of [
     "Testimonials.tsx",
     "CountdownSale.tsx",
+    "InstagramFeed.tsx",
+    "ParallaxBanner.tsx",
     "FeaturedCarousel.tsx",
     "NewArrivals.tsx",
     "BrandSlider.tsx",
