@@ -116,6 +116,12 @@ je pokriva `lib/auth/privileged-account.test.ts`, bez baze.
   sa `stroke` nestane a oblik sa `fill` padne na crno. Ništa se ne prijavljuje —
   šara se prosto ne vidi. `lib/ukras/boja.ts` sada odbija sve što nije HEX i pada
   na podrazumevanu vrednost, uz upozorenje u razvoju.
+- **Iz fajla sa `"use server"` ne sme se ponovo izvoziti tip.** `export interface`
+  prolazi, ali `export type { Nesto }` Turbopack tretira kao Server Action; tip u
+  izgradnji ne postoji, pa `npm run build` pada sa „Export ... doesn't exist in
+  target module“ na svakoj stranici koja taj modul dodiruje. `npm run typecheck`
+  to ne vidi. Čiste funkcije i tipovi zato idu u zaseban modul — vidi
+  `lib/products-filter.ts` pored `lib/products.ts`.
 - **Portovi na serveru su zauzeti.** 3000 (shopdemo), 3001 (kore), 3002, 8000,
   8080. Ova prodavnica radi na **3007**, nginx je izlaže na **8090**.
 
