@@ -1,16 +1,18 @@
-export { HeroSection } from './HeroSection';
+/**
+ * Šablonske komponente koje još nisu prešle u sistem sekcija.
+ *
+ * Nijedna stranica ih trenutno ne renderuje osim `NewsletterSection`.
+ * Svaka odlazi u trenutku kad odgovarajući tip sekcije bude isporučen —
+ * vidi `docs/PLAN-SEKCIJE.md`, faze 3 do 6.
+ */
+
 export { HeroCarousel } from './HeroCarousel';
-export { CategoryCards } from './CategoryCards';
 export { CategoryBanners } from './CategoryBanners';
-export { MissionStatement } from './MissionStatement';
 export { FeaturedCarousel } from './FeaturedCarousel';
 export { NewsletterSection } from './NewsletterSection';
 export { InstagramFeed } from './InstagramFeed';
-export { TrustBar } from './TrustBar';
 export { BrandSlider, BrandGrid } from './BrandSlider';
 export { Testimonials } from './Testimonials';
-export { FeaturesStrip } from './FeaturesStrip';
 export { CountdownSale } from './CountdownSale';
 export { NewArrivals } from './NewArrivals';
 export { ParallaxBanner } from './ParallaxBanner';
-export { StatsSection } from './StatsSection';

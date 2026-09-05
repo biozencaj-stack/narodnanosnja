@@ -119,6 +119,30 @@
   }
 }
 
+/* Ulazne animacije sekcija.
+
+   `animation-fill-mode: both` je obavezan: bez njega element trepne u punoj
+   vidljivosti pre nego što animacija krene. Klasu dodaje tek
+   `components/sekcije/UOkviru.tsx`, i to samo sekciji koja je još ispod vidnog
+   polja, pa sadržaj bez JavaScript-a ostaje vidljiv. */
+@keyframes sekcijaUlazBlago {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes sekcijaUlazOdozdo {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.sekcija-ulaz-blago {
+  animation: sekcijaUlazBlago 420ms ease-out both;
+}
+
+.sekcija-ulaz-odozdo {
+  animation: sekcijaUlazOdozdo 480ms ease-out both;
+}
+
 .animate-marquee {
   animation: marquee 30s linear infinite;
   width: max-content;
