@@ -628,6 +628,57 @@ namerno odbija svaku bazu čiji naziv jasno ne sadrži `e2e`, `test` ili
 produkcijskom bazom. CI koristi zaseban PostgreSQL service i instalira Chromium
 pre browser testa.
 
+Playwright ima **tri projekta** i oni se ne mešaju:
+
+| Projekat | Šta vozi | Sesija |
+| --- | --- | --- |
+| `setup-admin` | `e2e/fixtures/admin.ts` | prijavljuje se i snima stanje |
+| `mobile-chromium` | sve osim `admin-*.spec.ts` (Pixel 7) | bez prijave |
+| `desktop-chromium` | samo `admin-*.spec.ts` | snimljena admin sesija |
+
+Novi test admin ekrana ide u fajl po obrascu `admin-<nesto>.spec.ts`, inače ga
+`desktop-chromium` neće pokupiti, a `mobile-chromium` bi ga vozio bez prijave i
+test bi pao na preusmerenju.
+
+`setup-admin` se prijavljuje kroz **stvarni obrazac**, ne ubacivanjem kolačića,
+pa provera pokriva i NextAuth tok. Snimljeno stanje ide u `e2e/.auth/admin.json`,
+koji je u `.gitignore` — to je kredencijal i nikad ne ulazi u git. Za provere
+koje moraju da se dogode bez prijave koristi se `PRAZNO_STANJE` iz
+`e2e/fixtures/admin-stanje.ts` uz `test.use({ storageState })`.
+
+Konstante harnesa stoje u `e2e/fixtures/admin-stanje.ts`, odvojeno od
+`e2e/fixtures/admin.ts`: konfiguraciju uvozi Playwright pre nego što sme da
+postoji ijedan prijavljen test, pa fajl koji zove `setup(...)` ne sme biti
+uvezen iz `playwright.config.ts`.
+
+ADMIN nalog pravi `scripts/seed-e2e.ts`, iza **istog** guarda kao ostatak seed-a,
+i to kroz `provisionPrivilegedAccount` — isti put kojim ide
+`scripts/create-admin.ts`, ne ručnim `prisma.user.create` sa bcrypt hešom. Tako
+nalog dobija isto verified stanje i očišćene tokene, pa verified-login politika
+ne obara prijavu. Email i lozinka se mogu promeniti kroz `E2E_ADMIN_EMAIL` i
+`E2E_ADMIN_PASSWORD`; podrazumevana lozinka je javna i važi samo za test bazu, a
+slaba vrednost obara seed pre nego što se baza uopšte otvori.
+
+`webServer.env` izričito postavlja `DEMO_MODE: "false"`. Demo režim blokira svaki
+API upis, pa bi admin tokovi u njemu tiho otkazali.
+
+**Ne čekaj da dugme za slanje nestane kao znak da je radnja gotova.** Obrazac za
+prijavu menja natpis dugmeta u „Prijava...” dok zahtev traje, pa uslov
+`getByRole("button", { name: "Prijavite se" }).toHaveCount(0)` postane tačan
+odmah po kliku — pre nego što NextAuth uopšte odgovori. Sledeći `goto` tada
+krene bez kolačića sesije, proxy ga ispravno vrati na `/login`, a prekinuti
+zahtev ostavi `ECONNRESET` u dnevniku servera; greška izgleda kao pokvarena
+autorizacija, a zapravo je pogrešno čekanje. Čeka se odgovor
+`/api/auth/callback/credentials` (čekanje se postavlja **pre** klika, da ne
+promakne), pa stvarni odlazak sa `/login`. Isto važi za svako dugme sa
+stanjem učitavanja.
+
+Odbijena prijava takođe vraća **200** — greška je u telu odgovora, ne u statusu.
+Zato `ok()` nije dokaz uspeha; dokaz je da je stranica napustila `/login`. Iz
+istog razloga `page.goto("/admin")` može vratiti `ok()` iako je posetilac
+preusmeren na prijavu: preusmerenje se završava statusom 200, pa se adresa mora
+proveriti zasebno.
+
 Demo seed ima još stroži opt-in: `npm run db:seed-demo` radi samo uz
 `DEMO_DATABASE_SEED=true`, validan PostgreSQL `DATABASE_URL` čiji naziv baze
 sadrži odvojen marker `demo`, `e2e`, `test` ili `provera`, a ne sadrži `prod`,
