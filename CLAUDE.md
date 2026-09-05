@@ -110,6 +110,12 @@ je pokriva `lib/auth/privileged-account.test.ts`, bez baze.
 - **Podrazumevana paleta stoji u CSS-u, runtime paleta u Settings.** Admin
   vrednosti se postavljaju kao CSS promenljive iz `app/layout.tsx`; pri
   dodavanju novog semantičkog tokena dopuni i registry i `storeThemeStyle`.
+- **Šara i traka primaju samo doslovan HEX.** `components/ukras` crta SVG unutar
+  `data:` URI-ja, a to je zaseban dokument u kome CSS promenljive stranice ne
+  postoje: `var(--color-zlatna)` tamo nije boja nego neispravan paint, pa linija
+  sa `stroke` nestane a oblik sa `fill` padne na crno. Ništa se ne prijavljuje —
+  šara se prosto ne vidi. `lib/ukras/boja.ts` sada odbija sve što nije HEX i pada
+  na podrazumevanu vrednost, uz upozorenje u razvoju.
 - **Portovi na serveru su zauzeti.** 3000 (shopdemo), 3001 (kore), 3002, 8000,
   8080. Ova prodavnica radi na **3007**, nginx je izlaže na **8090**.
 
