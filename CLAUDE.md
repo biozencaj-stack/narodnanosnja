@@ -195,6 +195,12 @@ Mapiranje koje nije očigledno:
 Arhitektonske granice platforme i redosled narednih faza su u
 `docs/ARCHITECTURE-V2.md`.
 
+Rad na sekcijama stranica: plan i istraživanje u `docs/PLAN-SEKCIJE.md`, dnevnik
+izvršenja sa presekom na 4. 9. 2026. u
+`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-09-04.md`. Drugi dokument nabraja i šta
+**nije** provereno — pročitaj taj odeljak pre nego što se osloniš na bilo koju
+tvrdnju o ponašanju nad bazom.
+
 `prisma/schema.prisma` sadrži novu, opcionu osnovu za više branši:
 
 - `ProductType` i tipizovane definicije/vrednosti atributa određuju dinamička
@@ -397,9 +403,10 @@ odluka dodeli jedan tačan staged deadline samo odgovarajućim legacy CUSTOMER
 nalozima; ne označava nikoga verifikovanim i sama ne menja login ponašanje.
 Isti metadata-only/`ACCESS EXCLUSIVE` oprez, `search_path`, 10s lock timeout,
 2min statement timeout, restore-clone i maintenance pravila važe i za nju.
-Aktivni lanac zato ima sedam migracija, dok je na produkciji dokazano samo
-ranijih četiri. Sve tri auth expand migracije ostaju neprimenjene na produkciju
-u ovom preseku.
+Aktivni lanac zato ima osam migracija, dok je na produkciji dokazano samo
+ranijih četiri. Sve četiri auth expand migracije — token hash, verification
+cooldown, verified-login grace i authoritative sessions — ostaju neprimenjene
+na produkciju u ovom preseku.
 
 Registracija sada koristi centralni email normalizer, strogi request shape,
 trusted same-origin guard i centralnu bcrypt granicu od najviše 72 UTF-8 bajta.
@@ -1055,9 +1062,10 @@ sve ispod sebe. Sada postoje tri kostura, uključujući `tekstualni`.
       read-only prozorom; skripte postoje, ali produkcijski audit nije izvršen
 - [ ] Zasebno odobriti data remediation/backfill postojećeg `emailVerified` i
       tačnih legacy grace vrednosti; ne postoji automatski „svi su verified” put
-- [ ] Kontrolisano primeniti auth-token, verification-cooldown i verified-login
-      grace expand migracije uz backup/restore, lock plan i runtime dokaz;
-      aktivni lanac ima sedam migracija, produkcija je i dalje na četiri
+- [ ] Kontrolisano primeniti auth-token, verification-cooldown, verified-login
+      grace i authoritative-sessions expand migracije uz backup/restore, lock
+      plan i runtime dokaz; aktivni lanac ima osam migracija, produkcija je i
+      dalje na četiri
 - [ ] DB-backed revalidacija/revokacija rolling JWT sesija posle policy/grace
       promene, reset/change lozinke i role promene; do tada politika ostaje audit
 - [ ] Shared auth/reset/login limiter i eksplicitan trusted-proxy/client-IP
