@@ -1,10 +1,11 @@
 import { Suspense } from "react";
 import { getLocale } from "next-intl/server";
-import { ProductGridSkeleton } from "@/components/ui/Skeleton";
+import { ProductGridSkeleton, Skeleton } from "@/components/ui/Skeleton";
 import { normalizujSekciju } from "@/lib/sekcije/validacija";
 import { citajNacrtSekcija, citajObjavljeneSekcije } from "@/lib/db/sekcije";
 import { podrazumevanRaspored, type SekcijaZaPrikaz } from "@/lib/sekcije/podrazumevani-raspored";
-import { tipSekcije } from "@/lib/sekcije/registar";
+import { tipJeDostupan, tipSekcije } from "@/lib/sekcije/registar";
+import { storeCapabilities } from "@/lib/config/capabilities";
 import { KOMPONENTE_SEKCIJA } from "./mapa";
 
 /**
@@ -21,7 +22,14 @@ import { KOMPONENTE_SEKCIJA } from "./mapa";
  *    vraćanja koda unazad, kad podaci znaju za tip koji kod još nema.
  */
 
-function Kostur({ vrsta }: { vrsta: "mrezaProizvoda" | "mrezaKartica" }) {
+/**
+ * Rezervni sadržaj dok se asinhrona sekcija učitava.
+ *
+ * Postoji da stranica ne poskoči kad sekcija stigne. `mrezaKartica` je ranije
+ * vraćala `null`, pa je taj kostur bio samo deklaracija bez ijednog piksela —
+ * sekcija bi se pojavila niotkuda i gurnula sve ispod sebe.
+ */
+function Kostur({ vrsta }: { vrsta: "mrezaProizvoda" | "mrezaKartica" | "tekstualni" }) {
   if (vrsta === "mrezaProizvoda") {
     return (
       <section className="bg-background py-14 lg:py-20">
@@ -31,7 +39,28 @@ function Kostur({ vrsta }: { vrsta: "mrezaProizvoda" | "mrezaKartica" }) {
       </section>
     );
   }
-  return null;
+
+  if (vrsta === "mrezaKartica") {
+    return (
+      <section className="bg-background py-14 lg:py-20" aria-hidden="true">
+        <div className="container-wide grid grid-cols-2 gap-4 md:grid-cols-3 lg:gap-6">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-44 rounded-2xl" />
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="bg-background py-10 lg:py-14" aria-hidden="true">
+      <div className="container-wide space-y-3">
+        <Skeleton className="h-6 w-1/3 rounded" />
+        <Skeleton className="h-4 w-full rounded" />
+        <Skeleton className="h-4 w-2/3 rounded" />
+      </div>
+    </section>
+  );
 }
 
 function JednaSekcija({
@@ -44,6 +73,13 @@ function JednaSekcija({
   const tip = tipSekcije(sekcija.kind);
   if (!tip) {
     console.warn(`Nepoznat tip sekcije, preskačem: ${sekcija.kind}`);
+    return null;
+  }
+
+  // Prekidač se može ugasiti POSLE dodavanja sekcije. Tada sekcija ostaje u
+  // bazi i vidljiva je u admin panelu, ali se na sajtu ne renderuje — obrazac
+  // za prijavu bi inače slao u rutu koje nema.
+  if (!tipJeDostupan(sekcija.kind, storeCapabilities as unknown as Record<string, boolean>)) {
     return null;
   }
 

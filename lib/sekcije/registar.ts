@@ -10,6 +10,7 @@
  */
 
 import {
+  IZVORI_STAVKI,
   type PoljeSekcije,
   lok,
   prazanTekst,
@@ -40,10 +41,18 @@ export interface TipSekcije {
   stranice: readonly KljucStranice[];
   /** Da li render čita bazu — određuje da li ide u sopstveni `Suspense`. */
   asinhrona: boolean;
-  /** Kostur dok se čeka; ime obrađuje renderer. */
-  kostur?: "mrezaProizvoda" | "mrezaKartica";
+  /** Kostur dok se čeka; ime obrađuje renderer. Asinhron tip ga uvek ima. */
+  kostur?: "mrezaProizvoda" | "mrezaKartica" | "tekstualni";
   /** Tvrdo ograničenje broja sekcija ovog tipa po stranici. */
   maxPoStrani?: number;
+  /**
+   * Ime prekidača iz `storeCapabilities` bez kog tip nema šta da radi.
+   *
+   * Kad je prekidač ugašen, admin obrazac tip prikazuje kao ONEMOGUĆEN izbor sa
+   * objašnjenjem, a ruta odbija njegovo dodavanje. Ranije je takva sekcija
+   * jednostavno nestajala sa sajta bez ijedne poruke, pa se izgledalo kao kvar.
+   */
+  capability?: "newsletter" | "reviews" | "chat";
 }
 
 /* ------------------------------------------------------------------ *
@@ -149,8 +158,9 @@ const STAVKE: TipSekcije = {
   kind: "stavke",
   naziv: "Ponavljajuće stavke",
   opis:
-    "Jedan repeater za više WoodMart elemenata: traka vrednosti, kartice sa " +
-    "ikonom, i numerisani koraci postupka.",
+    "Jedan repeater za šest WoodMart elemenata: traka vrednosti, kartice sa " +
+    "ikonom, numerisani koraci, harmonika sa pitanjima, vremenska linija i " +
+    "brojači.",
   grupa: "sadrzaj",
   faza: 1,
   polja: [
@@ -162,7 +172,31 @@ const STAVKE: TipSekcije = {
         { vrednost: "traka", natpis: "Traka — sitna šara levo, tekst desno" },
         { vrednost: "kartice", natpis: "Kartice" },
         { vrednost: "koraci", natpis: "Numerisani koraci" },
+        { vrednost: "harmonika", natpis: "Harmonika — pitanja i odgovori" },
+        { vrednost: "linija", natpis: "Vremenska linija" },
+        { vrednost: "brojaci", natpis: "Brojači" },
       ],
+    },
+    {
+      kljuc: "izvor",
+      natpis: "Odakle stavke",
+      opis:
+        "„Iz pitanja i odgovora” čita isti spisak koji puni chat. Radi samo uz " +
+        "prikaz „harmonika”.",
+      tip: "izbor",
+      opcije: [
+        { vrednost: "rucno", natpis: "Ručno upisane ispod" },
+        { vrednost: "faq", natpis: "Iz pitanja i odgovora (chat)" },
+      ],
+    },
+    {
+      kljuc: "faqKategorija",
+      natpis: "Kategorija pitanja",
+      opis:
+        "Obavezna uz izvor „iz pitanja i odgovora”. Bez nje bi svako pitanje " +
+        "napisano za chat odmah osvanulo i na stranici.",
+      tip: "tekst",
+      maxDuzina: 64,
     },
     { kljuc: "kolone", natpis: "Kolona u redu", tip: "izbor", opcije: KOLONE },
     {
@@ -177,9 +211,11 @@ const STAVKE: TipSekcije = {
         {
           kljuc: "oznaka",
           natpis: "Oznaka",
-          opis: "Za prikaz „koraci“ — na primer 01. Prazno znači bez oznake.",
+          opis:
+            "Za prikaz „koraci“ — na primer 01. Za prikaz „brojači“ ovde ide " +
+            "sam broj, na primer „120+“. Prazno znači bez oznake.",
           tip: "tekst",
-          maxDuzina: 8,
+          maxDuzina: 12,
         },
         {
           kljuc: "motiv",
@@ -196,11 +232,20 @@ const STAVKE: TipSekcije = {
   podrazumevano: {
     ...PODRAZUMEVAN_OKVIR,
     prikaz: "kartice",
+    izvor: IZVORI_STAVKI[0],
+    faqKategorija: "",
     kolone: "4",
     stavke: [],
   },
   stranice: STRANICE,
-  asinhrona: false,
+  /**
+   * Izvor `faq` čita bazu. Zastavica je statična po tipu, pa stoji `true` i za
+   * ručne stavke: `Suspense` sa praznim rezervnim sadržajem oko komponente koja
+   * se odmah razreši ne menja ništa na ekranu, a bez njega bi FAQ varijanta
+   * serijalizovala ostatak stranice.
+   */
+  asinhrona: true,
+  kostur: "tekstualni",
 };
 
 const TAKSONOMIJA: TipSekcije = {
@@ -349,6 +394,300 @@ const PROIZVODI: TipSekcije = {
 };
 
 /* ------------------------------------------------------------------ *
+ * Faza 5 — jeftini tipovi nad postojećim podacima
+ * ------------------------------------------------------------------ */
+
+/**
+ * Tabela je ZASEBAN tip, a ne prikaz unutar `stavke`.
+ *
+ * Stavka repeatera ne može da nosi redove puta kolone sa zaglavljem: broj
+ * ćelija zavisi od broja kolona, a repeater ima ravnu listu polja. Zato tabela
+ * ima svoj `kind`, sa zaglavljem kao zasebnom listom.
+ *
+ * Podatak je strukturiran, a ne HTML: bogat tekst bi ovde propustio `<table>`
+ * kroz belu listu koja ga namerno ne dozvoljava.
+ */
+const TABELA: TipSekcije = {
+  kind: "tabela",
+  naziv: "Tabela",
+  opis:
+    "Zaglavlje i redovi kao podatak, ne kao HTML. Do pet kolona; broj kolona " +
+    "određuje zaglavlje.",
+  grupa: "sadrzaj",
+  faza: 5,
+  polja: [
+    {
+      kljuc: "zaglavlje",
+      natpis: "Zaglavlje",
+      opis: "Svaka stavka je jedna kolona. Koliko ih ovde ima, toliko tabela ima kolona.",
+      tip: "lista",
+      maxStavki: 5,
+      natpisStavke: "Kolona",
+      stavka: [
+        { kljuc: "naslov", natpis: "Naziv kolone", tip: "tekstLok", maxDuzina: 60, obavezno: true },
+      ],
+    },
+    {
+      kljuc: "redovi",
+      natpis: "Redovi",
+      tip: "lista",
+      maxStavki: 20,
+      natpisStavke: "Red",
+      stavka: [
+        { kljuc: "c1", natpis: "1. kolona", tip: "tekstLok", maxDuzina: 160 },
+        { kljuc: "c2", natpis: "2. kolona", tip: "tekstLok", maxDuzina: 160 },
+        { kljuc: "c3", natpis: "3. kolona", tip: "tekstLok", maxDuzina: 160 },
+        { kljuc: "c4", natpis: "4. kolona", tip: "tekstLok", maxDuzina: 160 },
+        { kljuc: "c5", natpis: "5. kolona", tip: "tekstLok", maxDuzina: 160 },
+      ],
+    },
+    {
+      kljuc: "prvaKolonaZaglavlje",
+      natpis: "Prva kolona je zaglavlje reda",
+      opis:
+        "Uključi kad prva kolona imenuje red (na primer veličinu). Čitač ekrana " +
+        "tada svaku ćeliju pročita zajedno sa nazivom reda.",
+      tip: "prekidac",
+    },
+  ],
+  podrazumevano: {
+    ...PODRAZUMEVAN_OKVIR,
+    razmak: "srednji",
+    zaglavlje: [],
+    redovi: [],
+    prvaKolonaZaglavlje: true,
+  },
+  stranice: STRANICE,
+  asinhrona: false,
+};
+
+/**
+ * Cenovnik je ZASEBAN tip iz istog razloga kao tabela: stavka nosi cenu,
+ * valutu, sufiks, spisak osobina, oznaku „istaknuto“ i dugme — šest polja koja
+ * u `stavke` ne pripadaju nijednom drugom prikazu.
+ *
+ * Osobine su višelinijski tekst, jedna po redu, a NE ugnežđena lista: admin
+ * obrazac ne ume da ugnezdi repeater u repeater i namerno ga ne ume, jer takav
+ * obrazac postaje neupotrebljiv na ekranu.
+ */
+const CENOVNIK: TipSekcije = {
+  kind: "cenovnik",
+  naziv: "Cenovnik",
+  opis: "Uporedni paketi sa cenom, spiskom osobina i dugmetom.",
+  grupa: "sadrzaj",
+  faza: 5,
+  polja: [
+    { kljuc: "kolone", natpis: "Kolona u redu", tip: "izbor", opcije: KOLONE },
+    {
+      kljuc: "paketi",
+      natpis: "Paketi",
+      tip: "lista",
+      maxStavki: 4,
+      natpisStavke: "Paket",
+      stavka: [
+        { kljuc: "naziv", natpis: "Naziv", tip: "tekstLok", maxDuzina: 60, obavezno: true },
+        { kljuc: "opis", natpis: "Kratak opis", tip: "tekstLok", maxDuzina: 160 },
+        { kljuc: "cena", natpis: "Cena", tip: "tekst", maxDuzina: 24 },
+        { kljuc: "valuta", natpis: "Valuta", tip: "tekst", maxDuzina: 8 },
+        {
+          kljuc: "sufiks",
+          natpis: "Sufiks",
+          opis: "Na primer „po komadu“ ili „mesečno“.",
+          tip: "tekstLok",
+          maxDuzina: 40,
+        },
+        {
+          kljuc: "osobine",
+          natpis: "Osobine",
+          opis: "Jedna po redu. Prazan red se preskače.",
+          tip: "viselinijskiLok",
+          maxDuzina: 600,
+        },
+        { kljuc: "istaknuto", natpis: "Istaknut paket", tip: "prekidac" },
+        { kljuc: "natpisDugmeta", natpis: "Natpis dugmeta", tip: "tekstLok", maxDuzina: 40 },
+        { kljuc: "veza", natpis: "Dugme vodi na", tip: "veza" },
+      ],
+    },
+  ],
+  podrazumevano: {
+    ...PODRAZUMEVAN_OKVIR,
+    razmak: "srednji",
+    kolone: "3",
+    paketi: [],
+  },
+  stranice: STRANICE,
+  asinhrona: false,
+};
+
+const CLANCI: TipSekcije = {
+  kind: "clanci",
+  naziv: "Članci sa bloga",
+  opis: "Najnoviji objavljeni članci iz modela Article.",
+  grupa: "katalog",
+  faza: 5,
+  polja: [
+    { kljuc: "kolone", natpis: "Kolona u redu", tip: "izbor", opcije: KOLONE },
+    { kljuc: "broj", natpis: "Najviše članaka", tip: "broj", min: 1, max: 12, korak: 1 },
+    { kljuc: "sazetak", natpis: "Prikaži sažetak", tip: "prekidac" },
+  ],
+  podrazumevano: {
+    ...PODRAZUMEVAN_OKVIR,
+    razmak: "srednji",
+    kolone: "3",
+    broj: 3,
+    sazetak: true,
+  },
+  stranice: STRANICE,
+  asinhrona: true,
+  kostur: "mrezaKartica",
+};
+
+/**
+ * Odbrojavanje do isteka akcije.
+ *
+ * Izvor `akcija` uzima aktivnu promociju koja prva ističe. Nema biranja
+ * konkretne promocije zato što javna ruta koja bi ih izlistala ne postoji, a
+ * nova admin ruta samo zbog padajuće liste otvara površinu koju bi trebalo i
+ * čuvati. Izvor `datum` postoji za sve što nije vezano za `Promotion`.
+ */
+const ODBROJAVANJE: TipSekcije = {
+  kind: "odbrojavanje",
+  naziv: "Odbrojavanje",
+  opis: "Vreme do isteka akcije ili do unetog trenutka.",
+  grupa: "katalog",
+  faza: 5,
+  polja: [
+    {
+      kljuc: "izvor",
+      natpis: "Do čega se broji",
+      tip: "izbor",
+      opcije: [
+        { vrednost: "akcija", natpis: "Do isteka akcije koja prva ističe" },
+        { vrednost: "datum", natpis: "Do unetog trenutka" },
+      ],
+    },
+    {
+      kljuc: "datum",
+      natpis: "Trenutak",
+      opis: "Tumači se u vremenskoj zoni servera, ne u UTC-u.",
+      tip: "datum",
+    },
+    POLJE_DUGMADI,
+  ],
+  podrazumevano: {
+    ...PODRAZUMEVAN_OKVIR,
+    razmak: "srednji",
+    izvor: "akcija",
+    datum: "",
+    dugmad: [],
+  },
+  stranice: STRANICE,
+  asinhrona: true,
+  kostur: "tekstualni",
+};
+
+/**
+ * Pokretna traka nad postojećim `@keyframes marquee` iz `app/globals.css`.
+ *
+ * Dugme za pauzu NIJE opcija. Kretanje traje duže od pet sekundi, pa WCAG 2.2.2
+ * traži vidljiv mehanizam za zaustavljanje. „Pauza na hover“ ga ne ispunjava:
+ * na dodirnom ekranu hover ne postoji, a tastatura ga ne pokreće.
+ */
+const TRAKA: TipSekcije = {
+  kind: "traka",
+  naziv: "Pokretna traka",
+  opis: "Tekst koji klizi, sa obaveznim dugmetom za pauzu.",
+  grupa: "sadrzaj",
+  faza: 5,
+  polja: [
+    {
+      kljuc: "stavke",
+      natpis: "Reči u traci",
+      tip: "lista",
+      maxStavki: 12,
+      natpisStavke: "Reč",
+      stavka: [
+        { kljuc: "tekst", natpis: "Tekst", tip: "tekstLok", maxDuzina: 60, obavezno: true },
+      ],
+    },
+    {
+      kljuc: "brzina",
+      natpis: "Trajanje jednog kruga (sekundi)",
+      tip: "broj",
+      min: 10,
+      max: 120,
+      korak: 5,
+    },
+  ],
+  podrazumevano: {
+    ...PODRAZUMEVAN_OKVIR,
+    razmak: "uzak",
+    stavke: [],
+    brzina: 30,
+  },
+  stranice: STRANICE,
+  asinhrona: false,
+};
+
+const UTISCI: TipSekcije = {
+  kind: "utisci",
+  naziv: "Utisci kupaca",
+  opis:
+    "Stvarne recenzije proizvoda, sa ocenom i imenom kupca. Ne piše se ručno — " +
+    "izmišljen utisak je neistinit sadržaj.",
+  grupa: "katalog",
+  faza: 5,
+  polja: [
+    { kljuc: "kolone", natpis: "Kolona u redu", tip: "izbor", opcije: KOLONE },
+    { kljuc: "broj", natpis: "Najviše utisaka", tip: "broj", min: 1, max: 12, korak: 1 },
+    {
+      kljuc: "najmanjaOcena",
+      natpis: "Najmanja ocena",
+      opis: "Utisci sa nižom ocenom se ne prikazuju.",
+      tip: "broj",
+      min: 1,
+      max: 5,
+      korak: 1,
+    },
+    {
+      kljuc: "samoSaKomentarom",
+      natpis: "Samo utisci sa komentarom",
+      opis: "Gola ocena bez teksta nema šta da kaže posetiocu.",
+      tip: "prekidac",
+    },
+  ],
+  podrazumevano: {
+    ...PODRAZUMEVAN_OKVIR,
+    razmak: "srednji",
+    kolone: "3",
+    broj: 3,
+    najmanjaOcena: 4,
+    samoSaKomentarom: true,
+  },
+  stranice: STRANICE,
+  asinhrona: true,
+  kostur: "mrezaKartica",
+  capability: "reviews",
+};
+
+const NEWSLETTER: TipSekcije = {
+  kind: "newsletter",
+  naziv: "Prijava na novosti",
+  opis: "Postojeći obrazac za prijavu, sada kao sekcija koja se pomera i gasi.",
+  grupa: "sadrzaj",
+  faza: 5,
+  polja: [],
+  podrazumevano: {
+    ...PODRAZUMEVAN_OKVIR,
+    razmak: "bez",
+  },
+  stranice: STRANICE,
+  asinhrona: false,
+  maxPoStrani: 1,
+  capability: "newsletter",
+};
+
+/* ------------------------------------------------------------------ *
  * Javni registar
  * ------------------------------------------------------------------ */
 
@@ -356,9 +695,16 @@ export const TIPOVI_SEKCIJA: TipSekcije[] = [
   NASLOV,
   HERO,
   STAVKE,
-  TAKSONOMIJA,
   TEKST,
+  TABELA,
+  CENOVNIK,
+  TRAKA,
+  ODBROJAVANJE,
+  NEWSLETTER,
+  TAKSONOMIJA,
   PROIZVODI,
+  CLANCI,
+  UTISCI,
 ];
 
 const PO_KLJUCU = new Map(TIPOVI_SEKCIJA.map((tip) => [tip.kind, tip]));
@@ -374,6 +720,22 @@ export function postojiTip(kind: string): boolean {
 /** Sva polja jednog tipa, redom kojim ih admin obrazac prikazuje. */
 export function poljaTipa(tip: TipSekcije): PoljeSekcije[] {
   return [...tip.polja, ...POLJA_OKVIRA];
+}
+
+/**
+ * Da li tip sme da se koristi uz date prekidače prodavnice.
+ *
+ * Prekidači se prosleđuju, a ne čitaju iz `storeCapabilities` ovde: registar
+ * uvozi i admin obrazac u pregledaču, pa ne sme da zavisi od trenutka u kom se
+ * `process.env` pročita, a ovako je pravilo i proverivo testom.
+ */
+export function tipJeDostupan(
+  kind: string,
+  prekidaci: Record<string, boolean>,
+): boolean {
+  const tip = PO_KLJUCU.get(kind);
+  if (!tip || !tip.capability) return true;
+  return prekidaci[tip.capability] === true;
 }
 
 /** Sveža kopija podrazumevane konfiguracije — nikad zajednička referenca. */

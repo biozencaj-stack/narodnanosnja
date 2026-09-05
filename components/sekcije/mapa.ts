@@ -1,10 +1,17 @@
 import type { ComponentType, ReactElement } from "react";
+import { SekcijaCenovnik } from "./SekcijaCenovnik";
+import { SekcijaClanci } from "./SekcijaClanci";
 import { SekcijaHero } from "./SekcijaHero";
 import { SekcijaNaslov } from "./SekcijaNaslov";
+import { SekcijaNewsletter } from "./SekcijaNewsletter";
+import { SekcijaOdbrojavanje } from "./SekcijaOdbrojavanje";
 import { SekcijaProizvodi } from "./SekcijaProizvodi";
 import { SekcijaStavke } from "./SekcijaStavke";
+import { SekcijaTabela } from "./SekcijaTabela";
 import { SekcijaTaksonomija } from "./SekcijaTaksonomija";
 import { SekcijaTekst } from "./SekcijaTekst";
+import { SekcijaTraka } from "./SekcijaTraka";
+import { SekcijaUtisci } from "./SekcijaUtisci";
 import type { Konfiguracija } from "./tipovi";
 
 /**
@@ -28,7 +35,14 @@ export const KOMPONENTE_SEKCIJA: Record<string, KomponentaSekcije> = {
   naslov: SekcijaNaslov,
   hero: SekcijaHero,
   stavke: SekcijaStavke,
-  taksonomija: SekcijaTaksonomija,
   tekst: SekcijaTekst,
+  tabela: SekcijaTabela,
+  cenovnik: SekcijaCenovnik,
+  traka: SekcijaTraka,
+  odbrojavanje: SekcijaOdbrojavanje,
+  newsletter: SekcijaNewsletter,
+  taksonomija: SekcijaTaksonomija,
   proizvodi: SekcijaProizvodi,
+  clanci: SekcijaClanci,
+  utisci: SekcijaUtisci,
 };

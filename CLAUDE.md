@@ -763,7 +763,7 @@ Release tag se ne pravi tokom običnog razvoja; verified-login paket nije live,
 produkcijska baza/server nisu menjani, a main-push presentation workflow nije
 aktiviran. Live i svaki-push-na-`main` objavljivanje ostaju poslednji korak.
 
-## Sekcije stranica (faze 1, 2 i 4 — registar, renderer, model, admin, blok proizvoda)
+## Sekcije stranica (faze 1, 2, 4 i 5 — registar, renderer, model, admin, tipovi)
 
 Početna strana je od sada **podatak, ne JSX**. `app/(shop)/page.tsx` je sveden na
 `<RenderSekcije pageKey="home" />`; sav tekst, redosled i izgled sekcija dolaze
@@ -780,6 +780,8 @@ lib/sekcije/podrazumevani-raspored.ts   PRIVREMENO: raspored početne u kodu
 lib/sekcije/upit-proizvoda.ts   čist opis upita bloka: normalizacija, ključ, plan
 lib/db/blok-proizvoda.ts    izvršenje tog plana nad bazom, kroz React cache()
 lib/db/taksonomija.ts       kartice kategorija i brendova, sa slikom
+lib/db/jeftini-tipovi.ts    pitanja, članci, utisci i istek akcije (faza 5)
+lib/promotions-prikaz.ts    čisto mapiranje `Promotion` reda u prikaz
 components/sekcije/         okvir, zaglavlje, mapa kind -> komponenta, renderer
 ```
 
@@ -942,6 +944,71 @@ ispunjavaju. Vidi „Slike i kretanje“.
 
 Faza 4 je obrisala `FeaturedCarousel`, `NewArrivals`, `BrandSlider` i
 `BrandGrid`. Nijedna nije imala pozivaoca; nisu zadržane „za svaki slučaj“.
+
+### Jeftini tipovi nad postojećim podacima (faza 5)
+
+Sedam novih mogućnosti nad podacima koji su već u bazi: `stavke` dobija prikaze
+`harmonika`, `linija` i `brojaci`, a uz njih stižu tipovi `tabela`, `cenovnik`,
+`clanci`, `odbrojavanje`, `traka`, `utisci` i `newsletter`.
+
+**Izvor `faq` ima OBAVEZAN filter po kategoriji.** `ChatFAQ` je isti model koji
+puni chat widžet; bez filtera bi pitanje napisano za chat odmah osvanulo i na
+stranici, a admin ne bi imao način da to razdvoji. Pravilo stoji na tri mesta:
+validator ga traži pri upisu, `ucitajPitanja` prima kategoriju kao **obavezan
+argument** i na praznu vrednost vraća prazno, a komponenta odbija da renderuje
+sekciju bez nje. Prva dva čuvaju testovi.
+
+**Utisci se ne izmišljaju.** `Testimonials.tsx` je nosila četiri kupca sa imenom
+i gradom koji ne postoje, `CountdownSale.tsx` hitnost bez ijedne akcije u bazi.
+Obe su **obrisane**, ne prenesene. `lib/sekcije/izmisljen-sadrzaj.test.ts`
+prolazi kroz `components/` i pada ako se takav tekst vrati; admin panel je izuzet,
+jer je tamo „Besplatna dostava“ naziv stvarnog `PromotionType`, a ne obećanje.
+
+**`ProductReview.productId` je nullable.** Upit za utiske MORA nositi
+`productId: { not: null }`, inače recenzija vezana samo za ERP šifru uđe bez
+proizvoda i veza na kartici vodi u prazno. `getProductReviewStats` se ne koristi:
+agregira po `productCode`, što **nije isti ključ**.
+
+**`getProductPromotions` sada vraća `endDate`.** Ranije ga nije vraćao, pa
+odbrojavanje nije imalo do čega da broji. Mapiranje je izdvojeno u čist
+`lib/promotions-prikaz.ts` iz istog razloga kao `products-filter.ts`:
+`lib/promotions.ts` ima `"use server"`, a `npm test` vidi samo `lib/`.
+
+**Odbrojavanje računa pregledač, ne server.** Server šalje samo trenutak isteka;
+između generisanja odgovora i prikaza prođe neodređeno vreme. Prvo iscrtavanje
+je prazno i iste visine — da se broj računa pri iscrtavanju, server i klijent bi
+dali različit rezultat i hidracija bi pukla. `aria-live` je namerno `off`:
+promena svake sekunde bi čitač ekrana pretvorila u neprekidno brojanje.
+
+**`new Date("2026-02-31T10:00")` NIJE `Invalid Date`** — JavaScript ga prevrne u
+3. mart. Zato `datumPostoji` poredi razloženi trenutak sa unetim; bez toga bi
+admin uneo 31. februar, dobio potvrdu, a odbrojavanje bi krenulo ka drugom danu.
+
+**Pokretna traka ima obavezno dugme za pauzu.** Vidi „Slike i kretanje“. Traka
+koristi postojeći `@keyframes marquee` iz `app/globals.css`, isti koji vozi
+`Ticker.tsx`; druga animacija za istu stvar bi se razišla pri prvoj izmeni.
+Podešavanje `prefers-reduced-motion` se čita kroz `useSyncExternalStore` sa
+serverskim snimkom `false`, a ne `setState` u efektu.
+
+**Tabela i cenovnik su ZASEBNI `kind`-ovi, ne prikazi unutar `stavke`.** Broj
+ćelija reda zavisi od broja kolona, a repeater ima ravnu listu polja. Broj kolona
+određuje zaglavlje. Osobine cenovnika su višelinijski tekst, jedna po redu:
+`PoljeObrasca` namerno **ne ume** da ugnezdi repeater u repeater
+(`case "lista"` vraća `null`), jer takav obrazac postaje neupotrebljiv na ekranu.
+
+**Tip sa ugašenim prekidačem se PRIKAZUJE kao onemogućen izbor.** `TipSekcije`
+može da nosi `capability`; `tipJeDostupan` je čista funkcija koja prima prekidače
+umesto da ih čita, pa je proverljiva testom. Odsutan prekidač znači zabranu, ne
+dozvolu. Onemogućen `<option>` **nije ovlašćenje**: ista provera stoji i u POST
+ruti (409) i u rendereru, jer se prekidač može ugasiti i posle dodavanja sekcije.
+
+**`Article.title` je obična `String` kolona.** Naslov članka zato nije lokalizovan
+i na engleskoj verziji stoji na srpskom. Poznat nedostatak modela; ispravka traži
+migraciju kolone i ne krije se u sekciji.
+
+**Asinhron tip mora imati kostur.** `mrezaKartica` je do faze 5 bila deklarisana
+ali je `Kostur` za nju vraćao `null` — sekcija bi se pojavila niotkuda i gurnula
+sve ispod sebe. Sada postoje tri kostura, uključujući `tekstualni`.
 
 ### Zamke koje su ovde već pojele vreme
 

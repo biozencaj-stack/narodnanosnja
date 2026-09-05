@@ -6,10 +6,12 @@ import {
   podrazumevanaKonfiguracija,
   poljaTipa,
   postojiTip,
+  tipJeDostupan,
   tipSekcije,
 } from "./registar";
 import { validirajSekciju } from "./validacija";
 import { RASPORED_POCETNE } from "./podrazumevani-raspored";
+import { storeCapabilities } from "@/lib/config/capabilities";
 
 test("svaki tip ima jedinstven i ispravno oblikovan ključ", () => {
   const kljucevi = TIPOVI_SEKCIJA.map((tip) => tip.kind);
@@ -143,5 +145,37 @@ test("najviše jedan blok proizvoda po tipu preko dozvoljenog broja", () => {
     if (max !== undefined) {
       assert.ok(koliko <= max, `${kind}: ${koliko} sekcija, dozvoljeno ${max}`);
     }
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * Prekidači prodavnice
+ * ------------------------------------------------------------------ */
+
+test("tip bez prekidača je uvek dostupan, i uz prazan spisak prekidača", () => {
+  assert.equal(tipJeDostupan("naslov", {}), true);
+  assert.equal(tipJeDostupan("proizvodi", {}), true);
+});
+
+test("tip sa prekidačem traži da je prekidač upaljen", () => {
+  assert.equal(tipJeDostupan("newsletter", { newsletter: true }), true);
+  assert.equal(tipJeDostupan("newsletter", { newsletter: false }), false);
+  // Odsutan prekidač NIJE isto što i upaljen: podrazumevano je zabrana.
+  assert.equal(tipJeDostupan("newsletter", {}), false);
+  assert.equal(tipJeDostupan("utisci", { reviews: true }), true);
+  assert.equal(tipJeDostupan("utisci", { reviews: false }), false);
+});
+
+test("nepoznat tip ne obara proveru dostupnosti", () => {
+  assert.equal(tipJeDostupan("nepostojeci", {}), true);
+});
+
+test("svaki prekidač u registru postoji i u `storeCapabilities`", () => {
+  // Pogrešno ime prekidača bi tiho značilo „uvek isključeno“, jer nepostojeći
+  // ključ nikad nije `true`.
+  const poznati = new Set(Object.keys(storeCapabilities));
+  for (const tip of TIPOVI_SEKCIJA) {
+    if (!tip.capability) continue;
+    assert.ok(poznati.has(tip.capability), `${tip.kind}: ${tip.capability}`);
   }
 });

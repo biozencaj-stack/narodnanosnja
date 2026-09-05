@@ -9,12 +9,20 @@
  * `BrandGrid`: sve četiri sada radi tip `proizvodi` odnosno `taksonomija`, sa
  * izvorom koji admin bira. Nisu zadržane „za svaki slučaj“ — komponenta bez
  * pozivaoca ne zastareva vidljivo, nego tiho.
+ *
+ * Faza 5 je odnela `Testimonials` i `CountdownSale`. Nisu prenesene u sekcije
+ * nego OBRISANE: prva je nosila četiri izmišljena kupca sa imenima i gradovima,
+ * druga je odbrojavala do trenutka izračunatog u pregledaču, bez ijedne akcije
+ * u bazi. Tip `utisci` čita stvarne recenzije, a `odbrojavanje` stvarni
+ * `Promotion.endDate`.
+ *
+ * `NewsletterSection` je od faze 5 sekcija (`kind: "newsletter"`) i renderuje je
+ * `components/sekcije/SekcijaNewsletter.tsx`; izvoz ostaje jer ga ta komponenta
+ * koristi.
  */
 
 export { HeroCarousel } from './HeroCarousel';
 export { CategoryBanners } from './CategoryBanners';
 export { NewsletterSection } from './NewsletterSection';
 export { InstagramFeed } from './InstagramFeed';
-export { Testimonials } from './Testimonials';
-export { CountdownSale } from './CountdownSale';
 export { ParallaxBanner } from './ParallaxBanner';

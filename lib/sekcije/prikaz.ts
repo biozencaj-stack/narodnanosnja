@@ -28,3 +28,24 @@ export function sanitizujZaPrikaz(vrednost: unknown, jezik: string): string {
   if (!ocisceno) return "";
   return citajLok(ocisceno, jezik);
 }
+
+/**
+ * Go tekst iz sanitizovanog HTML-a.
+ *
+ * Služi isključivo strukturiranim podacima: `FAQPage` traži `acceptedAnswer` kao
+ * tekst, pa bi oznake u njemu bile i beskorisne i rizične. NIJE zamena za
+ * sanitizaciju i ne sme se koristiti da bi se HTML „očistio“ — ulaz mora već
+ * biti prošao kroz allow-listu.
+ */
+export function tekstIzHtmla(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
