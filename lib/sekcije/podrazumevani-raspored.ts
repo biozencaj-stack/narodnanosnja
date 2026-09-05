@@ -223,6 +223,17 @@ export const RASPORED_POCETNE: SekcijaZaPrikaz[] = [
     ],
     slike: [],
   }),
+
+  /**
+   * Prijava na novosti. Do faze 5 je stajala ispisana rukom u
+   * `app/(shop)/page.tsx`, ispod svih sekcija i iza svog capability prekidača.
+   * Ovde je zato POSLEDNJA i sa razmakom „bez“: obrazac nosi sopstvenu podlogu
+   * i sopstveni naslov, pa bi okvir sekcije dodao drugi razmak preko njegovog.
+   */
+  sekcija("home-novosti", "newsletter", {
+    pozadina: "podloga",
+    razmak: "bez",
+  }),
 ];
 
 /** Raspored za datu stranicu. Dok postoji samo početna, ostalo je prazno. */

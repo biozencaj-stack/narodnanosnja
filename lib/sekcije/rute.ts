@@ -15,7 +15,8 @@
 import type { ServerSessionResolution } from "../auth/server-session-contract";
 import { readBoundedJson } from "../security/bounded-json";
 import { OBRAZAC_KLJUCA_STRANICE } from "./polja";
-import { podrazumevanaKonfiguracija, tipSekcije } from "./registar";
+import { podrazumevanaKonfiguracija, tipJeDostupan, tipSekcije } from "./registar";
+import { storeCapabilities } from "../config/capabilities";
 import {
   MAX_BAJTOVA_KONFIGURACIJE,
   sanitizujSekciju,
@@ -290,6 +291,19 @@ export function createSekcijePostHandler(zavisnosti: ZavisnostiPravljenja) {
     const tip = tipSekcije(kind);
     if (!tip) {
       return odgovor({ error: `Nepoznat tip sekcije: ${kind}` }, 400);
+    }
+
+    // Onemogućen izbor u obrascu nije ovlašćenje. Tip koji zavisi od ugašenog
+    // prekidača prodavnice ne sme da uđe u bazu ni direktnim zahtevom: sekcija
+    // bi postojala, a na sajtu se nikad ne bi pojavila.
+    if (!tipJeDostupan(kind, storeCapabilities as unknown as Record<string, boolean>)) {
+      return odgovor(
+        {
+          error:
+            `Tip „${kind}” zavisi od funkcije koja je isključena u podešavanjima prodavnice.`,
+        },
+        409,
+      );
     }
 
     try {

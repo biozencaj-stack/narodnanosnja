@@ -366,6 +366,20 @@ export function PoljeObrasca({
       );
     }
 
+    case "datum":
+      return (
+        <Natpis polje={polje}>
+          <input
+            type="datetime-local"
+            value={typeof vrednost === "string" ? vrednost : ""}
+            disabled={disabled}
+            onChange={(dogadjaj) => onChange(dogadjaj.target.value)}
+            className={KLASA_UNOSA}
+          />
+          {greskaIspod}
+        </Natpis>
+      );
+
     case "lista":
       // Liste ima `ListaObrasca`, jer traže dodavanje, brisanje i pomeranje
       // stavki; ovde bi se ugnezdile bez kontrola.

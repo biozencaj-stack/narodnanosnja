@@ -1,6 +1,4 @@
-import { NewsletterSection } from "@/components/home";
 import { RenderSekcije } from "@/components/sekcije";
-import { storeCapabilities } from "@/lib/config/capabilities";
 
 /**
  * Početna strana.
@@ -14,17 +12,13 @@ import { storeCapabilities } from "@/lib/config/capabilities";
  * svakom zahtevu, a keširanje cene zajedno sa konfiguracijom bi na
  * najvidljivijoj stranici prikazalo zastarelu vrednost.
  *
- * Prijava na novosti još nije tip sekcije (plan je vodi kao fazu 5), pa ostaje
- * ovde, iza svog capability prekidača.
+ * Od faze 5 ovde nema nijedne sekcije ispisane rukom. Prijava na novosti je
+ * bila poslednja i sada je tip `newsletter`, pa se može pomeriti i ugasiti iz
+ * admin panela kao i sve ostalo.
  */
 
 export const dynamic = "force-dynamic";
 
 export default function HomePage() {
-  return (
-    <>
-      <RenderSekcije pageKey="home" />
-      {storeCapabilities.newsletter && <NewsletterSection />}
-    </>
-  );
+  return <RenderSekcije pageKey="home" />;
 }

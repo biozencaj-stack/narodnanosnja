@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { citajLok } from "@/lib/sekcije/polja";
 import { spoji } from "./stilovi";
-import { stavkeListe, veza, type Konfiguracija } from "./tipovi";
+import { stavkeListe, veza, type Konfiguracija, type Veza } from "./tipovi";
 
 /**
  * Dugmad sekcije. Do dva po sekciji — treće nikad nije pomoglo odluci kupca.
@@ -23,6 +23,38 @@ const STILOVI: Record<string, string> = {
     "font-bold text-zlatna-jaka transition-colors hover:bg-zlatna-jaka/12",
 };
 
+/**
+ * Jedno dugme. Izdvojeno da bi ga i cenovnik koristio, umesto da prepisuje
+ * mapu stilova — dve kopije bi se razišle pri prvoj izmeni palete.
+ */
+export function Dugme({
+  veza: cilj,
+  natpis,
+  stil = "puno",
+}: {
+  veza: Veza;
+  natpis: string;
+  stil?: string;
+}) {
+  const spoljna = /^https?:/i.test(cilj.url);
+  const zajednicko = {
+    className: STILOVI[stil] ?? STILOVI.puno,
+    ...(cilj.noviTab ? { target: "_blank", rel: "noopener noreferrer" } : {}),
+  };
+
+  // Sidro i spoljna adresa idu običnim `a`; interne putanje kroz `Link`, da se
+  // zadrži prelazak bez ponovnog učitavanja stranice.
+  return spoljna || cilj.url.startsWith("#") ? (
+    <a href={cilj.url} {...zajednicko}>
+      {natpis}
+    </a>
+  ) : (
+    <Link href={cilj.url} {...zajednicko}>
+      {natpis}
+    </Link>
+  );
+}
+
 export function Dugmad({
   config,
   jezik,
@@ -40,26 +72,7 @@ export function Dugmad({
       if (!cilj || !natpis) return null;
 
       const stil = typeof stavka.stil === "string" ? stavka.stil : "puno";
-      const spoljna = /^https?:/i.test(cilj.url);
-
-      const zajednicko = {
-        className: STILOVI[stil] ?? STILOVI.puno,
-        ...(cilj.noviTab
-          ? { target: "_blank", rel: "noopener noreferrer" }
-          : {}),
-      };
-
-      // Sidro i spoljna adresa idu običnim `a`; interne putanje kroz `Link`,
-      // da se zadrži prelazak bez ponovnog učitavanja stranice.
-      return spoljna || cilj.url.startsWith("#") ? (
-        <a key={i} href={cilj.url} {...zajednicko}>
-          {natpis}
-        </a>
-      ) : (
-        <Link key={i} href={cilj.url} {...zajednicko}>
-          {natpis}
-        </Link>
-      );
+      return <Dugme key={i} veza={cilj} natpis={natpis} stil={stil} />;
     })
     .filter(Boolean);
 

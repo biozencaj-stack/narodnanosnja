@@ -161,6 +161,29 @@ export type VrednostUpitaProizvoda = {
   izabrani: string[];
 };
 
+/* ------------------------------------------------------------------ *
+ * Pitanja i odgovori
+ * ------------------------------------------------------------------ */
+
+/**
+ * Izvori za tip `stavke`.
+ *
+ * `faq` čita `ChatFAQ`, isti model koji puni chat widžet. Filter po kategoriji
+ * je zato OBAVEZAN: bez njega bi svako pitanje napisano za chat odmah osvanulo
+ * i na početnoj stranici, a admin ne bi imao način da to razdvoji.
+ */
+export const IZVORI_STAVKI = ["rucno", "faq"] as const;
+export type IzvorStavki = (typeof IZVORI_STAVKI)[number];
+
+/**
+ * Oblik trenutka za polje `datum`.
+ *
+ * Prima se ono što `<input type="datetime-local">` daje — bez vremenske zone.
+ * Tumači se u zoni servera, što je zona prodavnice; odbrojavanje do isteka
+ * akcije nema smisla u UTC-u ako akcija ističe „u ponoć kod nas“.
+ */
+export const OBRAZAC_DATUMA = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/;
+
 /** Najviše proizvoda u jednom bloku. Ista granica važi i u validatoru. */
 export const MAX_PROIZVODA_U_BLOKU = 24;
 
@@ -201,6 +224,7 @@ export type PoljeSekcije =
   | (OsnovaPolja & { tip: "medijLista"; maxStavki: number })
   | (OsnovaPolja & { tip: "veza" })
   | (OsnovaPolja & { tip: "upitProizvoda" })
+  | (OsnovaPolja & { tip: "datum" })
   | (OsnovaPolja & {
       tip: "lista";
       stavka: PoljeSekcije[];

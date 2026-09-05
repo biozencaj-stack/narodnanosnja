@@ -362,3 +362,92 @@ test("normalizacija pokvarenu vrednost menja podrazumevanom, bez izuzetka", () =
 test("normalizacija nepoznatog tipa vraća prazan objekat umesto izuzetka", () => {
   assert.deepEqual(normalizujSekciju("nepostojeci", { a: 1 }), {});
 });
+
+/* ------------------------------------------------------------------ *
+ * Faza 5 — jeftini tipovi
+ * ------------------------------------------------------------------ */
+
+test("stavke sa izvorom iz pitanja i odgovora bez kategorije se odbijaju", () => {
+  const { greske } = validirajSekciju(
+    "stavke",
+    sa("stavke", { prikaz: "harmonika", izvor: "faq", faqKategorija: "" }),
+  );
+  // Bez filtera bi svako pitanje napisano za chat widžet odmah osvanulo i na
+  // stranici, a admin ne bi imao način da to razdvoji.
+  assert.ok(greske.faqKategorija, JSON.stringify(greske));
+});
+
+test("izvor iz pitanja i odgovora radi samo uz prikaz harmonika", () => {
+  const { greske } = validirajSekciju(
+    "stavke",
+    sa("stavke", { prikaz: "kartice", izvor: "faq", faqKategorija: "dostava" }),
+  );
+  assert.ok(greske.izvor, JSON.stringify(greske));
+});
+
+test("harmonika sa kategorijom prolazi", () => {
+  const { greske } = validirajSekciju(
+    "stavke",
+    sa("stavke", { prikaz: "harmonika", izvor: "faq", faqKategorija: "dostava" }),
+  );
+  assert.deepEqual(greske, {});
+});
+
+test("odbrojavanje do unetog trenutka bez trenutka se odbija", () => {
+  const { greske } = validirajSekciju(
+    "odbrojavanje",
+    sa("odbrojavanje", { izvor: "datum", datum: "" }),
+  );
+  assert.ok(greske.datum, JSON.stringify(greske));
+});
+
+test("datum van oblika ili nepostojeći dan se odbija", () => {
+  for (const datum of ["31.12.2026.", "2026-13-01T10:00", "2026-02-31T10:00", "juče"]) {
+    const { greske } = validirajSekciju(
+      "odbrojavanje",
+      sa("odbrojavanje", { izvor: "datum", datum }),
+    );
+    assert.ok(greske.datum, datum);
+  }
+});
+
+test("ispravan datum prolazi", () => {
+  const { greske, vrednosti } = validirajSekciju(
+    "odbrojavanje",
+    sa("odbrojavanje", { izvor: "datum", datum: "2026-12-31T23:59" }),
+  );
+  assert.deepEqual(greske, {});
+  assert.equal(vrednosti.datum, "2026-12-31T23:59");
+});
+
+test("tabela sa redovima ali bez zaglavlja se odbija", () => {
+  const { greske } = validirajSekciju(
+    "tabela",
+    sa("tabela", {
+      zaglavlje: [],
+      redovi: [{ c1: { sr: "S", en: "S" } }],
+    }),
+  );
+  // Broj kolona dolazi iz zaglavlja; bez njega se ne zna šta se renderuje.
+  assert.ok(greske.zaglavlje, JSON.stringify(greske));
+});
+
+test("cenovnik čuva osobine kao višelinijski tekst, bez ugnežđene liste", () => {
+  const { greske, vrednosti } = validirajSekciju(
+    "cenovnik",
+    sa("cenovnik", {
+      paketi: [
+        {
+          naziv: { sr: "Osnovni", en: "Basic" },
+          cena: "3.500",
+          valuta: "RSD",
+          osobine: { sr: "Prva\nDruga", en: "First\nSecond" },
+          istaknuto: true,
+        },
+      ],
+    }),
+  );
+  assert.deepEqual(greske, {});
+  const paketi = vrednosti.paketi as Record<string, unknown>[];
+  assert.equal((paketi[0].osobine as { sr: string }).sr, "Prva\nDruga");
+});

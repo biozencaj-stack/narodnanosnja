@@ -19,7 +19,9 @@ import { sanitizeLocalizedRichText } from "@/lib/security/html";
 import { safeLinkTarget } from "@/lib/security/navigation";
 import {
   IZVORI_PROIZVODA,
+  IZVORI_STAVKI,
   MAX_PROIZVODA_U_BLOKU,
+  OBRAZAC_DATUMA,
   OBRAZAC_PUTANJE_MEDIJA,
   OBRAZAC_SLUGA,
   SORTIRANJA_PROIZVODA,
@@ -188,6 +190,30 @@ function citajBogatTekst(vrednost: unknown): Lokalizovano | null {
   return { sr, en };
 }
 
+/**
+ * Da li uneti datum zaista postoji.
+ *
+ * `new Date("2026-02-31T10:00")` ne vraća `Invalid Date` nego 3. mart, pa se
+ * mora uporediti razloženi trenutak sa onim što je uneto. Bez toga bi admin
+ * uneo 31. februar, dobio potvrdu, a odbrojavanje bi krenulo ka drugom danu.
+ */
+function datumPostoji(vrednost: string): boolean {
+  const delovi = vrednost.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/,
+  );
+  if (!delovi) return false;
+  const [, g, m, d, sat, minut] = delovi;
+  const trenutak = new Date(vrednost);
+  if (Number.isNaN(trenutak.getTime())) return false;
+  return (
+    trenutak.getFullYear() === Number(g) &&
+    trenutak.getMonth() + 1 === Number(m) &&
+    trenutak.getDate() === Number(d) &&
+    trenutak.getHours() === Number(sat) &&
+    trenutak.getMinutes() === Number(minut)
+  );
+}
+
 function citajBroj(vrednost: unknown): number | null {
   if (typeof vrednost !== "number" || !Number.isFinite(vrednost)) return null;
   return vrednost;
@@ -342,6 +368,25 @@ function validirajPolje(
       return { url, noviTab: sirovo.noviTab === true };
     }
 
+    case "datum": {
+      if (typeof sirovo !== "string" || sirovo.length === 0) {
+        if (polje.obavezno) greske[put] = "Trenutak je obavezan";
+        return "";
+      }
+      if (!OBRAZAC_DATUMA.test(sirovo)) {
+        greske[put] = "Očekuje se datum i vreme";
+        return "";
+      }
+      // Oblik je tačan, ali „2026-02-31“ i dalje nije dan koji postoji. Provera
+      // kroz `Number.isNaN` ovde NE radi: JavaScript takav datum ne odbija nego
+      // ga prevrne u 3. mart. Zato se razloženi datum poredi sa unetim.
+      if (!datumPostoji(sirovo)) {
+        greske[put] = "Taj datum ne postoji";
+        return "";
+      }
+      return sirovo;
+    }
+
     case "upitProizvoda":
       return validirajUpitProizvoda(sirovo, put, greske);
 
@@ -439,6 +484,53 @@ export function proveriKontrastSekcije(
  * Proverava celu konfiguraciju sekcije. Vraća očišćene vrednosti i mapu
  * grešaka po putanji polja; prazna mapa znači da je upis dozvoljen.
  */
+/**
+ * Pravila koja se ne mogu izraziti nad jednim poljem.
+ *
+ * Svako od njih postoji zato što bi ćutanje na tom mestu proizvelo pogrešnu
+ * stranicu, a ne poruku o grešci: sekcija bez izvora prikazala bi tuđi sadržaj,
+ * a odbrojavanje bez trenutka ne bi imalo do čega da broji.
+ */
+function proveriUnakrsnaPravila(
+  kind: string,
+  vrednosti: Record<string, unknown>,
+  greske: Record<string, string>,
+): void {
+  if (kind === "stavke") {
+    const izvor = vrednosti.izvor;
+    if (izvor === "faq") {
+      const kategorija = vrednosti.faqKategorija;
+      if (typeof kategorija !== "string" || kategorija.trim().length === 0) {
+        // Bez ovog filtera bi svako pitanje napisano za chat widžet odmah
+        // osvanulo i na stranici, a admin ne bi imao način da to razdvoji.
+        greske.faqKategorija = "Uz izvor iz pitanja i odgovora kategorija je obavezna";
+      }
+      if (vrednosti.prikaz !== "harmonika") {
+        greske.izvor = "Izvor iz pitanja i odgovora radi samo uz prikaz „harmonika”";
+      }
+    } else if (!(IZVORI_STAVKI as readonly unknown[]).includes(izvor)) {
+      greske.izvor = `Dozvoljeno: ${IZVORI_STAVKI.join(", ")}`;
+    }
+  }
+
+  if (kind === "odbrojavanje" && vrednosti.izvor === "datum") {
+    const datum = vrednosti.datum;
+    if (typeof datum !== "string" || datum.length === 0) {
+      greske.datum = "Uz izvor „do unetog trenutka” trenutak je obavezan";
+    }
+  }
+
+  if (kind === "tabela") {
+    const zaglavlje = vrednosti.zaglavlje;
+    const redovi = vrednosti.redovi;
+    if (Array.isArray(redovi) && redovi.length > 0 &&
+        (!Array.isArray(zaglavlje) || zaglavlje.length === 0)) {
+      // Broj kolona dolazi iz zaglavlja; bez njega se ne zna šta se renderuje.
+      greske.zaglavlje = "Tabela sa redovima mora imati bar jednu kolonu u zaglavlju";
+    }
+  }
+}
+
 export function validirajSekciju(
   kind: string,
   konfiguracija: unknown,
@@ -474,6 +566,8 @@ export function validirajSekciju(
   if (typeof istaknuta === "string" && istaknuta && naslov && !naslov.sr.includes(istaknuta)) {
     greske.istaknutaRec = "Ova reč ne postoji u naslovu";
   }
+
+  proveriUnakrsnaPravila(kind, vrednosti, greske);
 
   const kontrast = proveriKontrastSekcije(vrednosti.pozadina);
   if (!kontrast.ok) greske.pozadina = kontrast.poruka;

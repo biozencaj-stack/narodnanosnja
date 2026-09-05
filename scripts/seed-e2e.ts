@@ -54,8 +54,31 @@ function blokSnizenog(): { id: string; kind: string; config: Record<string, unkn
   };
 }
 
+/**
+ * Pokretna traka, isključivo zbog provere pristupačnosti.
+ *
+ * WCAG 2.2.2 traži da se kretanje duže od pet sekundi može zaustaviti vidljivim
+ * mehanizmom. Traka nije deo ugrađenog rasporeda, pa bez ovog zapisa E2E ne bi
+ * imao šta da proveri.
+ */
+function blokTrake(): { id: string; kind: string; config: Record<string, unknown> } {
+  return {
+    id: "e2e-blok-traka",
+    kind: "traka",
+    config: {
+      ...podrazumevanaKonfiguracija("traka"),
+      naslov: { sr: "E2E traka", en: "E2E marquee" },
+      stavke: [
+        { tekst: { sr: "Ručni rad", en: "Handmade" } },
+        { tekst: { sr: "Tkano na razboju", en: "Loom woven" } },
+      ],
+      brzina: 30,
+    },
+  };
+}
+
 async function zasejSekcije(): Promise<void> {
-  const raspored = [...podrazumevanRaspored("home"), blokSnizenog()];
+  const raspored = [...podrazumevanRaspored("home"), blokSnizenog(), blokTrake()];
   const trenutak = new Date();
 
   for (const [redniBroj, sekcija] of raspored.entries()) {

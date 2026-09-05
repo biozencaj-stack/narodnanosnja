@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { sanitizujZaPrikaz } from "./prikaz";
+import { sanitizujZaPrikaz, tekstIzHtmla } from "./prikaz";
 
 /**
  * Negativan XSS test na RENDER granici.
@@ -68,4 +68,23 @@ test("prazan i neispravan sadržaj daju prazan string, ne izuzetak", () => {
 test("engleski pada na srpski kad prevoda nema", () => {
   const izlaz = sanitizujZaPrikaz({ sr: "<p>Srpski</p>", en: "" }, "en");
   assert.ok(izlaz.includes("Srpski"));
+});
+
+/* ------------------------------------------------------------------ *
+ * Go tekst za strukturirane podatke
+ * ------------------------------------------------------------------ */
+
+test("iz HTML-a se dobija go tekst, bez ijedne oznake", () => {
+  assert.equal(
+    tekstIzHtmla("<p>Dostava traje <strong>2–4</strong> dana.</p>"),
+    "Dostava traje 2–4 dana.",
+  );
+});
+
+test("entiteti se vraćaju u znakove, a razmaci sabijaju", () => {
+  assert.equal(tekstIzHtmla("<p>Cena &lt; 2.000&nbsp;RSD  &amp;  više</p>"), "Cena < 2.000 RSD & više");
+});
+
+test("blokovi se razdvajaju razmakom, a ne lepe jedan za drugi", () => {
+  assert.equal(tekstIzHtmla("<li>Prvo</li><li>Drugo</li>"), "Prvo Drugo");
 });

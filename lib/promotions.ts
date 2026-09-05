@@ -1,6 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/db";
+import { uPromocijuZaPrikaz } from "./promotions-prikaz";
 
 export interface AppliedPromotion {
   id: string;
@@ -148,7 +149,7 @@ export async function getProductPromotions(productId: string) {
   const promos = await prisma.promotion.findMany({
     where: { isActive: true, startDate: { lte: now }, endDate: { gte: now }, OR: [{ products: { none: {} } }, { products: { some: { productId } } }] },
   });
-  return promos.map((p) => ({ id: p.id, name: p.name, type: p.type, value: Number(p.value), description: p.description, code: p.code, minQuantity: p.minQuantity }));
+  return promos.map(uPromocijuZaPrikaz);
 }
 
 export async function getPromotionProducts() {

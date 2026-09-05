@@ -13,7 +13,13 @@ import {
 } from "lucide-react";
 import { PoljeObrasca } from "./PoljeObrasca";
 import { ListaObrasca } from "./ListaObrasca";
-import { poljaTipa, TIPOVI_SEKCIJA, tipSekcije } from "@/lib/sekcije/registar";
+import {
+  poljaTipa,
+  tipJeDostupan,
+  TIPOVI_SEKCIJA,
+  tipSekcije,
+} from "@/lib/sekcije/registar";
+import { storeCapabilities } from "@/lib/config/capabilities";
 import type { PoljeSekcije } from "@/lib/sekcije/polja";
 
 /**
@@ -53,6 +59,11 @@ function imaNacrt(sekcija: Sekcija): boolean {
     sekcija.draftOrder !== null ||
     sekcija.draftIsActive !== null
   );
+}
+
+/** Prekidači prodavnice su isti u celom paketu; čitaju se jednom. */
+function jeDostupan(kind: string): boolean {
+  return tipJeDostupan(kind, storeCapabilities as unknown as Record<string, boolean>);
 }
 
 export function EkranSekcija({ pageKey }: { pageKey: string }) {
@@ -356,7 +367,11 @@ function SpisakSekcija({
   onObrisi: (sekcija: Sekcija) => void;
   onDodaj: (kind: string) => void;
 }) {
-  const [noviTip, setNoviTip] = useState(TIPOVI_SEKCIJA[0]?.kind ?? "");
+  // Prvi DOSTUPAN tip, ne prosto prvi: inače bi dugme „dodaj” podrazumevano
+  // nudilo tip koji ruta odbija.
+  const prviDostupan =
+    TIPOVI_SEKCIJA.find((tip) => jeDostupan(tip.kind))?.kind ?? "";
+  const [noviTip, setNoviTip] = useState(prviDostupan);
 
   return (
     <div className="space-y-3">
@@ -370,11 +385,18 @@ function SpisakSekcija({
             onChange={(dogadjaj) => setNoviTip(dogadjaj.target.value)}
             className="flex-1 rounded-lg border border-stone-300 px-2 py-1.5 text-sm"
           >
-            {TIPOVI_SEKCIJA.map((tip) => (
-              <option key={tip.kind} value={tip.kind}>
-                {tip.naziv}
-              </option>
-            ))}
+            {TIPOVI_SEKCIJA.map((tip) => {
+              // Ugašen prekidač se PRIKAZUJE kao onemogućen izbor sa razlogom.
+              // Ranije je takva sekcija prosto nestajala sa sajta bez poruke,
+              // pa je izgledalo kao kvar.
+              const dostupan = jeDostupan(tip.kind);
+              return (
+                <option key={tip.kind} value={tip.kind} disabled={!dostupan}>
+                  {tip.naziv}
+                  {dostupan ? "" : " — isključeno u podešavanjima"}
+                </option>
+              );
+            })}
           </select>
           <button
             type="button"
