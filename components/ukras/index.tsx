@@ -9,6 +9,7 @@
  */
 
 import type { CSSProperties } from 'react';
+import { sigurnaBoja } from '@/lib/ukras/boja';
 
 /* ------------------------------------------------------------------ *
  * Šare — pločice 40×40 koje se besprekidno ponavljaju
@@ -64,7 +65,13 @@ const SARE: Record<VrstaSare, (a: string, b: string) => string> = {
 
 const VRSTE = Object.keys(SARE) as VrstaSare[];
 
-/** Jednostruki navodnici: ova vrednost završava i u style atributu. */
+/**
+ * Jednostruki navodnici: ova vrednost završava i u style atributu.
+ *
+ * Boje koje ulaze u ovaj SVG moraju biti doslovan HEX. `data:` URI je zaseban
+ * dokument i CSS promenljive stranice u njemu ne postoje — vidi
+ * `lib/ukras/boja.ts`.
+ */
 const uUri = (svg: string) =>
   `url('data:image/svg+xml,${encodeURIComponent(svg.replace(/\s+/g, ' ').trim())}')`;
 
@@ -74,12 +81,17 @@ export function saraZa(
   a = '#b98f21',
   b = '#a4161a',
 ): string {
-  return uUri(SARE[VRSTE[Math.abs(redni) % VRSTE.length]](a, b));
+  return uUri(
+    SARE[VRSTE[Math.abs(redni) % VRSTE.length]](
+      sigurnaBoja(a, '#b98f21'),
+      sigurnaBoja(b, '#a4161a'),
+    ),
+  );
 }
 
 /** Imenovana šara, kad se traži baš određeni motiv. */
 export function sara(vrsta: VrstaSare, a = '#b98f21', b = '#a4161a'): string {
-  return uUri(SARE[vrsta](a, b));
+  return uUri(SARE[vrsta](sigurnaBoja(a, '#b98f21'), sigurnaBoja(b, '#a4161a')));
 }
 
 /* ------------------------------------------------------------------ *
@@ -156,7 +168,9 @@ export function Traka({
       className={className}
       style={{
         height: visina,
-        backgroundImage: uUri(trakaSvg(boja, bojaDruga)),
+        backgroundImage: uUri(
+          trakaSvg(sigurnaBoja(boja, '#b98f21'), sigurnaBoja(bojaDruga, '#a4161a')),
+        ),
         backgroundRepeat: 'repeat-x',
         backgroundSize: `auto ${visina}px`,
         backgroundPosition: 'center',
