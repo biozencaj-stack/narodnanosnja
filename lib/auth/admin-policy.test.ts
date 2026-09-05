@@ -102,6 +102,8 @@ test("sekcije stranica su ADMIN-only na svakoj novoj putanji", () => {
     ["/api/admin/sekcije/section-1", "DELETE"],
     ["/api/admin/sekcije/redosled", "POST"],
     ["/api/admin/sekcije/objavi", "POST"],
+    ["/api/admin/medijateka", "GET"],
+    ["/api/admin/medijateka/asset-1", "DELETE"],
   ];
 
   for (const [pathname, method] of apiPutanje) {
@@ -128,7 +130,11 @@ test("sekcije stranica su ADMIN-only na svakoj novoj putanji", () => {
     assert.equal(isAdminApiPath(pathname), true, pathname);
   }
 
-  for (const pathname of ["/admin/sekcije", "/admin/sekcije/pregled/home"]) {
+  for (const pathname of [
+    "/admin/sekcije",
+    "/admin/sekcije/pregled/home",
+    "/admin/medijateka",
+  ]) {
     assert.deepEqual(getAdminPageAccess("ADMIN", pathname), {
       allowed: true,
       role: "ADMIN",

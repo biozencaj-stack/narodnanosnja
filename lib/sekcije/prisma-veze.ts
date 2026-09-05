@@ -10,6 +10,7 @@ import { revalidateTag } from "next/cache";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { oznakeZaInvalidaciju, type RazlogInvalidacije } from "./invalidacija";
+import { medijiUKonfiguraciji } from "./mediji-u-konfiguraciji";
 import { SukobRedosleda, type RedSekcije, type StavkaRedosleda } from "./rute";
 
 export function prijaviNeuspeh(neuspeh: unknown): void {
@@ -57,6 +58,46 @@ export async function izmeniUslovno(podaci: {
     version: { increment: 1 },
     updatedById: podaci.korisnikId,
   };
+
+  if (!podaci.nacrt) {
+    // Objavljeno stanje i upotrebe medija moraju se promeniti zajedno.
+    // Odvojeni upisi bi ostavili trenutak u kome slika više nije na stranici a
+    // i dalje se broji kao upotrebljena, ili obrnuto — a baš na osnovu tog
+    // broja se odlučuje sme li se obrisati.
+    return prisma.$transaction(async (tx) => {
+      const izmena = await tx.pageSection.updateMany({
+        where: { id: podaci.id, version: podaci.verzija },
+        data: {
+          config: podaci.config as Prisma.InputJsonObject,
+          ...(podaci.vidljiva === undefined
+            ? {}
+            : { isActive: podaci.vidljiva }),
+          draftConfig: Prisma.DbNull,
+          draftIsActive: null,
+          publishedAt: new Date(),
+          version: { increment: 1 },
+          updatedById: podaci.korisnikId,
+        },
+      });
+
+      if (izmena.count === 0) return 0;
+
+      const sekcija = await tx.pageSection.findUnique({
+        where: { id: podaci.id },
+        select: { kind: true },
+      });
+      if (sekcija) {
+        await uskladiUpotrebeMedija(
+          tx,
+          podaci.id,
+          sekcija.kind,
+          podaci.config,
+        );
+      }
+
+      return izmena.count;
+    });
+  }
 
   const izmena = await prisma.pageSection.updateMany({
     where: { id: podaci.id, version: podaci.verzija },
@@ -139,6 +180,8 @@ export function objaviStranicu(
       where: { pageKey },
       select: {
         id: true,
+        kind: true,
+        config: true,
         draftConfig: true,
         draftOrder: true,
         draftIsActive: true,
@@ -177,9 +220,65 @@ export function objaviStranicu(
           updatedById: korisnikId,
         },
       });
+
+      // Upotrebe se računaju iz konfiguracije koja je upravo POSTALA
+      // objavljena: nacrt ako ga je bilo, inače zatečena.
+      await uskladiUpotrebeMedija(
+        tx,
+        sekcija.id,
+        sekcija.kind,
+        sekcija.draftConfig ?? sekcija.config,
+      );
+
       promenjeno += 1;
     }
 
     return promenjeno;
   });
+}
+
+/**
+ * Usklađuje `MediaAssetUsage` sa sadržajem OBJAVLJENE konfiguracije sekcije.
+ *
+ * Prati se objavljeno stanje, ne nacrt. Da se prati nacrt, slika izbačena u
+ * nacrtu odmah bi postala „neupotrebljena“ i mogla bi da se obriše — dok je
+ * javni sajt i dalje prikazuje.
+ *
+ * Sve ide u jednoj transakciji sa upisom sekcije. Delimično usklađen spisak je
+ * gori od neusklađenog: brisanje slike bi se odbijalo ili dozvoljavalo na
+ * osnovu podataka koji ne opisuju nijedno stvarno stanje.
+ *
+ * Upotrebe koje pokazuju na putanju bez reda u `MediaAsset` se preskaču. To
+ * nije greška nego zatečeno stanje: slike otpremljene pre medijateke postoje na
+ * disku, a nemaju red u bazi.
+ */
+export async function uskladiUpotrebeMedija(
+  tx: Prisma.TransactionClient,
+  sekcijaId: string,
+  kind: string,
+  objavljenaKonfiguracija: unknown,
+): Promise<void> {
+  const zeljene = medijiUKonfiguraciji(kind, objavljenaKonfiguracija);
+
+  await tx.mediaAssetUsage.deleteMany({ where: { sectionId: sekcijaId } });
+  if (zeljene.length === 0) return;
+
+  const assets = await tx.mediaAsset.findMany({
+    where: { path: { in: zeljene.map((u) => u.putanja) } },
+    select: { id: true, path: true },
+  });
+  const poPutanji = new Map(assets.map((a) => [a.path, a.id]));
+
+  const redovi = zeljene
+    .map((upotreba) => {
+      const assetId = poPutanji.get(upotreba.putanja);
+      return assetId
+        ? { assetId, sectionId: sekcijaId, polje: upotreba.polje }
+        : null;
+    })
+    .filter((red): red is NonNullable<typeof red> => red !== null);
+
+  if (redovi.length > 0) {
+    await tx.mediaAssetUsage.createMany({ data: redovi });
+  }
 }

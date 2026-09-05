@@ -3,6 +3,7 @@
 import { LocalizedInput } from "@/components/admin/LocalizedInput";
 import { LocalizedTextarea } from "@/components/admin/LocalizedTextarea";
 import { BogatiTekst } from "@/components/admin/BogatiTekst";
+import { MedijatekaPicker, type VrednostMedija } from "./MedijatekaPicker";
 import {
   IZVORI_PROIZVODA,
   TOKENI_POZADINE,
@@ -63,6 +64,23 @@ function Natpis({
       {children}
     </div>
   );
+}
+
+/**
+ * Fascikla po nameni polja, ne jedna za sve.
+ *
+ * Hero slika ide u profil sa 4 MB i 2000×1200, ikona u profil sa 256 KB i
+ * 256×256. Da sve ide u istu fasciklu, ikona bi se čuvala kao da je hero i
+ * stranica bi vukla desetostruko veći fajl nego što joj treba.
+ */
+function folderZaPolje(kljuc: string): string {
+  if (kljuc === "slike" || kljuc === "slika" || kljuc === "pozadinskaSlika") {
+    return "sekcije-hero";
+  }
+  if (kljuc === "ikona" || kljuc === "motiv" || kljuc === "oznaka") {
+    return "sekcije-ikona";
+  }
+  return "sekcije-kartica";
 }
 
 const KLASA_UNOSA =
@@ -320,17 +338,61 @@ export function PoljeObrasca({
     }
 
     case "medij":
-    case "medijLista":
-      // Medijateka stiže u fazi 3. Do tada polje postoji i vidi se, ali se ne
-      // uređuje — komponenta pada na tkanu šaru, što je namerno stanje, a ne
-      // prazna kutija.
       return (
         <Natpis polje={polje}>
-          <div className="rounded-lg border border-dashed border-stone-300 bg-stone-50 px-3 py-4 text-xs text-stone-500">
-            Medijateka još nije uključena. Sekcija do tada koristi tkanu šaru.
-          </div>
+          <MedijatekaPicker
+            vrednost={vrednost}
+            folder={folderZaPolje(polje.kljuc)}
+            disabled={disabled}
+            onChange={(nova) => onChange(nova ?? undefined)}
+          />
+          {greskaIspod}
         </Natpis>
       );
+
+    case "medijLista": {
+      // Lista slika ima svoje prazno mesto na kraju: bez njega se prva slika ne
+      // može dodati, jer nema šta da se izmeni.
+      const stavke: unknown[] = Array.isArray(vrednost) ? [...vrednost] : [];
+      const mestaSlobodno = stavke.length < polje.maxStavki;
+
+      return (
+        <Natpis polje={polje}>
+          <div className="space-y-3">
+            {stavke.map((stavka, indeks) => (
+              <MedijatekaPicker
+                key={indeks}
+                vrednost={stavka}
+                folder={folderZaPolje(polje.kljuc)}
+                disabled={disabled}
+                onChange={(nova) => {
+                  const sledece = [...stavke];
+                  if (nova === null) sledece.splice(indeks, 1);
+                  else sledece[indeks] = nova;
+                  onChange(sledece);
+                }}
+              />
+            ))}
+
+            {mestaSlobodno && (
+              <MedijatekaPicker
+                vrednost={null}
+                folder={folderZaPolje(polje.kljuc)}
+                disabled={disabled}
+                onChange={(nova) => {
+                  if (nova) onChange([...stavke, nova]);
+                }}
+              />
+            )}
+
+            <p className="text-xs text-stone-500">
+              {stavke.length} / {polje.maxStavki}
+            </p>
+          </div>
+          {greskaIspod}
+        </Natpis>
+      );
+    }
 
     case "lista":
       // Liste ima `ListaObrasca`, jer traže dodavanje, brisanje i pomeranje
