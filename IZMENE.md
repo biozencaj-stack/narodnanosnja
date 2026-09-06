@@ -5,15 +5,20 @@ na koje se naišlo. Namenjeno je i tebi i svakom ko posle preuzme rad.
 
 Poslednja dopuna: 31. avgust 2026.
 
-> **Aktuelni operativni presek — 31. avgust 2026.** Prodavnica je sada uživo
-> na <https://narodnanosnja.rs>, sa HTTPS-om i namerno isključenim
-> indeksiranjem. Aktivni produkcijski kod je
-> `2efbb76d4adcfa8d1e5fe335cb59f411d0c65cbe`. PostgreSQL ima svih osam
-> migracija iz aktuelnog lanca, runtime nalog ima ograničene CRUD grantove nad
-> 42 eksplicitne aplikacione tabele, a novi administratorski nalog je napravljen
-> i proverena je stvarna prijava. Odeljci XXIII–XXVII na kraju ovog fajla
-> predstavljaju trenutno stanje i zamenjuju starije istorijske tvrdnje da V2
-> još nije javno objavljen.
+> **Operativni presek na dan 31. avgusta 2026.** Prodavnica je tada puštena
+> uživo na <https://narodnanosnja.rs>, sa HTTPS-om i namerno isključenim
+> indeksiranjem. Aktivni produkcijski kod je bio
+> `2efbb76d4adcfa8d1e5fe335cb59f411d0c65cbe`. PostgreSQL je imao osam migracija
+> iz tadašnjeg lanca, runtime nalog ograničene CRUD grantove nad 42 eksplicitne
+> aplikacione tabele, a novi administratorski nalog je napravljen i proverena je
+> stvarna prijava. Odeljci XXIII–XXVII na kraju ovog fajla zamenjuju starije
+> istorijske tvrdnje da V2 još nije javno objavljen.
+>
+> **Ovo više nije trenutno stanje.** Od 5. septembra 2026. baza ima svih
+> **devet** migracija, a grana `verzija/v2.0-univerzalna-platforma` je odmakla
+> na `104e1af` sa sekcijama stranica. Za stanje posle ovog datuma čitaj
+> `docs/DETALJAN-IZVESTAJ-RADA-DO-2026-09-05.md` i `docs/V2-ROLL-OUT.md`;
+> ovaj odeljak zadrži kao datirani zapis, ne kao opis produkcije.
 
 ## Gde je koji dokument
 
