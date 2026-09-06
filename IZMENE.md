@@ -3,7 +3,17 @@
 Zapis svega što je urađeno na projektu narodne nošnje, sa razlozima i zamkama
 na koje se naišlo. Namenjeno je i tebi i svakom ko posle preuzme rad.
 
-Poslednja dopuna: 30. avgust 2026.
+Poslednja dopuna: 31. avgust 2026.
+
+> **Aktuelni operativni presek — 31. avgust 2026.** Prodavnica je sada uživo
+> na <https://narodnanosnja.rs>, sa HTTPS-om i namerno isključenim
+> indeksiranjem. Aktivni produkcijski kod je
+> `2efbb76d4adcfa8d1e5fe335cb59f411d0c65cbe`. PostgreSQL ima svih osam
+> migracija iz aktuelnog lanca, runtime nalog ima ograničene CRUD grantove nad
+> 42 eksplicitne aplikacione tabele, a novi administratorski nalog je napravljen
+> i proverena je stvarna prijava. Odeljci XXIII–XXVII na kraju ovog fajla
+> predstavljaju trenutno stanje i zamenjuju starije istorijske tvrdnje da V2
+> još nije javno objavljen.
 
 ## Gde je koji dokument
 
@@ -11,9 +21,9 @@ Zapisa ima više i lako je otvoriti pogrešan. Poređano po dubini:
 
 | Dokument | Obim | Šta pokriva |
 | --- | --- | --- |
-| **`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-08-30.md`** | 35 glavnih odeljaka | **Konsolidovan presek svega urađenog.** Implementirano stanje, razlozi, Git/PR/CI dokazi, ključni fajlovi, P0/P1/P2 dug, preporučeni redosled i produkcioni checklist |
-| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 43 odeljka | **Najdetaljniji zapis.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD, poznati blokatori |
-| Ovaj fajl (`IZMENE.md`) | sažeti dnevnik | Hronologija i odluke — zašto je nešto urađeno tako |
+| **`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-08-30.md`** | 36 glavnih odeljaka | **Konsolidovan presek rada do verified-login etape.** Implementirano stanje, razlozi, Git/PR/CI dokazi, ključni fajlovi, P0/P1/P2 dug, preporučeni redosled i tadašnji produkcioni checklist |
+| **`docs/DETALJAN-DNEVNIK-IZMENA.md`** | 44 odeljka | **Najdetaljniji presek razvoja do verified-login etape.** Svaka V2 izmena, fajl po fajl: bezbednosne granice, checkout, admin politika, Prisma šema, CI/CD i tada poznati blokatori |
+| **Ovaj fajl (`IZMENE.md`)** | hronološki master dnevnik | Celokupna istorija, odluke i najnoviji operativni presek, uključujući DB-authoritative session rad i produkciju od 31. avgusta |
 | `docs/ARCHITECTURE-V2.md` | 4 KB | Arhitektonske granice platforme |
 | `docs/CATALOG-MIGRATION-PLAN.md` | 10 KB | Redosled prelaska na generički katalog |
 | `docs/V2-ROLL-OUT.md` | 6 KB | Postupak puštanja V2 u produkciju |
@@ -21,11 +31,12 @@ Zapisa ima više i lako je otvoriti pogrešan. Poređano po dubini:
 | `docs/PRISMA-BASELINE.md` | 3 KB | Baseline migracija |
 | `PREGLED_PROJEKTA_2026-08-29.md` | 770 linija | U repou prezentacionog sajta — read-only pregled **oba** dela projekta |
 
-Ako tražiš objedinjeno „šta je urađeno i šta je ostalo“ — otvori
-`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-08-30.md`. Ako tražiš hronološki zapis
-svakog razvojnog preseka i pojedinačnih izmena — otvori
-`docs/DETALJAN-DNEVNIK-IZMENA.md`. Ovaj fajl je ulazna tačka i objašnjava
-razloge, ne pojedinačne izmene.
+Ako tražiš aktuelno „šta je urađeno i šta je ostalo“, ovaj fajl je sada
+merodavna ulazna tačka. Za veoma dubok pregled ranijih V2 izmena otvori
+`docs/DETALJAN-IZVESTAJ-RADA-DO-2026-08-30.md` i
+`docs/DETALJAN-DNEVNIK-IZMENA.md`; za session arhitekturu i migraciju
+pojedinačnih potrošača otvori
+`docs/DB-AUTORITATIVNE-SESIJE-PLAN-I-DNEVNIK.md`.
 
 ---
 
@@ -37,7 +48,7 @@ avgusta — u **jednom zajedničkom GitHub repozitorijumu**:
 | Deo | Radni direktorijum | Grana na GitHubu | Stanje |
 | --- | --- | --- | --- |
 | **Prezentacioni sajt** | `~/Desktop/narodnja nosnja` | `main` | Uživo na GitHub Pages |
-| **Prodavnica** | `~/Desktop/narodnanosnja-prodavnica` | `verzija/v2.0-univerzalna-platforma` | Radi na serveru, nije puštena u produkciju |
+| **Prodavnica** | `~/Desktop/narodnanosnja-prodavnica` | `verzija/v2.0-univerzalna-platforma` | **Produkcija je uživo** na `https://narodnanosnja.rs`; aktivni SHA `2efbb76` |
 
 Oba guraju u `biozencaj-stack/narodnanosnja`.
 
@@ -1991,3 +2002,1311 @@ Main-push workflow koji na svaku promenu `main` grane diže novu javnu verziju
 sajta ostaje **isključivo poslednja sekcija ukupnog plana**, posle session
 revalidacije/opoziva, shared limitera/trusted proxy-ja, outbox/hash-only rada i
 svih ostalih produkcionih gate-ova.
+
+---
+
+## XXIII. DB-autoritativne sesije i migracija session potrošača — 30–31. avgust 2026.
+
+Ova etapa je nastala zato što potpisani NextAuth JWT sam po sebi nije dovoljan
+dokaz da je sesija i dalje dozvoljena. Pre ove izmene, token je mogao da nosi
+staru ulogu, stari verification status ili dozvolu koja je u bazi već opozvana.
+Promena lozinke, reset lozinke, promena privilegije ili promena centralne auth
+politike zato nisu pouzdano prekidali već izdate rolling JWT sesije na drugim
+uređajima.
+
+Kompletan arhitektonski dnevnik ove etape nalazi se u
+`docs/DB-AUTORITATIVNE-SESIJE-PLAN-I-DNEVNIK.md`. Ovaj odeljak daje
+objedinjen pregled šta je stvarno dodato, šta je povezano u aktivni kod, šta je
+pušteno na server i šta je i dalje namerno dormantno.
+
+### XXIII.1. Izabrani model: JWT kao nosilac, PostgreSQL kao autoritet
+
+Novi V2 model zadržava potpisani JWT, ali ga svodi na nosioca ograničenog skupa
+claim-ova. Konačna serverska odluka treba da potvrdi u PostgreSQL-u da:
+
+- konkretan Session red još postoji;
+- Session pripada tačnom User redu;
+- apsolutni rok nije istekao po PostgreSQL satu;
+- `User.authSessionRevision` se poklapa sa revision vrednošću u sesiji;
+- `AuthPolicyState.revision` se poklapa sa policy revision vrednošću u sesiji;
+- trenutna uloga, profil i email-verification stanje iz baze dozvoljavaju
+  zahtev.
+
+Interna validacija razlikuje tri ishoda:
+
+| Ishod | Značenje | Dozvoljeno ponašanje |
+| --- | --- | --- |
+| `valid` | Token, Session, User, revizije, politika i rok su potvrđeni | vratiti svež minimalni principal |
+| `invalid` | Red nedostaje, opozvan je, istekao je ili se ugovor ne poklapa | tretirati kao nevažeću sesiju |
+| `unavailable` | Baza ili autoritativna provera nisu dostupni | fail-closed `503`; nikada guest fallback za zaštićeni tok |
+
+Pozitivan cross-request cache nije uveden. To je namerno: password/role/policy
+revokacija ne sme imati skriveni cache TTL u kome stara dozvola još važi.
+
+### XXIII.2. Session identitet, HMAC i apsolutni rok
+
+Novi session identitet ima nasumičan 256-bitni `sid`:
+
+- raw `sid` ostaje samo u potpisanom JWT-u;
+- baza u `Session.sessionToken` čuva samo purpose-separated HMAC-SHA256 digest;
+- canonical storage oblik je `v1:` plus 64 mala heksadecimalna znaka;
+- read-only krađa baze zato ne daje direktan browser bearer credential;
+- isti digest se koristi za insert, exact lookup i exact revoke.
+
+Claim ugovor je sveden na `sv/sub/sid/ur/pr/sat/sae`:
+
+- `sv` — verzija session ugovora;
+- `sub` — User ID;
+- `sid` — canonical raw session ID unutar potpisanog tokena;
+- `ur` — User auth session revision;
+- `pr` — centralna auth-policy revision;
+- `sat` — apsolutno vreme izdavanja;
+- `sae` — apsolutno vreme isteka.
+
+`sae - sat` ne sme preći 24 sata. Refresh ne dobija novi 24-časovni prozor:
+custom codec ograničava novi kriptografski `exp` na ostatak originalnog `sae`.
+Time rolling NextAuth ponašanje ne može produžavati jednu sesiju beskonačno.
+
+Edge-safe parser i Node-only kriptografija su razdvojeni:
+
+- `lib/auth/session-claims-edge.ts` nema `node:*` ili `Buffer` dependency i
+  može bezbedno u Edge/Proxy bundle;
+- `lib/auth/session-claims.ts` sadrži Node `randomBytes` i HMAC deo;
+- `lib/auth/session-jwt.ts` implementira strict, nerolling NextAuth
+  encode/decode sloj;
+- statički test ruši build ako Edge import lanac ponovo povuče Node API.
+
+### XXIII.3. Prisma expand migracija
+
+Dodate su kompatibilne, expand-only promene:
+
+- `User.authSessionRevision Int @default(0)`;
+- `Session.authSessionRevision Int?`;
+- `Session.authPolicyRevision Int?`;
+- `Session.issuedAt DateTime?`;
+- indeks nad `Session.expires`;
+- singleton `AuthPolicyState` sa revizijom, `audit|staged|strict` politikom,
+  opcionim staged deadline-om i timestampovima.
+
+Migracija je
+`prisma/migrations/20260830030000_expand_authoritative_sessions/migration.sql`.
+Session metadata je namerno nullable i bez defaulta, tako da stari i novi
+procesi ne prave lažno kompletne redove. DB constrainti razlikuju:
+
+- legacy Session: sva tri nova metadata polja su `NULL`;
+- V2 Session: sva tri polja postoje, revizije su u dozvoljenom opsegu,
+  `expires > issuedAt`, rok je najviše 24 sata i token je canonical HMAC
+  digest.
+
+`AuthPolicyState` može imati samo `id=1`. Početni red je
+`revision=1, policy='audit'`, bez staged deadline-a. Migracija koristi
+kontrolisane timeout-e i UTC u migracionoj transakciji. Dodatni preflight
+`scripts/auth-session-expand-preflight.sql` read-only proverava da nijedan
+postojeći legacy token već ne zauzima rezervisani `v1:<64 hex>` namespace.
+
+`scripts/db-invariant-smoke.sql` je proširen pozitivnim i negativnim fixture
+slučajevima za User revision, legacy/partial/V2 Session oblike, rok, HMAC
+format i singleton policy ugovor. Fixture radi u transakciji koja se na kraju
+rollback-uje.
+
+### XXIII.4. Dormantni autoritativni core
+
+Dodati su moduli koji formiraju buduću V2 granicu:
+
+- `lib/auth/auth-policy-state.ts` — strict parser centralnog singletona;
+- `lib/auth/authoritative-session-database.ts` — jedan PostgreSQL snapshot za
+  Session, User, policy i DB sat;
+- `lib/auth/authoritative-session-guard.ts` — strogo cookie decode → HMAC → DB
+  validacija ponašanje;
+- `lib/auth/authoritative-session-access.ts` — centralna customer/admin
+  tri-state access semantika;
+- `lib/auth/authoritative-session-server.ts` — Node server adapter;
+- `lib/auth/session-jwt.ts` — versioned, nerolling token codec;
+- prateći unit, source-safety i opt-in real-PostgreSQL testovi.
+
+Jedan DB snapshot exact poredi JWT, Session, User i policy revision, User ID,
+issued-at i absolute expiry. Vraća samo svež principal; raw SID, JWT i HMAC
+digest se ne vraćaju višim poslovnim slojevima.
+
+DB outage se ne prevodi u anonimnog korisnika. Za zahtev koji već nosi session
+credential to bi bio authorization fail-open, pa se vraća retryable coarse
+greška.
+
+### XXIII.5. Atomska revokacija pri security write operacijama
+
+Security write tokovi su prošireni tako da promena poverljivog stanja u istoj
+transakciji:
+
+1. zaključava User po unapred definisanom redosledu;
+2. radi exact credential/state proveru;
+3. menja lozinku, ulogu ili privileged stanje;
+4. povećava `authSessionRevision` za jedan;
+5. briše sve Session redove tog korisnika;
+6. čisti pripadajuće verification/reset credentiale;
+7. tek tada commit-uje.
+
+Obuhvaćeni tokovi su:
+
+- password-reset confirm;
+- autentifikovana promena lozinke;
+- privileged ADMIN/OPERATOR provisioning;
+- demo-user seed u strogo ograničenoj test/demo bazi.
+
+Ako revision bump, Session delete ili kasniji cleanup zakaže, cela mutacija se
+rollback-uje. Nema stanja u kome je password promenjen, ali su stare sesije
+slučajno ostale važeće zbog parcijalnog commita.
+
+### XXIII.6. Dormantno izdavanje i rotacija V2 sesije
+
+Dodate su testabilne orkestracije za buduću aktivaciju:
+
+- credentials login može u jednoj transakciji zaključati User i policy,
+  ponovo proveriti password/profile snapshot, pročitati DB sat, primeniti
+  policy i insertovati HMAC-only Session red;
+- email verification može opozvati stare sesije i izdati tačno jednu novu V2
+  sesiju u istom commit-u u kome claim-uje verification credential;
+- timestamp vrednosti su usklađene sa PostgreSQL `TIMESTAMP(3)` ugovorom;
+- stale bcrypt/profile/policy snapshot, expiry tokom lock wait-a ili cookie
+  priprema koja više ne odgovara User redu završavaju fail-closed.
+
+Ove orkestracije su namerno ostale dormantne: nisu parcijalno povezane na
+`authOptions`, jer bi istovremeno aktivan legacy i V2 issuer napravili dve
+neusklađene klase credentiala.
+
+### XXIII.7. Pouzdan current-session logout core
+
+Built-in browser signout briše cookie, ali ne dokazuje da je DB Session red
+opozvan. Zato je dodat dormantni logout redosled:
+
+1. trusted same-origin POST;
+2. strict V2 JWT decode;
+3. HMAC iz `sid` claim-a;
+4. exact delete samo tekućeg Session reda;
+5. commit;
+6. tek zatim bounded čišćenje versioned, legacy i chunked cookie imena.
+
+Ako DB revoke ne uspe, rezultat je coarse `503`; sistem ne tvrdi da je logout
+završen samo zato što je browser cookie lokalno uklonjen. Testovi proveravaju
+exact revoke, replay i očuvanje sibling sesije na drugom uređaju.
+
+### XXIII.8. Neutralni server-session facade
+
+Uveden je zajednički ugovor u `lib/auth/server-session-contract.ts` i neutralni
+facade u `lib/auth/server-session.ts`. Poslovna ruta više ne treba da zna da li
+ispod nje radi legacy NextAuth ili budući DB-authoritative validator.
+
+Važna trenutna činjenica: produkcijski facade je u ovom preseku i dalje
+**legacy-only**. To omogućava kontrolisanu migraciju call-site-ova bez
+parcijalnog cookie cutovera. Sam deploy V2 fajlova zato nije automatski
+aktivirao dormantni session codec, V2 cookie, proxy cutover ili autoritativni
+logout endpoint.
+
+`lib/auth/server-session-callsite-inventory.test.ts` je AST/source kapija koja:
+
+- broji sve raw `getServerSession`, `getToken` i neutralne session potrošače;
+- održava exact allowlistu još nemigriranih call-site-ova;
+- zahteva kanonski import i request-lazy resolver oblik;
+- odbija module-scope session promise ili keš;
+- odbija spread/computed/duplicate dependency override;
+- odbija alternativni CommonJS, dynamic import, re-export ili namespace put;
+- sprečava da brisanje autentifikacije izgleda kao uspešna migracija.
+
+Posle wishlist batch-a frontier je:
+
+- raw legacy potrošači: `93` poziva u `52` fajla;
+- raw zajedno sa jednim centralnim facade čitanjem: `94/53`;
+- neutralni resolver pozivi: `4` u `2` route fajla;
+- neutralni resolver importi: `2/2`;
+- `getToken`: nepromenjeno `2/2`.
+
+### XXIII.9. Migriran consumer: checkout-data GET
+
+`GET /api/user/checkout-data` je prvi realni consumer prebačen na neutralni
+facade. Ruta je podeljena na:
+
+- `lib/checkout/checkout-data-route.ts` — dependency-injected HTTP factory;
+- `lib/checkout/checkout-data-route.test.ts` — izolovana session/HTTP matrica;
+- `app/api/user/checkout-data/route.ts` — tanak production wiring.
+
+Ugovor je:
+
+- anonymous → postojeći `401`, bez DB poziva;
+- unavailable, resolver throw ili malformed session → generički `503`;
+- authenticated + missing User → postojeći `404`;
+- DB lookup failure → coarse `500`;
+- uspeh → samo eksplicitni profil i prva default adresa.
+
+Svi odgovori nose `private, no-store`, `Pragma: no-cache`, `no-referrer` i
+`noindex/noarchive` headere. Javna projekcija se konstruiše od tačno
+dozvoljenih polja, tako da skrivena adapter polja ili sopstveni `toJSON` ne mogu
+proširiti PII payload.
+
+### XXIII.10. Migriran consumer: wishlist GET/POST/DELETE
+
+Commit `ee2ac5f7e951f38572be51fddced2f5d1d94f539` prebacio je sva tri
+`/api/wishlist` metoda sa direktnog `getServerSession(authOptions)` poziva na
+request-lazy `resolveServerSession()` composition.
+
+Promena je raspoređena na:
+
+- `app/api/wishlist/route.ts` — tanak Prisma/facade composition root;
+- `lib/wishlist/wishlist-route.ts` — stateless GET/POST/DELETE fabrike;
+- `lib/wishlist/wishlist-route.test.ts` — 578 linija izolovanih testova;
+- prošireni AST inventory gate;
+- dopunjeni session dnevnik.
+
+Bezbednosni i poslovni ugovor:
+
+- vlasnik uvek dolazi iz `authenticated.principal.id`;
+- eventualni `userId` iz request body-ja se ignoriše;
+- auth se završava pre čitanja POST/DELETE body-ja;
+- anonymous ostaje `401`, a session unavailable/throw/malformed je `503`;
+- GET čita samo User-ove redove, sortira po `createdAt desc` i vraća samo
+  `productId`;
+- POST zadržava atomski compound-key `upsert`;
+- DELETE koristi owner-scoped `deleteMany` i ostaje idempotentan za `count=0`;
+- adapter rezultat se ručno projektuje da skrivena polja ili `toJSON` ne
+  prošire odgovor;
+- reporter dobija samo frozen `{ method, stage }`, bez exceptiona, User ID-a,
+  product ID-a ili Prisma reda;
+- svi odgovori imaju private/no-store/no-referrer/noindex headere.
+
+Commit menja pet fajlova, sa 1.885 dodatih i 200 uklonjenih linija. Ne menja
+Prisma šemu, migracije ni produkcione podatke.
+
+### XXIII.11. Commit i CI trag ove etape
+
+| Commit | Svrha |
+| --- | --- |
+| `9316e0e` | authoritative-session expand šema, migracija i DB invarijante |
+| `baa39bd` | dormantni SID/HMAC/policy/JWT/DB validator core |
+| `0790ccd` | atomska session revokacija u security write tokovima |
+| `098cfcf` | dormantni credentials i verification V2 session issuer |
+| `027b806` | transaction-local UTC korekcija |
+| `e773a91` | apsolutni timestamp i coarse-stage dijagnostika |
+| `6a42e49` | kanonski real-PG credentials fixture-i |
+| `6af8114` | dormantni current-session logout core |
+| `c9f7849` | dormantni autoritativni request guard |
+| `d08fa32` | neutralni tranzicioni server-session facade |
+| `23501d5` | mrtvi route cleanup i exact session call-site inventory |
+| `7b81da6` | checkout-data customer consumer migracija |
+| `ee2ac5f` | wishlist GET/POST/DELETE consumer migracija |
+
+Dokumentovani exact-head GitHub run-ovi za pojedinačne faze su:
+
+- `33326003849` — prvi expand;
+- `33327741687` — dormantni core;
+- `33328617960` — security revocation;
+- `33330847915` — završni zeleni issuance/rotation presek;
+- `33331632579` — logout core;
+- `33333262290` — dormantni guard;
+- `33334129994` — tranzicioni facade;
+- `33336276720` — source inventory;
+- `33342696902` — checkout-data consumer.
+
+Wishlist presek je lokalno prošao:
+
+- `12/12` factory HTTP/session/ownership testova;
+- `3/3` AST inventory testova;
+- kompletan suite `450` ukupno, `424` pass, `26` očekivanih opt-in
+  real-PostgreSQL skipova i `0` fail;
+- TypeScript, ciljane lint provere i `git diff --check`;
+- production build i `93/93` statičke stranice.
+
+### XXIII.12. Šta je deployovano, a šta nije aktivirano
+
+Kod i expand šema iz ove etape postoje na produkcionom serveru, a migracija je
+primenjena. Međutim, to ne znači da je kompletan DB-authoritative session
+cutover završen.
+
+Deployovano je:
+
+- Prisma expand šema i `AuthPolicyState` audit singleton;
+- dormantni V2 claim/HMAC/validator/issuer/logout moduli;
+- security-write revision/revocation ponašanje;
+- neutralni facade;
+- checkout-data i wishlist call-site migracije;
+- svi prateći testovi i source inventory gate.
+
+Namerno nije aktivirano:
+
+- V2 versioned cookie kao jedini browser credential;
+- custom V2 encode/decode u aktivnom `authOptions` lancu;
+- atomski V2 Session insert pri svakoj produkcionoj prijavi;
+- proxy cutover sa JWT role snapshot-a na Node DB guard;
+- autoritativni current-session logout HTTP endpoint;
+- contract migracija koja bi legacy Session metadata učinila obaveznim;
+- kompletna migracija preostalih raw session potrošača;
+- uklanjanje svih legacy/session preflight blokera.
+
+Zato se trenutno stanje opisuje kao: **schema/core deployed, active auth
+cutover nije završen**. Ovo je važna granica za svaku buduću izmenu login,
+logout, role ili proxy logike.
+
+---
+
+## XXIV. Fail-closed zabrana indeksiranja — 31. avgust 2026.
+
+Pre puštanja na glavni domen traženo je da prodavnica bude javno dostupna za
+pregled i dalji rad, ali da je Google i drugi pretraživači još ne indeksiraju.
+To nije rešeno samo jednim `robots.txt` pravilom, već slojevitom aplikacionom i
+HTTP zaštitom u commitu
+`2efbb76d4adcfa8d1e5fe335cb59f411d0c65cbe` (`feat(seo): keep storefront out
+of search by default`).
+
+Commit menja šest fajlova, dodaje 79 i uklanja 12 linija. Ne menja Prisma šemu,
+migracije, bazu ili podatke.
+
+### XXIV.1. Jedan centralni environment prekidač
+
+U `.env.example` i `lib/config/search-indexing.ts` uvedeno je:
+
+```env
+SEARCH_INDEXING_ENABLED="false"
+```
+
+Jedina vrednost koja omogućava indeksiranje je tačan string `"true"`:
+
+```ts
+environment.SEARCH_INDEXING_ENABLED === "true"
+```
+
+Nema trimovanja, case-insensitive parsera ili tolerantnog fallbacka. Sledeće
+vrednosti sve ostavljaju indeksiranje isključeno:
+
+- promenljiva nije postavljena;
+- `false`;
+- `TRUE`;
+- ` true`;
+- prazan string;
+- bilo koja nepoznata vrednost.
+
+Razlog je fail-closed konfiguracija: typo ili zaboravljena promenljiva ne smeju
+slučajno otvoriti nezavršen sajt za indeksiranje.
+
+`lib/config/search-indexing.test.ts` zaključava ovu matricu. Testira prazno
+okruženje, `false`, pogrešan case, okolni razmak i jedinu dozvoljenu vrednost
+`true`.
+
+### XXIV.2. HTML metadata sloj
+
+`app/layout.tsx` u `generateMetadata()` čita centralni prekidač.
+
+Kada je indeksiranje isključeno, Next metadata generiše:
+
+- `robots.index = false`;
+- `robots.follow = false`;
+- `googleBot.index = false`;
+- `googleBot.follow = false`.
+
+Kada se u budućnosti eksplicitno uključi:
+
+- `index` i `follow` postaju `true`;
+- GoogleBot dobija normalno indeksiranje i praćenje;
+- dozvoljeni su veliki image preview, neograničen snippet i video preview.
+
+Time HTML stranica sama nosi noindex signal, nezavisno od reverse proxy-ja.
+
+### XXIV.3. HTTP `X-Robots-Tag` sloj
+
+`next.config.ts` dodaje:
+
+```text
+X-Robots-Tag: noindex, nofollow, noarchive
+```
+
+Kada je indexing isključen, header je deo globalnih `securityHeaders` i
+primenjuje se na `/:path*`. To pokriva HTML, API i druge odgovore koje crawler
+može otkriti.
+
+Kada se indexing uključi, globalni header se uklanja, ali osetljive credential
+rute ostaju trajno noindex:
+
+- `/newsletter/odjava`;
+- `/api/newsletter/unsubscribe`;
+- `/verify-email/:path*`;
+- `/api/auth/verify-email/:path*`;
+- `/reset-password/:token`.
+
+Kompozicija je urađena tako da u trenutnom disabled režimu isti header ne bude
+dodat dvaput kroz globalni i sensitive-route skup.
+
+Na Nginx ivici je u produkciji dodat isti noindex signal kao dodatna odbrana.
+Javna provera je potvrdila da finalni odgovor nosi header samo jednom, bez
+duplikata koji bi otežali operativno tumačenje.
+
+### XXIV.4. `robots.txt` ponašanje
+
+`app/robots.ts` u disabled režimu namerno vraća:
+
+```text
+User-agent: *
+Allow: /
+```
+
+Ovo na prvi pogled može delovati obrnuto, ali je namerno: crawler mora moći da
+učita javnu stranicu i pročita njen `noindex` metadata/header. Potpuni
+`Disallow: /` može sprečiti Google da vidi noindex i ostaviti već otkriven URL
+u rezultatima bez sadržaja.
+
+Dok je indexing isključen:
+
+- crawler može da pročita noindex signal;
+- sitemap se ne oglašava u `robots.txt`;
+- stranica ostaje dostupna direktnim URL-om;
+- noindex nije i ne predstavlja autentifikaciju.
+
+Kada se indexing jednom eksplicitno uključi, vraća se normalan ugovor:
+
+- `/` je dozvoljen;
+- `/api/`, `/cart`, `/checkout`, `/payment/` i `/_next/` su zabranjeni;
+- oglašava se `${baseUrl}/sitemap.xml`.
+
+### XXIV.5. Produkciona konfiguracija i provera
+
+U produkcionom `.env` je eksplicitno ostavljeno:
+
+```env
+SEARCH_INDEXING_ENABLED=false
+```
+
+Javni smoke je proverio:
+
+- noindex robots metadata u HTML-u;
+- `X-Robots-Tag: noindex, nofollow, noarchive` na odgovoru;
+- `robots.txt` dozvoljava čitanje `/`;
+- disabled `robots.txt` ne oglašava sitemap;
+- Nginx i aplikacija ne proizvode duplirani robots header.
+
+Indeksiranje se u budućnosti ne uključuje samo promenom Nginx-a ili samo
+uklanjanjem meta taga. Potreban je pregledan config/deploy presek u kome se
+`SEARCH_INDEXING_ENABLED` promeni na tačno `true`, aplikacija ponovo izgradi i
+javno proveri HTML, header, robots i sitemap ponašanje.
+
+### XXIV.6. Šta noindex ne rešava
+
+Noindex nije access-control mehanizam. U trenutnom režimu:
+
+- javne stranice su i dalje javno dostupne svakome ko zna URL;
+- privatni/admin/API tokovi i dalje moraju imati sopstvenu autorizaciju;
+- URL može biti podeljen ručno;
+- pretraživaču je data direktiva, ne kriptografska zabrana;
+- uklanjanje već indeksiranog URL-a može zavisiti od sledećeg crawler obilaska.
+
+Zato se ova promena opisuje kao kontrola vidljivosti u pretraživačima, ne kao
+zamena za login, proxy, route guard ili privatne response headere.
+
+---
+
+## XXV. Produkcijsko puštanje na `narodnanosnja.rs` — 31. avgust 2026.
+
+Po eksplicitnom odobrenju, commitovi `ee2ac5f` i `2efbb76` su poslati u
+`biozencaj-stack/narodnanosnja`, a VPS `159.69.157.123` je korišćen za
+produkciju glavnog domena. Remote feature grana i kanonska
+`verzija/v2.0-univerzalna-platforma` sada pokazuju na `2efbb76`.
+
+Ovo je bio posebno odobren ručni produkcijski rollout. Nije pravljen
+`prodavnica-v2-*` release tag i nije se tvrdilo da je tag-gated GitHub workflow
+izvršio ovu objavu. Aplikacija je ipak postavljena u istu release/current
+strukturu i proverena istim SHA-aware health principom.
+
+### XXV.1. Aktivni release i proces
+
+Aktivni release je:
+
+```text
+/var/www/narodnanosnja/releases/2efbb76d4adcfa8d1e5fe335cb59f411d0c65cbe-9000
+```
+
+Simbolički link:
+
+```text
+/var/www/narodnanosnja/current
+```
+
+pokazuje tačno na taj direktorijum. Time je aktivna verzija eksplicitno vezana
+za Git SHA, umesto za neodređeni sadržaj jednog promenljivog direktorijuma.
+
+PM2 stanje:
+
+- proces: `narodnanosnja`;
+- režim: `fork`;
+- stanje: `online`;
+- interni port: `3007`;
+- cwd: aktivni release direktorijum;
+- Next.js: `16.1.6` u izgrađenom release-u;
+- u potvrđenom preseku: `0` restarta.
+
+Release i PM2 trenutno rade kao `root`. To funkcioniše, ali nije konačan
+least-privilege operativni model; budući hardening treba da uvede ograničenog
+deploy/runtime korisnika sa tačno potrebnim pristupom direktorijumima i PM2
+procesu.
+
+### XXV.2. Produkcijski `.env` bez izlaganja tajni
+
+Shared produkcijski environment ostaje van Git repozitorijuma:
+
+```text
+/var/www/narodnanosnja/.env
+```
+
+Potvrđeno je:
+
+- vlasnik `root:root`;
+- mode `600`;
+- release koristi shared link, a ne kopiju tajni u source paketu;
+- tajne nisu ispisivane u dokument, Git diff ili javni health odgovor.
+
+Pre promene je napravljen mode-600 backup:
+
+```text
+/var/backups/narodnanosnja/env-20260831T114114Z-pre-release-2efbb76
+```
+
+Produkcione vrednosti su usklađene ovako:
+
+- `NEXTAUTH_URL` i javni storefront URL koriste konačni HTTPS apex domen;
+- `AUTH_VERIFIED_LOGIN_POLICY=audit`;
+- `SEARCH_INDEXING_ENABLED=false`;
+- kartično plaćanje ostaje isključeno;
+- HSTS ostaje isključen u ovoj prvoj TLS etapi;
+- `ORDER_ACCESS_SECRET` je odvojen, snažan 64-byte secret, različit od auth
+  secret-a;
+- stvarne DB, auth, order i SMTP tajne nisu upisane u ovaj dnevnik.
+
+`audit` za verified login znači da neverifikovani kompatibilni CUSTOMER tok
+još nije globalno prebačen na staged/strict enforcement. To ne znači da
+nevalidna timestamp ili policy invarijanta sme proći: korumpirano auth stanje i
+dalje fail-closed završava internim/generičkim login neuspehom.
+
+### XXV.3. DNS
+
+DNS je podešen tako da:
+
+- apex `narodnanosnja.rs` ima A zapis ka `159.69.157.123`;
+- `www.narodnanosnja.rs` je CNAME ka apex domenu i završava na istoj IPv4
+  adresi;
+- apex nema AAAA zapis, pa nema paralelnog IPv6 puta ka drugom serveru;
+- autoritativni nameserveri su `dns1.dwhost.net`, `dns2.dwhost.net` i
+  `dns3.dwhost.net`.
+
+Ovo je omogućilo izdavanje jednog sertifikata za apex i `www` i kanonsko
+preusmeravanje celog saobraćaja na jednu adresu.
+
+### XXV.4. Nginx domen konfiguracija
+
+Aktivni domen vhost je:
+
+```text
+/etc/nginx/sites-available/narodnanosnja-domain
+```
+
+Finalni tok:
+
+| Ulaz | Rezultat |
+| --- | --- |
+| `http://narodnanosnja.rs/...` | `301` na `https://narodnanosnja.rs/...` |
+| `http://www.narodnanosnja.rs/...` | `301` na apex HTTPS sa istom putanjom |
+| `https://www.narodnanosnja.rs/...` | `301` na apex HTTPS |
+| `https://narodnanosnja.rs/...` | reverse proxy na `127.0.0.1:3007` |
+
+Proxy prosleđuje standardne Host/forwarded podatke i koristi:
+
+- `client_max_body_size 15M`;
+- proxy buffer `16k`;
+- osam proxy buffera od `16k`;
+- busy buffer `32k`;
+- connect timeout `5s`;
+- send/read timeout `60s`.
+
+Na edge-u se dodaje:
+
+```text
+X-Robots-Tag: noindex, nofollow, noarchive
+```
+
+Upstream kopija istog headera je skrivena u Nginx kompoziciji, pa klijent
+dobija tačno jedan finalni header. `nginx -t` je prošao pre reload-a.
+
+Stari port-8090 vhost je ostao aktivan radi istorijske kompatibilnosti. To je
+dodatna javna površina koju kasnije treba eksplicitno zatvoriti ili svesti na
+redirect kada se potvrdi da je više ništa ne koristi.
+
+Sačuvane su Nginx rezervne kopije iz više tačaka: pre domena, pre proxy-buffer
+izmene, pre HTTPS-a i pre normalizacije HTTP/2 direktiva. One omogućavaju
+ručno poređenje ili povratak konfiguracije bez oslanjanja na pamćenje.
+
+### XXV.5. TLS i automatska obnova
+
+Let's Encrypt sertifikat ima:
+
+- CN: `narodnanosnja.rs`;
+- SAN: `narodnanosnja.rs` i `www.narodnanosnja.rs`;
+- issuer: `YE1`;
+- važenje: 31. avgust 2026. — 29. novembar 2026.
+
+`certbot.timer` je enabled i active i proverava obnovu dva puta dnevno.
+Kontrolisani renewal dry-run je prošao. Time nije provereno samo postojanje
+sertifikata, već i aktuelna automatizovana putanja njegove obnove.
+
+HSTS je namerno odsutan u prvom javnom preseku. Razlog je operativna
+reverzibilnost dok se ne potvrde stabilnost sertifikata, obnova, `www` redirect
+i svi subdomeni. Kada se HSTS kasnije uključi, treba ga uraditi kao zaseban
+pregledan korak, a ne usputnu promenu.
+
+### XXV.6. PostgreSQL backup i restore dokazi
+
+Pre migracije je napravljen custom-format backup:
+
+```text
+prod-20260831T112804Z-pre-migration-2efbb76.dump
+```
+
+Potvrđeno je:
+
+- veličina `119.698` bajtova;
+- vlasništvo root i mode `600`;
+- prateći `.sha256` checksum;
+- dodatni pre-release dump iste veličine;
+- schema-only SQL presek veličine `68.040` bajtova;
+- stariji backup setovi od 29. avgusta nisu obrisani.
+
+Backup nije tretiran kao dovoljan samo zato što fajl postoji. Napravljene su
+izolovane restore baze:
+
+- `narodnanosnja_restorecheck_2efbb76` — vraćen aktuelni presek, sa osam
+  migracija i 43 public tabele;
+- immediate pre-migration clone — istorijski presek sa četiri migracije i 42
+  public tabele.
+
+Drugi clone dokumentuje tačan prelaz sa starog produkcionog stanja, dok prvi
+potvrđuje da finalni backup zaista može da se pročita i obnovi.
+
+### XXV.7. Primena svih osam migracija
+
+Produkcija sada ima `8/8` migracija, bez pending ili rolled-back redova:
+
+1. `20260829000000_baseline_production_before_v2`;
+2. `20260829010000_add_payment_status_processing`;
+3. `20260829010100_add_payment_status_review`;
+4. `20260829020000_expand_v2_platform`;
+5. `20260830000000_expand_hashed_auth_tokens`;
+6. `20260830010000_expand_email_verification_cooldown`;
+7. `20260830020000_expand_verified_login_grace`;
+8. `20260830030000_expand_authoritative_sessions`.
+
+To znači da su uz ranije commerce/platform promene primenjeni i:
+
+- compat hash-first auth token storage;
+- verification email cooldown/fixed-window kolone;
+- nullable verified-login grace;
+- `authSessionRevision`, V2 Session metadata i `AuthPolicyState` singleton.
+
+Posle primene su provereni migration status i usklađenost sa aktuelnom Prisma
+šemom; nije ostao prijavljen schema drift. Produkciona baza sada ima 43 public
+tabele: 42 Prisma runtime tabele i `_prisma_migrations`.
+
+Stariji runbookovi koji kažu da produkcija ima samo četiri migracije ili da
+aktuelni lanac ima sedam predstavljaju istorijski presek i ne smeju se koristiti
+kao trenutna činjenica.
+
+### XXV.8. Least-privilege runtime grantovi
+
+Po eksplicitnom odobrenju, login rola `nosnja` dobila je samo:
+
+- `SELECT`;
+- `INSERT`;
+- `UPDATE`;
+- `DELETE`;
+
+nad sledeće 42 eksplicitne Prisma runtime tabele:
+
+1. `User`;
+2. `Session`;
+3. `AuthPolicyState`;
+4. `PasswordReset`;
+5. `EmailVerification`;
+6. `Wishlist`;
+7. `Address`;
+8. `Order`;
+9. `OrderItem`;
+10. `Transaction`;
+11. `PaymentEvent`;
+12. `Banner`;
+13. `Setting`;
+14. `SizeTable`;
+15. `TickerMessage`;
+16. `NewsletterSubscriber`;
+17. `Newsletter`;
+18. `NewsletterImage`;
+19. `ProductReview`;
+20. `Product`;
+21. `ProductVariant`;
+22. `ProductType`;
+23. `AttributeDefinition`;
+24. `ProductTypeAttribute`;
+25. `AttributeChoice`;
+26. `ProductAttributeValue`;
+27. `ProductAttributeSelectedChoice`;
+28. `ProductOption`;
+29. `ProductOptionValue`;
+30. `ProductVariantOptionValue`;
+31. `Color`;
+32. `Category`;
+33. `ProductCategory`;
+34. `Brand`;
+35. `ProductSize`;
+36. `Article`;
+37. `Promotion`;
+38. `PromotionProduct`;
+39. `CouponUsage`;
+40. `ChatFAQ`;
+41. `ChatMessage`;
+42. `StoreLocation`.
+
+Finalni grant audit je potvrdio:
+
+- `42 × 4 = 168` runtime table privilege-a;
+- nula runtime grantova nad `_prisma_migrations`;
+- nula default ACL/future table grantova;
+- višak `TRUNCATE`, `REFERENCES` i `TRIGGER` prava je opozvan;
+- eventualna ranija prava nad migration tabelom su opozvana;
+- `nosnja` jeste LOGIN rola, ali nije superuser, `CREATEDB`, `CREATEROLE`,
+  replication ili `BYPASSRLS` rola.
+
+`_prisma_migrations` zato ostaje vlasništvo/odgovornost migracionog operatora,
+a aplikacioni proces ne može da menja istoriju migracija.
+
+Važna posledica: postojeći `scripts/db-setup.sql`, koji aplikacionom korisniku
+daje široko vlasništvo i `GRANT ALL ON SCHEMA public`, više nije merodavan za
+ovu produkciju. Ne koristiti ga bez prerade na odvojenu migration-owner i
+runtime ulogu.
+
+### XXV.9. Javni i lokalni smoke testovi
+
+Posle aktivacije provereno je:
+
+| Provera | Rezultat |
+| --- | --- |
+| `GET /api/health` | `healthy`, DB connected, deployment exact `2efbb76...` |
+| `GET /` | `200`, bez Next error boundary-ja |
+| `GET /catalog` | `200`, katalog se renderuje |
+| `GET /login` | `200` |
+| `GET /admin` bez sesije | `307` na `/login?callbackUrl=%2Fadmin` |
+| products counts API | uspeh, vidi svih `18` proizvoda |
+| HTTP apex | `301` na apex HTTPS |
+| HTTPS `www` | `301` na apex HTTPS |
+| `robots.txt` | `User-agent: *`, `Allow: /`, bez sitemap-a |
+| robots header | tačno jedan `X-Robots-Tag` |
+| HSTS | namerno odsutan |
+
+Health endpoint je `no-store` i vraća deployment SHA. Zato uspešan `200` nije
+bio dovoljan: potvrđeno je da javni Nginx stvarno servira baš novi commit, a ne
+prethodni zdravi release.
+
+### XXV.10. Trenutne produkcione adrese
+
+- Storefront: <https://narodnanosnja.rs>
+- Katalog: <https://narodnanosnja.rs/catalog>
+- Prijava: <https://narodnanosnja.rs/login>
+- Admin: <https://narodnanosnja.rs/admin>
+- Health: <https://narodnanosnja.rs/api/health>
+
+Direktna IP/port adresa više nije kanonska korisnička adresa. Svi javni linkovi
+i auth callbackovi treba da koriste HTTPS apex domen.
+
+---
+
+## XXVI. Produkcioni administratorski nalog i login incident — 31. avgust 2026.
+
+Na zahtev je napravljen novi produkcioni administratorski nalog:
+
+```text
+info@designjust4you.com
+```
+
+Uloga je `ADMIN`. Jedan raniji administratorski nalog je ostao netaknut; novi
+nalog nije prepisao, obrisao ili degradirao postojeći admin red.
+
+### XXVI.1. Bezbedan način kreiranja
+
+Pre kreiranja je provereno da ciljni email ne postoji. Privremena lozinka je:
+
+- kriptografski generisana na samom VPS-u;
+- prosleđena `scripts/create-admin.ts` preko `--password-stdin`;
+- nije prosleđena kao `--password` argument;
+- nije upisana u shell command line, process list, Git ili ovaj dokument;
+- privremeno je čuvana samo u root-only mode-600 fajlu dok se ne potvrdi
+  stvarna prijava.
+
+CLI prihvata samo `ADMIN` ili `OPERATOR`, normalizuje email i za postojeći
+nalog zahteva eksplicitni `--update-existing`. Aplikacija čuva cost-12 bcrypt
+hash, ne čitljivu lozinku.
+
+### XXVI.2. Prva prijava i generički `401`
+
+Prvo kreiranje je vratilo uspeh, ali realan NextAuth login preko javnog HTTPS
+domena je vratio generički `401` / „Neispravan email ili lozinka“.
+
+Proverama je utvrđeno da nisu problem:
+
+- canonical email;
+- `ADMIN` uloga;
+- bcrypt cost ili format;
+- poređenje unete lozinke sa hashom;
+- verified vrednost kao takva;
+- PostgreSQL timezone, koji je `Etc/UTC`.
+
+Coarse server log je precizno ograničio kvar na:
+
+```text
+stage: POLICY_DECISION
+reason: INTERNAL_FAILURE
+```
+
+Bez emaila, User ID-a, hasha, lozinke ili raw exceptiona u logu.
+
+### XXVI.3. Tačan uzrok: timestamp invarijanta
+
+`provisionPrivilegedAccount()` je uradio sledeće:
+
+1. pročitao PostgreSQL `clock_timestamp()` kao `emailVerified`;
+2. tek zatim pozvao Prisma `user.create()`;
+3. prepustio `createdAt` bazi preko `@default(now())`.
+
+U konkretnom create-u `createdAt` je nastao oko dve milisekunde posle ranije
+pročitanog `emailVerified`. Red je zato privremeno imao:
+
+```text
+emailVerified < createdAt
+```
+
+`lib/auth/verified-login-policy.ts` namerno smatra to nemogućim/korumpiranim
+stanjem. Čak i `audit` režim može kompatibilno dozvoliti uredan neverifikovan
+nalog, ali ne sme da dozvoli vremenski nekonzistentan verified nalog. Zato je
+policy ispravno fail-closed odbio login.
+
+Ovo nije timezone kvar. PostgreSQL je bio UTC, a razlika nije bila dva sata,
+već samo nekoliko milisekundi između dva odvojena timestamp izvora.
+
+### XXVI.4. Sanacija konkretnog naloga
+
+Nije rađen ručni SQL `UPDATE`, jer bi on zaobišao session i credential cleanup.
+Ponovo je pokrenut zvanični CLI sa:
+
+```text
+--update-existing
+```
+
+i sa istom privremenom lozinkom preko stdin-a. Taj atomski put je:
+
+- ponovo upisao validan `emailVerified` posle postojećeg `createdAt`;
+- zadržao `ADMIN` ulogu;
+- povećao `authSessionRevision` na `1`;
+- opozvao DB Session redove naloga;
+- obrisao verification credentiale;
+- obrisao password-reset credentiale;
+- očistio verification grace/throttle polja.
+
+Posle sanacije je potvrđeno da je `emailVerified` `293 338` milisekundi
+(približno 4 minuta i 53,338 sekundi) posle `createdAt`, odnosno da hronološka
+invarijanta više nije prekršena.
+
+### XXVI.5. Stvarni end-to-end login dokaz
+
+Provera nije stala na bcrypt poređenju ili direktnom DB čitanju. Izvršen je
+stvarni javni NextAuth tok preko HTTPS domena:
+
+1. CSRF endpoint je vratio `200`;
+2. credentials callback je vratio `200`;
+3. izdat je session cookie;
+4. session endpoint je vratio User sa ulogom `ADMIN`;
+5. autentifikovani `GET /admin` je vratio `200`.
+
+Time je potvrđeno da zajedno rade domen, TLS, NextAuth callback URL, cookie,
+bcrypt, verified-login policy, DB nalog, role claim i admin layout.
+
+### XXVI.6. Jednokratna predaja i brisanje privremene kopije
+
+Privremena lozinka nije automatski izvučena sa servera. Zbog prenosa tajne u
+ovu sesiju traženo je posebno eksplicitno odobrenje. Tek posle odobrenja je:
+
+1. provereno da root-only fajl postoji;
+2. provereno da ima mode `600`;
+3. vrednost pročitana jednom;
+4. serverski fajl obrisan pre prikaza korisniku;
+5. potvrđeno da fajl više ne postoji.
+
+Ovaj dokument namerno ne sadrži lozinku. Na serveru je ostao samo bcrypt hash,
+iz kog se originalna lozinka ne može pročitati kroz aplikaciju. Lozinku treba
+promeniti posle prve korisničke prijave.
+
+### XXVI.7. Otvoren trajni kodni problem
+
+Konkretan produkcioni nalog je popravljen, ali create put u izvoru još može da
+ponovi isti milisekundski race za budući ADMIN/OPERATOR nalog.
+
+Problem je u `lib/auth/privileged-account.ts`:
+
+- `PrivilegedAccountCreateWrite` nema eksplicitni `createdAt`/`updatedAt`;
+- `verifiedAt` se čita pre `createUser()`;
+- Prisma/baza zatim nezavisno određuju create timestamp.
+
+Minimalna trajna popravka treba da:
+
+1. doda `createdAt: Date` i `updatedAt: Date` u create write ugovor;
+2. pri novom privileged create-u postavi `createdAt`, `updatedAt` i
+   `emailVerified` na isti već validirani DB `verifiedAt`;
+3. ne menja update granu niti `readDatabaseTime()` cast;
+4. proširi unit očekivanje exact create payloadom;
+5. proširi real-PG concurrent-create test proverom da je
+   `createdAt.getTime() === emailVerified.getTime()`;
+6. opciono odmah provuče novi red kroz verified policy evaluator i očekuje
+   `VERIFIED`.
+
+Ova popravka nije uključena u `2efbb76` i nije tiho predstavljena kao završena.
+Do njenog commita i deploya, svaki budući privileged create mora imati stvarni
+login smoke ili kontrolisani `--update-existing` recovery ako se invariant
+ponovi.
+
+### XXVI.8. Još jedna CLI dokumentaciona nedoslednost
+
+Aktuelna završna poruka u `scripts/create-admin.ts` upozorava da sesije nisu
+opozvane. To je samo delimično tačno:
+
+- DB-authoritative Session redovi se pri update-u brišu i revision se povećava;
+- aktivni legacy stateless JWT još ne proverava tu DB revision vrednost i može
+  ostati važeći do svog roka.
+
+Poruku treba precizirati tako da razlikuje DB session revokaciju od još
+nezavršenog legacy JWT cutovera.
+
+---
+
+## XXVII. Aktuelno stanje, dokaz provera i preostali posao — 31. avgust 2026.
+
+Ovaj odeljak je završni operativni presek posle code push-a, DB migracija,
+DNS/TLS podešavanja, produkcijskog deploya i admin provere.
+
+### XXVII.1. Git i obim poslednjeg paketa
+
+Pre dopune ovog dnevnika stanje je bilo:
+
+- repo: `~/Desktop/narodnanosnja-prodavnica`;
+- aktivna grana: `ispravka/v2-db-authoritative-sessions`;
+- HEAD: `2efbb76d4adcfa8d1e5fe335cb59f411d0c65cbe`;
+- feature remote usklađen sa HEAD-om;
+- remote kanonska V2 grana takođe na `2efbb76`;
+- bez `prodavnica-v2-*` taga;
+- radno stablo čisto pre ove dokumentacione izmene.
+
+Recentni auth/session/SEO paket od `d926e15` do `2efbb76` obuhvata:
+
+- `79` promenjenih fajlova;
+- približno `15.435` dodatih linija;
+- približno `681` uklonjenu liniju;
+- 14 logičkih commit koraka od session expand-a do fail-closed noindex-a.
+
+Ovaj `IZMENE.md` je sada namerna lokalna dokumentaciona izmena preko aktivnog
+HEAD-a. Ne sadrži produkcione tajne niti privremenu admin lozinku.
+
+### XXVII.2. Lokalni test dokaz na aktuelnom kodu
+
+Tokom završnog read-only pregleda aktuelnog `2efbb76` koda stvarno je
+pokrenuto:
+
+| Provera | Rezultat |
+| --- | --- |
+| `npm test` | `451` ukupno / `425` pass / `26` skip / `0` fail |
+| `npm run typecheck` | PASS |
+| `npm run lint` | exit `0`; `0` grešaka / `67` upozorenja |
+| `git diff --check` pre dopune dokumenta | PASS |
+| production build deployovanog SHA | PASS; javni release je zdrav |
+
+Lokalnih 26 skipova nisu prećutani failure-i, već opt-in real-PostgreSQL
+testovi. Oni obuhvataju:
+
+- authoritative session DB adapter, guard i logout;
+- session expand preflight;
+- credentials snapshot i V2 issuance;
+- verification/resend konkurentne tokove i rollback;
+- password-reset request/confirm i password change;
+- privileged concurrent create/update/rollback;
+- atomsku registraciju;
+- demo user sinhronizaciju;
+- reservation cleanup concurrency.
+
+CI workflow za njih postavlja odgovarajuće `RUN_*_DB_TESTS=true` vrednosti i
+koristi PostgreSQL 16 servis. Pored testova, workflow proverava svih osam
+migracija na praznoj bazi, drift, DB invarijante, auth audit fixture-e,
+TypeScript, lint quiet, mobilni Playwright purchase tok i production build.
+
+Postojećih 67 lint upozorenja nisu build greške, ali predstavljaju tehnički
+dug. Najčešće klase su:
+
+- neiskorišćeni importi ili promenljive;
+- obični `<img>` umesto optimizovanog image sloja;
+- `setState` direktno u efektu;
+- JSX kreiran unutar `try/catch` bloka;
+- jedan missing hook dependency;
+- jedan admin banner bez `alt` vrednosti.
+
+### XXVII.3. Funkcionalno stanje prodavnice
+
+Trenutno radi:
+
+- javna početna stranica na glavnom HTTPS domenu;
+- dinamički katalog sa 18 uvezenih proizvoda;
+- kategorije, filteri, proizvodi, korpa i guest checkout osnova;
+- korisnička registracija, prijava, verification/resend i password reset kod;
+- korisnički nalog, adrese, porudžbine i wishlist;
+- admin panel za proizvode, kategorije, brendove, boje, promocije, porudžbine,
+  korisnike, članke, banere, ticker, prodajna mesta, newsletter, chat i
+  podešavanja;
+- centralna `ADMIN`/`OPERATOR` politika;
+- javni health endpoint sa DB i deployment SHA proverom;
+- fail-closed noindex dok se sadržaj i poslovna podešavanja ne završe;
+- HTTPS apex i kanonski `www` redirect;
+- backup/restore, 8/8 migracija i least-privilege runtime DB grantovi;
+- validan novi ADMIN nalog sa stvarno proverenom HTTPS prijavom.
+
+### XXVII.4. Precizno auth stanje
+
+Auth sloj nije ni „stari, bez zaštita“ ni „potpuno završen V2 cutover“.
+Tačan opis je:
+
+- credentials, verification, reset, password change i privileged write tokovi
+  imaju mnogo novih atomskih i DB-clock zaštita;
+- `AUTH_VERIFIED_LOGIN_POLICY=audit` je aktivan;
+- authoritative session šema i dormantni core su deployovani;
+- security write tokovi povećavaju revision i brišu DB Session redove;
+- checkout-data i wishlist koriste neutralni facade;
+- aktivni browser credential i većina zaštićenih potrošača i dalje koriste
+  legacy NextAuth JWT snapshot;
+- `proxy.ts`, `app/admin/layout.tsx` i većina ruta još nisu prebačeni na V2 DB
+  guard;
+- postoji `93` raw legacy `getServerSession` consumer poziva u `52` fajla i dva
+  raw `getToken` potrošača.
+
+Posledica: promena role/passworda opoziva DB sesije, ali već izdat legacy
+stateless JWT ne proverava odmah novu revision vrednost i može trajati do
+svog maksimalnog roka. Zato se staged/strict verified-login i potpuni admin
+authorization hardening ne smatraju završenim.
+
+### XXVII.5. Admin autorizacija — otvorena nedoslednost
+
+`lib/auth/admin-policy.ts` propisuje:
+
+- `ADMIN` — pun admin pristup;
+- `OPERATOR` — deny-by-default;
+- dozvoljene operator stranice — porudžbine i chat poruke;
+- dozvoljeni operator API tokovi — promena statusa porudžbine i GET/PUT chat
+  poruke.
+
+Otkrivena je route-local nedoslednost:
+
+- `GET /api/admin/products` i `GET /api/admin/products/:id` lokalno prihvataju
+  `OPERATOR`;
+- centralni proxy policy operatoru ne dozvoljava product API.
+
+Proxy trenutno zaustavlja pristup, ali route-local provera nije puna
+defense-in-depth granica. Treba uskladiti rute sa centralnom politikom i dodati
+direktnu role matricu za svaku admin API rutu, uključujući poziv bez oslanjanja
+na proxy.
+
+### XXVII.6. Katalog i proizvodni model
+
+Aktivni katalog:
+
+- čita samo aktivne proizvode;
+- podržava pol, brend, kategoriju/tip, boju, veličinu, cenu, akciju i novitete;
+- aktivne veličine ulaze u rezultat;
+- filter dostupne veličine zahteva zalihu veću od nule;
+- koristi server-side Prisma upite;
+- ima javne list/count/detail/similar endpointove.
+
+Admin proizvod podržava:
+
+- lokalizovane nazive, opise i SEO polja;
+- do tri slike;
+- SKU i barkod;
+- redovnu i akcijsku cenu;
+- brend i kategorije;
+- boju, materijal, dimenzije, poreklo, održavanje i tagove;
+- soft archive preko `active=false`;
+- stabilan `ProductSize` ID;
+- deaktivaciju uklonjene veličine umesto fizičkog brisanja;
+- ponovno aktiviranje istog stock reda;
+- `expectedStock` zaštitu od prepisivanja paralelne rezervacije/povrata;
+- odbijanje negativne ili decimalne zalihe;
+- pravilo da aktivan proizvod mora imati aktivan stock red.
+
+Generičke V2 tabele `ProductType`, attribute, option i variant postoje, ali
+prelaz nije završen:
+
+- admin API za tipove i atribute postoji;
+- kompletan admin UI nije povezan;
+- nema završenog produkcionog backfill-a legacy proizvoda;
+- nema dual-write/dual-read poređenja;
+- `ProductSize` ostaje glavni izvor zalihe;
+- contract uklanjanje legacy polja je buduća posebna migracija.
+
+### XXVII.7. Nedostajući testovi i input granice proizvoda
+
+Iako niži `product-size-sync` sloj ima jake testove, nedostaju direktne HTTP
+matrice za:
+
+- javni `/api/products`;
+- `/api/products/counts`;
+- product detail rutu;
+- admin product list/create/update/archive tok;
+- puni body/auth/role ugovor tih ruta.
+
+Poznate input rupe:
+
+- javni `page` i `limit` nemaju dovoljno stroge granice;
+- counts API tolerantno propušta proizvoljne `Number(...)` rezultate;
+- admin product liste nemaju čvrst maksimalni pagination cap;
+- product POST/PUT nema centralni exact-body schema parser;
+- product write rute nemaju svoj jasno dokumentovan body cap;
+- nevalidan ili veoma veliki input često završi generičkim `500` umesto
+  preciznim `400/413` ugovorom.
+
+Ovo nije uzrok sadašnjeg javnog kataloga — produkcioni katalog i counts smoke
+rade — ali je sledeći važan robustness i abuse-hardening paket.
+
+### XXVII.8. Preostali auth i abuse-control blokatori
+
+Pre prelaska sa `audit` na `staged` ili `strict` ostaje:
+
+1. trajna popravka privileged create timestamp invarijante;
+2. migracija preostalih legacy session potrošača;
+3. jedan atomski V2 cookie/codec/issuer/guard/proxy/logout cutover bez legacy
+   credential fallbacka;
+4. real-PG i HTTP race matrica za login-vs-reset/change/role/policy;
+5. shared Redis/DB limiter za credentials i ostale skupe auth tokove;
+6. eksplicitan trusted-proxy hop i canonical client-IP ugovor;
+7. Nginx rate, connection, header i request-read zaštite usklađene sa route
+   body capovima;
+8. transactional auth-email outbox, durable worker, retry/dedupe, bounce i
+   delivery monitoring;
+9. hash-only auth-token write faza, maksimalni TTL+grace period i contract
+   uklanjanje legacy plaintext credential kolona;
+10. poseban strict preflight tek posle završenog recovery/grace perioda.
+
+Next.js `after()` nije durable queue: HTTP 202 može biti vraćen, a proces može
+pasti pre slanja emaila. Zato trenutni asinhroni email kod nije isto što i
+garantovana dostava.
+
+### XXVII.9. Produkcioni operativni dug
+
+Preostalo je i:
+
+- prebaciti release i PM2 sa root-a na ograničenog deploy/runtime korisnika;
+- ugasiti ili preusmeriti istorijski port-8090 vhost;
+- dodati standardni monitoring za PM2, Nginx, certbot, PostgreSQL, disk i
+  health/SHA mismatch;
+- automatizovati proveru backup checksum-a i periodični restore test;
+- definisati incident/rollback runbook koji odgovara stvarnom
+  `/var/www/narodnanosnja/releases` modelu;
+- uključiti HSTS tek posle posebne odluke i provere svih subdomena;
+- završiti SMTP delivery/bounce test;
+- završiti realne pravne/poslovne podatke i sadržaj prodavnice;
+- ostaviti kartično plaćanje isključeno do bankarske sertifikacije i kompletnog
+  payment/reconciliation testa;
+- pregledati reservation cleanup scheduler pre uključivanja periodičnog
+  apply-a.
+
+### XXVII.10. Zastareli dokumenti i skripte
+
+Ovaj dnevnik sada ispravlja aktuelno stanje, ali sledeći istorijski dokumenti
+još sadrže tvrdnje iz vremena pre live rollout-a:
+
+- `docs/GITHUB-DEPLOY.md` kaže da ništa nije live;
+- `docs/PRISMA-BASELINE.md` navodi samo četiri produkcione migracije;
+- `docs/V2-ROLL-OUT.md` na mestima govori o sedam migracija, a aktuelni lanac
+  ima osam;
+- `docs/DETALJAN-IZVESTAJ-RADA-DO-2026-08-30.md` i
+  `docs/DETALJAN-DNEVNIK-IZMENA.md` ispravno opisuju tadašnji istorijski
+  presek, ne finalno stanje od 31. avgusta.
+
+README takođe ima zastarele delove:
+
+- navodi Node 18, dok CI/server koriste Node 22;
+- daje Docker komande iako `Dockerfile` ne postoji;
+- upućuje na `docs/HETZNER-DEPLOY-GUIDE.md`, koji ne postoji.
+
+Posebno opasne legacy operativne datoteke:
+
+- `scripts/backup.sh` koristi Planika putanje/bazu;
+- `scripts/restore.sh` koristi Planika bazu i sadrži destruktivan drop tok;
+- `scripts/server-setup.sh` pravi Planika direktorijume;
+- `ecosystem.config.js` koristi `shopdemo`, `/var/www/shopdemo` i port `3000`;
+- `scripts/db-setup.sql` daje mnogo šira prava od sadašnjeg least-privilege
+  produkcionog modela.
+
+Ne koristiti te fajlove nad `narodnanosnja.rs` produkcijom. Treba ih jasno
+arhivirati ili zameniti novim, testiranim narodnanosnja backup/restore/server/
+PM2/DB-role runbookovima.
+
+### XXVII.11. Uključivanje indeksiranja — budući kontrolisani korak
+
+Kada sadržaj, pravni podaci i poslovna podešavanja budu spremni, indeksiranje
+se uključuje koordinisano:
+
+1. pregledati javni sadržaj, canonical URL-ove, metadata i sitemap;
+2. promeniti `SEARCH_INDEXING_ENABLED` na tačno `true`;
+3. ponovo izgraditi i deployovati aplikaciju;
+4. ukloniti Nginx edge noindex header;
+5. zadržati noindex na verification/reset/unsubscribe credential rutama;
+6. proveriti finalni HTML robots metadata;
+7. proveriti `robots.txt` disallow listu i sitemap;
+8. proveriti da `X-Robots-Tag` više nije globalan niti dupliran;
+9. tek zatim prijaviti sitemap u Google Search Console.
+
+Sama env promena nije dovoljna dok Nginx i dalje dodaje edge noindex header.
+Samo uklanjanje Nginx headera takođe nije dovoljno dok aplikacioni metadata
+ostaje fail-closed. Oba sloja moraju se promeniti u istom pregledanom release-u.
+
+### XXVII.12. Prioriteti preporučenog nastavka
+
+Preporučeni redosled je:
+
+1. popraviti privileged create timestamp i dodati unit + real-PG regresiju;
+2. uskladiti admin product route role sa centralnom admin politikom;
+3. dodati products/counts/admin-product HTTP testove i input limite;
+4. nastaviti session consumer migraciju i pripremiti atomski V2 cutover;
+5. uvesti shared limiter/trusted proxy i durable auth-email outbox;
+6. zameniti legacy DB/backup/restore/PM2 skripte stvarnim production
+   runbookovima;
+7. zatvoriti port 8090 i prebaciti runtime sa root-a;
+8. završiti generički katalog backfill/dual-read/UI;
+9. završiti monitoring, payment, sadržaj i pravne produkcione uslove;
+10. tek zatim koordinisano uključiti indeksiranje i eventualno HSTS.
+
+### XXVII.13. Kratka konačna klasifikacija
+
+| Oblast | Stanje 31. avgusta 2026. |
+| --- | --- |
+| Storefront na glavnom domenu | **uživo** |
+| HTTPS apex + `www` | **završeno** |
+| Google indeksiranje | **namerno isključeno** |
+| Aktivni release | **`2efbb76...-9000`** |
+| PostgreSQL migracije | **8/8** |
+| Runtime DB grantovi | **168 CRUD grantova nad 42 tabele; bez migration/default grantova** |
+| Backup i restore proba | **završeno** |
+| Katalog podaci | **18 proizvoda dostupno** |
+| Admin nalog `info@designjust4you.com` | **napravljen; stvarni login i `/admin` provereni** |
+| Privremena admin lozinka na VPS-u | **kopija obrisana; lozinka nije u Git-u/dokumentu** |
+| Verified-login politika | **`audit`** |
+| DB-authoritative session šema/core | **deployovano** |
+| Potpuni V2 session runtime cutover | **nije završen** |
+| Kartično plaćanje | **isključeno** |
+| HSTS | **namerno još isključen** |
+| Produkcijski monitoring/hardening | **delimično; ostaje gore navedeni dug** |
+
+Najvažnije: javni sajt više nije samo lokalni prototip — radi na glavnom
+domenu, koristi stvarnu produkcionu bazu, HTTPS i kontrolisan noindex. Istovremeno,
+aktivno se čuvaju granice između onoga što je live i onoga što je samo
+implementirano/dormantno, kako sledeći korak ne bi slučajno pretpostavio
+bezbednosnu osobinu koja još nije aktivirana.
